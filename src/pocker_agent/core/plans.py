@@ -270,6 +270,104 @@ def whist_plan(*, players: int = 4, cards_each: int = 5, teams=((0, 2), (1, 3)),
                     entry="round_seed", nodes=nodes, step_limit=1024)
 
 
+def five_card_poker_plan(*, stacks: int = 100, min_raise: int = 10, cards_each: int = 5,
+                         ranks=("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"),
+                         suits=("S", "H", "D", "C")) -> GamePlan:
+    """Heads-up five-card showdown with one no-limit betting round.
+
+    Contract: five private cards each; fold / check / call / raise / all-in;
+    the round ends when every live stack has acted and matched; a fold wins the
+    pot uncontested, otherwise the better five-card hand takes it (ties split).
+    """
+    tools = [
+        {"name": "state"},
+        {"name": "logic"},
+        {"name": "deck", "config": {"ranks": list(ranks), "suits": list(suits)}},
+        {"name": "hand_rank"},
+        {"name": "betting", "config": {"min_raise": min_raise}},
+        {"name": "ledger"},
+    ]
+
+    def act_node(action: str) -> dict:
+        return {"kind": "call", "next": "check_round", "action": {
+            "tool": "betting", "operation": "act",
+            "args": {"state": "$state", "action": action, "amount": "$state.input.amount"}}}
+
+    def award_node(seat: int, winners: list[int], name: str) -> dict:
+        return {"kind": "call", "next": f"finish_{name}", "action": {
+            "tool": "ledger", "operation": "settle",
+            "args": {"state": "$state", "winners": {0: winners}}}}
+
+    def finish_node(winners: list[int]) -> dict:
+        return {"kind": "call", "next": "end", "action": {
+            "tool": "state", "operation": "update", "args": {"state": "$state", "values": {
+                "finished": True, "winners": winners, "phase": "finished", "pot": 0}}}}
+
+    nodes = {
+        "round_seed": {"kind": "call", "next": "deal", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"join": ["$state.seed", ":poker"]}},
+            "result_key": "round_seed"}},
+        "deal": {"kind": "call", "next": "init", "action": {
+            "tool": "deck", "operation": "deal",
+            "args": {"seed": "$state.round_seed", "hands": 2, "cards_each": cards_each, "kitty": 0},
+            "result_key": "deal"}},
+        "init": {"kind": "call", "next": "pot", "action": {
+            "tool": "state", "operation": "update", "args": {"state": "$state", "values": {
+                "hands": "$state.deal.hands", "deal": None,
+                "stacks": [stacks, stacks], "committed": [0, 0], "hand_committed": [0, 0],
+                "folded": [], "acted": [], "current_bet": 0, "min_raise": min_raise,
+                "current_player": 0, "street_done": False, "private_hands": True,
+                "phase": "betting", "finished": False, "winners": [],
+                "instructions": "五张私有牌 + 一轮无上限下注：弃牌/过牌/跟注/加注/全下；弃牌即输，否则比五张牌型。"}}}},
+        "pot": {"kind": "call", "next": "betting_turn", "action": {
+            "tool": "ledger", "operation": "total", "args": {"state": "$state"},
+            "result_key": "pot"}},
+        "betting_turn": {"kind": "call", "next": "wait", "action": {
+            "tool": "betting", "operation": "legal", "args": {"state": "$state"},
+            "result_key": "available_actions"}},
+        "wait": {"kind": "wait", "inputs": {"fold": "act_fold", "check": "act_check",
+                                              "call": "act_call", "raise": "act_raise",
+                                              "all_in": "act_all_in"}},
+        "act_fold": act_node("fold"),
+        "act_check": act_node("check"),
+        "act_call": act_node("call"),
+        "act_raise": act_node("raise"),
+        "act_all_in": act_node("all_in"),
+        "check_round": {"kind": "branch", "value": "$state.street_done",
+                        "cases": [{"value": True, "target": "resolve"}], "next": "pot"},
+        "resolve": {"kind": "call", "next": "folded_branch", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"count": ["$state.folded"]}},
+            "result_key": "folded_count"}},
+        "folded_branch": {"kind": "branch", "value": "$state.folded_count",
+                          "cases": [{"value": 1, "target": "folded_winner"}],
+                          "next": "showdown_compare"},
+        "folded_winner": {"kind": "branch", "value": "$state.folded.0",
+                          "cases": [{"value": 0, "target": "award_p1"},
+                                    {"value": 1, "target": "award_p0"}], "next": "award_p0"},
+        "showdown_compare": {"kind": "call", "next": "showdown_branch", "action": {
+            "tool": "hand_rank", "operation": "compare",
+            "args": {"left": "$state.hands.0", "right": "$state.hands.1"},
+            "result_key": "showdown"}},
+        "showdown_branch": {"kind": "branch", "value": "$state.showdown.outcome",
+                            "cases": [{"value": "left", "target": "award_p0"},
+                                      {"value": "right", "target": "award_p1"}],
+                            "next": "award_tie"},
+        "award_p0": award_node(0, [0], "p0"),
+        "award_p1": award_node(1, [1], "p1"),
+        "award_tie": award_node(0, [0, 1], "tie"),
+        "finish_p0": finish_node([0]),
+        "finish_p1": finish_node([1]),
+        "finish_tie": finish_node([0, 1]),
+        "end": {"kind": "end"},
+    }
+    initial = {"finished": False, "winners": [], "current_player": 0, "round": 1, "max_rounds": 1,
+               "phase": "betting", "private_hands": True}
+    return GamePlan(game_kind="five_card_poker", players=2, tools=tools, initial=initial,
+                    entry="round_seed", nodes=nodes, step_limit=512)
+
+
 def war_plan(*, max_rounds: int = 3,
              ranks=("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"),
              suits=("S", "H", "D", "C")) -> GamePlan:

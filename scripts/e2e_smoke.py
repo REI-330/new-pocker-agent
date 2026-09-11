@@ -62,7 +62,7 @@ def main() -> None:
     check("capabilities_status", status == 200, str(status))
     coverage = capabilities["coverage"]  # type: ignore[index]
     check("coverage_total", coverage["total"] >= 20, str(coverage["total"]))
-    check("coverage_has_gaps", "betting" in coverage["missing_histogram"])
+    check("coverage_has_gaps", "layout" in coverage["missing_histogram"])
 
     status, games = request("/api/games")
     arithmetic = next(game for game in games["games"] if game["id"] == "arithmetic24")  # type: ignore[index]
@@ -125,6 +125,13 @@ def main() -> None:
           and whist["private_hands"] is True, str(status))  # type: ignore[index]
     check("whist_hides_three_opponents",
           sum(player["hidden_count"] for player in whist["players"][1:]) == 15)  # type: ignore[index]
+
+    status, poker = request("/api/sessions", "POST", {"game_id": "five_card_poker", "seed": 7})
+    check("poker_exposes_chip_ledger",
+          status == 200 and poker["stacks"] == [100, 100] and poker["pot"] == 0,  # type: ignore[index]
+          str(status))
+    check("poker_hides_the_opponent",
+          poker["players"][1]["hidden_count"] == 5)  # type: ignore[index]
 
     print(f"\n{len(PASSED)} checks passed against {BASE}")
 

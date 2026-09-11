@@ -26,3 +26,5 @@
 .card-choice:disabled { opacity: .45; cursor: not-allowed; }
 .suit-choice { display: block; margin: 12px 0; font-size: 13px; font-weight: 600; }
 .suit-choice select { display: block; margin-top: 6px; padding: 9px; border: 1px solid #bdcec4; border-radius: 8px; }
+.raise-choice { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.raise-choice input { width: 90px; padding: 9px; border: 1px solid #bdcec4; border-radius: 8px; }

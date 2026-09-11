@@ -906,8 +906,9 @@ team             █              1
 - [x] `agent_compose` 真实路径（模型提供 plan → playtest → finalize → 可玩）
 - [x] `turn_adapter`（墩牌/跟牌/竞叫）+ `team`（队伍）→ stable，新增可玩族 `whist`
 - [x] 语料修正：`hearts` 去 `team`、`spades`/`bridge` 去 `betting`（竞叫归 `turn_adapter`）
-- [ ] `trigger` / `betting` / `ledger` / `layout` / `hidden_draw` / `point_total`
-- [ ] macro 形式化 + 提升规则；沙箱隔离协议（S4）
+- [x] `betting` + `ledger` + `hand_rank` → stable（ADR-0002 预算 12→16），新增可玩族 `five_card_poker`
+- [ ] `trigger` / `layout` / `hidden_draw` / `point_total`
+- [ ] macro 形式化 + 提升规则；沙箱隔离协议
 
 ---
 

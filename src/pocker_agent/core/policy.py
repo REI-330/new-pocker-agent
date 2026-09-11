@@ -12,10 +12,31 @@ from .playtest import card_first
 
 HUMAN_INDEX = 0
 BOT_STEP_LIMIT = 500
+_BETTING_ACTIONS = {"check", "call", "raise", "all_in"}
+
+
+def bet_first(interpreter: Interpreter):
+    """Conservative betting policy: never fold when checking or calling is legal."""
+    actions = interpreter.legal_actions()
+    if not actions:
+        return None
+    for action in ("check", "call", "fold", "all_in"):
+        if action in actions:
+            return (action, {})
+    return (actions[0], {})
 
 
 def bot_action(interpreter: Interpreter):
-    """The single policy used by the host for non-human seats."""
+    """The single policy used by the host for non-human seats.
+
+    The plan decides the shape of the turn; the host only picks from what the
+    plan actually offers.
+    """
+    actions = interpreter.legal_actions()
+    if not actions:
+        return None
+    if _BETTING_ACTIONS.intersection(actions):
+        return bet_first(interpreter)
     return card_first(interpreter)
 
 

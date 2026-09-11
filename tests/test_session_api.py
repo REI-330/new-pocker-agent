@@ -174,6 +174,31 @@ def test_agent_loop_fails_safely_without_a_model(tmp_path):
     assert "模型配置" in response.json()["detail"]
 
 
+def test_poker_over_http_reaches_showdown_and_conserves_chips(tmp_path):
+    c = client(tmp_path)
+    state = c.post("/api/sessions", json={"game_id": "five_card_poker", "seed": 7}).json()
+    session_id = state["session_id"]
+    assert state["private_hands"] is True
+    assert state["players"][1]["hidden_count"] == 5
+    assert state["stacks"] == [100, 100] and state["pot"] == 0
+
+    for _ in range(100):
+        if state["finished"]:
+            break
+        action = next(choice for choice in state["legal_actions"]
+                      if choice in ("check", "call", "fold"))
+        payload = {"revision": state["revision"]}
+        if action == "raise":
+            payload["amount"] = 20
+        response = c.post(f"/api/sessions/{session_id}/actions/{action}", json=payload)
+        assert response.status_code == 200, response.text
+        state = response.json()["state"]
+
+    assert state["finished"] is True
+    assert sum(state["stacks"]) == 200          # chips conserved end to end
+    assert state["pot"] == 0
+
+
 def test_whist_over_http_is_a_team_trick_game(tmp_path):
     c = client(tmp_path)
     state = c.post("/api/sessions", json={"game_id": "whist", "seed": 7}).json()

@@ -32,6 +32,7 @@ class ActionInput(BaseModel):
     card_index: int = Field(default=0, ge=0)
     expression: str = Field(default="", max_length=256)
     declared_suit: str = Field(default="", max_length=16)
+    amount: int = Field(default=0, ge=0)
 
 
 class LoopInput(BaseModel):
@@ -134,7 +135,7 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
     def act(session_id: str, action: str, payload: ActionInput):
         return store.act(session_id, action, payload.revision,
                          card_index=payload.card_index, expression=payload.expression,
-                         declared_suit=payload.declared_suit)
+                         declared_suit=payload.declared_suit, amount=payload.amount)
 
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if dist.is_dir():

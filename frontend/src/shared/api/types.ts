@@ -29,6 +29,7 @@ export type SessionState = {
   numbers: number[]; target: number | null; reveal: boolean; solution: string | null
   instructions: string; feedback: string; events: GameEvent[]
   legal_card_indices: number[]; wild_ranks: string[]; private_hands: boolean; suit_options?: string[]
+  pot?: number; stacks?: number[]; committed?: number[]; current_bet?: number
 }
 
 export type ActionPayload = {

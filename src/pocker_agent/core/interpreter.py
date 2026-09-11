@@ -162,7 +162,13 @@ class Interpreter:
         node = self.plan.nodes[self.pc]
         if not self.started or node.kind != "wait" or self.state.get("finished"):
             return []
-        return list(node.inputs)
+        actions = list(node.inputs)
+        # A plan may narrow the wait's static inputs per state (betting rounds,
+        # matching turns); the engine never invents an action, it only filters.
+        available = self.state.get("available_actions")
+        if isinstance(available, list):
+            actions = [action for action in actions if action in available]
+        return actions
 
     def step(self, action: str | None = None, card_index: int = 0, **payload: Any) -> dict[str, Any]:
         actions = self.legal_actions()
@@ -175,7 +181,9 @@ class Interpreter:
             raise ToolError("illegal_action")
         backup = (deepcopy(self.state), deepcopy(self.events), self.pc)
         try:
-            self.state["input"] = {"action": action, "card_index": card_index, **payload}
+            self.state["input"] = {"action": action, "card_index": card_index,
+                                     "expression": "", "declared_suit": "", "amount": 0,
+                                     **payload}
             self.pc = self.plan.nodes[self.pc].inputs[matched]
             self.advance()
         except Exception:
@@ -226,7 +234,7 @@ class Interpreter:
                             "hand": [card.as_dict() for card in hand] if visible else [],
                             "score": scores[index] if index < len(scores) else 0,
                             "hidden_count": 0 if visible else len(hand)})
-        return {
+        result = {
             "kind": self.plan.game_kind, "execution_mode": self.execution_mode,
             "flow_node": self.pc, "round": state.get("round", 1),
             "max_rounds": state.get("max_rounds", 1), "phase": state.get("phase", self.pc),
@@ -248,3 +256,10 @@ class Interpreter:
             "private_hands": private,
             "events": self.events[-100:],
         }
+        # Extra table state (chips, teams, tricks) is exposed read-only so a UI
+        # can render it without knowing the game family.
+        for key in ("pot", "stacks", "committed", "hand_committed", "folded",
+                    "teams", "tricks_won", "trump", "current_bet", "min_raise"):
+            if key in state:
+                result[key] = state[key]
+        return result

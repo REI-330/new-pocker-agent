@@ -16,6 +16,7 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
   const [expression, setExpression] = useState('')
   const [index, setIndex] = useState(0)
   const [suit, setSuit] = useState('S')
+  const [amount, setAmount] = useState(20)
 
   if (!state) {
     return <div className="prototype-page workspace-page">
@@ -35,7 +36,9 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
 
   const fire = (action: string) => {
     if (busy) return
-    const payload = action === 'play' ? {card_index: index, declared_suit: suit} : {}
+    const payload: Record<string, unknown> = {}
+    if (action === 'play') { payload.card_index = index; payload.declared_suit = suit }
+    if (action === 'raise') payload.amount = amount
     onAct(action, payload)
   }
 
@@ -55,7 +58,7 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
           <span className="player-avatar red">{seat === 0 ? '♠' : '♥'}</span>
           <div><strong>{seat === 0 ? '你' : player.id}</strong>
             <small>{player.hidden_count ? `隐藏手牌 · ${player.hidden_count} 张` : `${player.hand.length} 张可见`}</small></div>
-          <b>{String(player.score).padStart(2, '0')}</b>
+          <b>{String(state.stacks?.[seat] ?? player.score).padStart(2, '0')}</b>
         </div>)}
         <div className="info-note">
           {state.private_hands
@@ -74,6 +77,9 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
         {state.table.length > 0 && <div className="public-zone">
           <span className="zone-label">TABLE / DISCARD</span>
           {state.table.map(card => <PlayingCard key={card.id} card={card} />)}</div>}
+        {state.pot !== undefined && <div className="table-total">
+          <span className="mono">POT</span><strong>{state.pot}</strong>
+          <small>{state.current_bet ? `本轮最高下注 ${state.current_bet}` : '等待下注'}</small></div>}
         {state.reveal && state.solution && <div className="state-banner finished">
           <span className="state-icon">✓</span>
           <div><strong>参考答案 {state.solution} = {state.target}</strong>
@@ -132,6 +138,9 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
         </div>
       </form>}
       <div className="action-buttons">
+        {state.legal_actions.includes('raise') && <label className="raise-choice">加注到
+          <input type="number" min={1} step={1} value={amount} disabled={busy}
+            onChange={event => setAmount(Number(event.target.value))} /></label>}
         {state.legal_actions.filter(action => action !== 'submit_expression').map(action =>
           <button className={['give_up', 'no_solution'].includes(action) ? 'action-ghost' : 'action-secondary'}
             key={action} disabled={busy} onClick={() => fire(action)}>{LABELS[action] ?? action}</button>)}

@@ -14,6 +14,7 @@ Contract policy for the core tools:
 from __future__ import annotations
 
 from .contracts import OperationSpec, ToolRegistry, ToolSpec
+from .poker_tools import BettingTool, HandRankTool, LedgerTool
 from .tools import (
     DeckTool,
     ExactExpressionTool,
@@ -88,4 +89,20 @@ def core_registry() -> ToolRegistry:
                                "current_player", "tricks_won", "trick_index", "finished",
                                "winners", "phase"),
                       returns="complete/winner/tricks_won"),)))
+    registry.register(ToolSpec("ledger", lambda **_: LedgerTool(), (
+        OperationSpec("commit", params=("state", "seat", "amount"),
+                      effects=("stacks", "committed", "hand_committed"), returns="seat/amount/stacks"),
+        OperationSpec("pots", params=("state",), effects=(), returns="pots"),
+        OperationSpec("total", params=("state",), effects=(), returns="int"),
+        OperationSpec("settle", params=("state", "winners"),
+                      effects=("stacks", "committed", "hand_committed"), returns="awards/pots/stacks"),)))
+    registry.register(ToolSpec("betting", lambda min_raise=1: BettingTool(min_raise), (
+        OperationSpec("legal", params=("state",), effects=(), returns="list[str]"),
+        OperationSpec("act", params=("state", "action", "amount"),
+                      effects=("stacks", "committed", "hand_committed", "folded", "acted",
+                               "current_bet", "min_raise", "current_player", "street_done"),
+                      returns="action/seat/street_done"),)))
+    registry.register(ToolSpec("hand_rank", lambda **_: HandRankTool(), (
+        OperationSpec("best", params=("cards",), effects=(), returns="category/score/cards"),
+        OperationSpec("compare", params=("left", "right"), effects=(), returns="outcome"),)))
     return registry

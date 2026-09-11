@@ -169,6 +169,18 @@ S4             覆盖度量与交付（横切，贯穿始终）
 
 ---
 
+**S4 准出状态：机制部分完成（betting / ledger / hand_rank 已落地；macro 与沙箱未做）。**
+
+- `betting` → **stable**：无上限下注轮（fold/check/call/raise/all_in、最小加注、轮次完成判定）。
+- `ledger` → **stable**：筹码账本（提交、主池/边池/退款、奇数筹码、结算守恒）。
+- `hand_rank` → **stable**：五张牌型评分与比较（含 A2345 轮子顺、七选五）。
+- 新增可玩族 `five_card_poker`（五张私有牌 + 一轮下注 + 摊牌；弃牌即输、平局平分）。
+- `legal_actions` 新增 `available_actions` 过滤：计划可按状态**收窄** wait 的静态动作集，**引擎只过滤、不发明**动作。
+- 覆盖率：**16/31 → 21/31（67.7%）**；缺口 `layout 3 · trigger 3 · hidden_draw 2 · point_total 2`。
+- 预算：**ADR-0002** 把 core 工具上限 12 → 16；当前 **14/16**，并保留“每个注册工具必须被参考计划使用”的不变量。
+- 验证：`114 passed`；真实 HTTP 端到端 `23/23`。
+- 未做（后置）：macro 形式化与提升规则、沙箱隔离协议。
+
 ## 4. 测试规范
 
 ### 4.1 测试层次（每层证明什么）
@@ -275,7 +287,7 @@ nondeterministic_replay
 |---|---|---|
 | 执行路径数 | 1 | `test_core_has_exactly_one_interpreter` |
 | 游戏专属工具数 | 0 | `test_no_game_specific_tool_in_the_core_registry` |
-| core 工具数 | ≤ 12 | `test_core_tool_budget_is_a_ratchet` |
+| core 工具数 | ≤ 16（ADR-0002） | `test_core_tool_budget_is_a_ratchet` |
 | 未使用工具数 | 0 | `test_every_registered_tool_is_used_by_a_reference_plan` |
 | 只允许 `state` 用 `"*"` effects | — | `test_only_state_tool_may_write_arbitrary_keys` |
 | core LOC / 文件数 | 记录并只许持平 | 报表（S2 起自动化） |

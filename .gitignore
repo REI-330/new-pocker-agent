@@ -13,3 +13,6 @@ artifacts/
 *.db
 *.db-wal
 *.db-shm
+
+# local launcher output
+.runcheck*

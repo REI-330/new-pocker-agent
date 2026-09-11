@@ -20,16 +20,16 @@ if (-not $SkipFrontendBuild) {
     npm run build --prefix frontend
 }
 
-$dist = Join-Path $root "frontend\dist\index.html"
-if (-not (Test-Path $dist)) {
-    Write-Warning "frontend/dist/index.html is missing; the API will still run but the page will 404."
+$page = Join-Path $root "frontend\dist\index.html"
+if (-not (Test-Path $page)) {
+    Write-Warning "frontend/dist/index.html is missing; the API will run but the page will 404."
 }
 
 Write-Host ""
 Write-Host "Pocker Agent web app:  http://127.0.0.1:$Port" -ForegroundColor Green
-Write-Host "  - 玩法库: pick a game and press 开始试玩"
-Write-Host "  - 新建玩法: needs a model saved in 模型设置 (otherwise it says so)"
-Write-Host "  - Ctrl+C to stop"
+Write-Host "  library          -> pick a game, press start"
+Write-Host "  new game         -> needs a model saved in Model Settings"
+Write-Host "  Ctrl+C to stop"
 Write-Host ""
 
 uv run --frozen python -m uvicorn pocker_agent.app:app --host 127.0.0.1 --port $Port

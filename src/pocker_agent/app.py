@@ -6,6 +6,9 @@ playtest gate: reference games at build time, agent-composed games at
 """
 from __future__ import annotations
 
+import hashlib
+import os
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -21,6 +24,45 @@ from .configuration import ConfigInput, ConfigStore
 from .core import SessionStore, capability_matrix, core_registry, coverage_report
 from .llm import OpenAICompatibleClient
 from .storage import data_path
+
+VERSION = "0.4.0"
+PACKAGE_ROOT = Path(__file__).resolve().parent
+DIST = PACKAGE_ROOT.parents[1] / "frontend" / "dist"
+
+
+def code_fingerprint() -> str:
+    """Hash of the package sources *as imported*.
+
+    It is computed once at import time on purpose: recomputing it on every
+    request would always match the working tree, which is exactly the signal we
+    want to keep. A long-running process keeps the fingerprint of the code it
+    actually loaded, so a mismatch against the working tree means "restart me".
+    """
+    digest = hashlib.sha256()
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        digest.update(path.relative_to(PACKAGE_ROOT).as_posix().encode())
+        digest.update(b"\0")
+        try:
+            digest.update(path.read_bytes())
+        except OSError:                                     # pragma: no cover
+            continue
+        digest.update(b"\0")
+    return digest.hexdigest()[:12]
+
+
+CODE_FINGERPRINT = code_fingerprint()
+
+
+def dist_assets() -> list[str]:
+    """The bundles the served page asks for, read from disk on each call."""
+    index = DIST / "index.html"
+    if not index.is_file():
+        return []
+    try:
+        html = index.read_text(encoding="utf-8", errors="replace")
+    except OSError:                                         # pragma: no cover
+        return []
+    return sorted(set(re.findall(r'(?:src|href)="(/(?:static|assets)/[^"]+)"', html)))
 
 
 class SessionInput(BaseModel):
@@ -90,7 +132,10 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "version": "0.4.0"}
+        assets = dist_assets()
+        return {"status": "ok", "version": VERSION, "pid": os.getpid(),
+                "code": CODE_FINGERPRINT, "assets": assets,
+                "assets_present": all((DIST / url.lstrip("/")).is_file() for url in assets)}
 
     @app.get("/api/capabilities")
     def capabilities():
@@ -152,9 +197,8 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
                          card_index=payload.card_index, expression=payload.expression,
                          declared_suit=payload.declared_suit, amount=payload.amount)
 
-    dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-    if dist.is_dir():
-        app.mount("/", StaticFiles(directory=dist, html=True), name="web")
+    if DIST.is_dir():
+        app.mount("/", StaticFiles(directory=DIST, html=True), name="web")
     return app
 
 

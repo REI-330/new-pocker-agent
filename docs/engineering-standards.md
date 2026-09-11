@@ -232,6 +232,21 @@ S4             覆盖度量与交付（横切，贯穿始终）
 - 新增 `scripts/run_web.ps1`：一条命令构建前端并启动应用。
 - 未做：`layout`、`simultaneous`、沙箱隔离协议。
 
+**S8 补丁：常驻进程可观测性（2026-09-11）。**
+
+- 事故：设计页「发送」无效。真因**不是前端** —— uvicorn 在启动时只 import 一次 app，
+  一个早于 `4304601` 的进程仍在 8000 上服务：页面加载新 bundle，API 还是旧 schema，
+  `POST /api/agent/loop` 返回 `body.goal: Field required`。
+- `/health` 现在返回 `pid` / `code` / `assets` / `assets_present`。`code` 是**import 时**算出的包源码指纹，
+  刻意不在请求时重算：常驻进程必须一直报「它实际加载的代码」，否则这个信号就没了。
+- `scripts/doctor.py --url http://127.0.0.1:8000`：把服务报的 `code` 与**磁盘当前**指纹对比，
+  并探测 chat schema 合约（空 `message` 必须回 `请输入玩法描述`；陈旧进程会回 `goal: Field required`）。
+- `scripts/run_web.py`：端口被占用且上面是本应用时，直接说明那个进程是「当前代码」还是「陈旧代码」，
+  并给出 `Stop-Process -Id <pid>`；不再静默换端口继续跑（那会让人一直看旧页面）。
+- `scripts/e2e_smoke.py`：模型已配置时不再发 `goal` 探测（那会变成真实 LLM 调用并超时），
+  改为始终校验空 `message` 合约，跳过的项打印 `SKIP` 说明。
+- 验证：`171 passed`；真实 HTTP 端到端 `27/27`（1 项 SKIP）；`doctor.py --serve` 与 `doctor.py --url` 全绿。
+
 ## 4. 测试规范
 
 ### 4.1 测试层次（每层证明什么）
@@ -256,6 +271,7 @@ S4             覆盖度量与交付（横切，贯穿始终）
 | 修改 IR | `host_compile` 一致性测试 + 覆盖率报表重跑 |
 | 修改 API | 一致性护栏测试（同 seed 同动作 trace 与 playtest 一致） |
 | 修改前端 | 端到端冒烟（至少：开局→动作→结束→重开） |
+| 修改启动/诊断脚本 | `doctor.py --url` 冒烟：服务报的 `code` 指纹 == 磁盘指纹，且 chat schema 合约成立 |
 | 修改核心解释器 | 上述全部 + 架构不变量 |
 
 ### 4.3 禁止的测试
@@ -426,6 +442,7 @@ K 默认 2，可在 ADR 中调整。**注册表只能按"被证明的复用"增�
 | "以后再补测试" | 迁移没有终点，永远补不完 |
 | 文档写在实现之前且不同步 | "166 passed"、"9 种游戏"等与实际不符 |
 | 让"暂时保留旧路径"没有 deadline | 双路径永久化 |
+| 长驻进程存活于一次改动之后 | 前端已更新、API 还是旧 schema；"发不出去"被误判为前端 bug |
 
 **红线（一票否决）**：新增第二执行路径、新增游戏专属引擎、add-only 结构性 PR、未过 playtest 即可玩、让模型自证正确。
 

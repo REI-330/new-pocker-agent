@@ -49,8 +49,29 @@ def test_agent_loop_supports_a_multi_turn_conversation_over_http(tmp_path):
 
 
 def test_agent_loop_rejects_an_empty_message(tmp_path):
+    """The 422 must come from the chat schema, not from `goal` being required.
+
+    A process that started before the chat-thread change answers the very same
+    request with `body.goal: Field required`, which is how a stale server shows
+    up in the browser as "the design box cannot send".
+    """
     c = client(tmp_path)
-    assert c.post("/api/agent/loop", json={"message": "   "}).status_code == 422
+    response = c.post("/api/agent/loop", json={"message": "   "})
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "请输入玩法描述" in detail, detail
+    assert "goal" not in detail, detail
+
+
+def test_health_reports_the_loaded_code_fingerprint(tmp_path):
+    """`doctor.py --url` compares this against the working tree to catch stale code."""
+    from pocker_agent.app import CODE_FINGERPRINT, code_fingerprint, dist_assets
+
+    health = client(tmp_path).get("/health").json()
+    assert health["code"] == CODE_FINGERPRINT == code_fingerprint()
+    assert isinstance(health["pid"], int)
+    assert health["assets"] == dist_assets()
+    assert health["assets_present"] is True
 
 
 def test_served_page_references_resolve(tmp_path):

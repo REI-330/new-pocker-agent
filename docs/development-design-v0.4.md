@@ -913,6 +913,7 @@ team             █              1
 - [x] `trigger` → stable（ADR-0004 预算 17→18），新增可玩族 `uno`；新增 planned 轴 `simultaneous`
 - [ ] `layout`（接龙 3 个玩法）/ `simultaneous`（同时行动）
 - [x] macro 形式化 + 提升规则（`core/macros.py`，`match_turn` 被两个计划真实复用）
+- [x] 长驻进程陈旧检测：`/health` 暴露 `code` 指纹 + `doctor.py --url` + 启动器端口归属提示
 - [ ] 沙箱隔离协议
 
 ---

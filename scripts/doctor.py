@@ -1,7 +1,9 @@
 """Diagnose why the web app will not start, then optionally self-test it.
 
-    uv run python scripts/doctor.py            # checks only
-    uv run python scripts/doctor.py --serve    # checks, then start + self-test
+    uv run python scripts/doctor.py                    # checks only
+    uv run python scripts/doctor.py --serve            # checks, then start + self-test
+    uv run python scripts/doctor.py --url http://127.0.0.1:8000
+                                                       # inspect an already running server
 
 Every check prints PASS/FAIL with the concrete value, so the output alone is
 enough to locate a problem.
@@ -48,6 +50,89 @@ def http(path: str, port: int, timeout: float = 5.0):
         return error.code, error.read().decode()
     except Exception as error:
         return None, str(error)
+
+
+def fetch(url: str, payload: dict | None = None, timeout: float = 15.0):
+    """GET, or POST a JSON body; returns (status, parsed-or-text)."""
+    data = None if payload is None else json.dumps(payload).encode()
+    request = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"} if data else {})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, response.read().decode()
+    except urllib.error.HTTPError as error:
+        return error.code, error.read().decode()
+    except Exception as error:
+        return None, str(error)
+
+
+def check_running_server(base: str) -> None:
+    """Inspect a server that is already running.
+
+    A long-running process can quietly fall out of sync with the working tree:
+    it imported the app once at startup. The page then loads the new bundle while
+    the API still speaks the old schema, and every request fails in a way that
+    looks like a frontend bug ("cannot send"). Compare fingerprints instead.
+    """
+    base = base.rstrip("/")
+    print(f"server         : {base}")
+    status, body = fetch(f"{base}/health")
+    check("GET /health", status == 200, f"{status} {str(body)[:80]}")
+    if status != 200:
+        return
+    try:
+        health = json.loads(body)
+    except json.JSONDecodeError:
+        check("GET /health returns JSON", False, str(body)[:80])
+        return
+
+    print(f"server pid     : {health.get('pid')}")
+    print(f"server version : {health.get('version')}")
+
+    from pocker_agent.app import code_fingerprint, dist_assets
+
+    # Local side is the tree on disk right now; the server reports the code it
+    # actually imported. Same process or not, a mismatch means "restart me".
+    served, local = health.get("code"), code_fingerprint()
+    check("server code matches the working tree", served == local,
+          f"served={served} local={local}"
+          + ("" if served == local else
+             " -- the process is stale: stop it and start it again"))
+
+    expected = dist_assets()
+    served_assets = health.get("assets")
+    if served_assets is None:
+        check("server serves the current build", False,
+              "the process has no /health assets field -- its code predates this check, "
+              "so the process is stale: stop it and start it again")
+    else:
+        check("server serves the current build", list(served_assets) == expected,
+              f"served={served_assets} local={expected}"
+              + ("" if list(served_assets) == expected else
+                 " -- rebuild the frontend, or the server is looking at another dist"))
+    for url in served_assets or []:
+        asset_status, _ = fetch(base + url)
+        check(f"GET {url}", asset_status == 200, str(asset_status))
+
+    # The chat-thread schema is the contract the design page posts to. An old
+    # process answers `body.goal: Field required` to the very same request, so
+    # this single probe separates a stale API from a broken UI.
+    status, body = fetch(f"{base}/api/agent/loop", {"message": "   "})
+    check("POST /api/agent/loop rejects an empty message with its own words",
+          status == 422 and "请输入玩法描述" in body,
+          f"{status} {str(body)[:120]}"
+          + ("" if status == 422 and "请输入玩法描述" in body else
+             " -- expected the chat-thread schema; `goal: Field required` means "
+             "the running process predates it"))
+
+    status, body = fetch(f"{base}/api/games")
+    count = 0
+    if status == 200:
+        try:
+            count = len(json.loads(body)["games"])
+        except (json.JSONDecodeError, KeyError, TypeError):
+            count = 0
+    check("GET /api/games", status == 200 and count > 0, f"{count} games")
 
 
 def diagnose(port: int) -> None:
@@ -129,6 +214,10 @@ def serve_and_self_test(port: int) -> int:
         check("GET /api/games", ok, f"{count} games")
         status, body = http("/api/capabilities", port)
         check("GET /api/capabilities", status == 200, str(status))
+        # Same contract probe as --url: proves the process loaded the chat schema.
+        status, body = fetch(f"http://127.0.0.1:{port}/api/agent/loop", {"message": "   "})
+        check("POST /api/agent/loop rejects an empty message with its own words",
+              status == 422 and "请输入玩法描述" in body, f"{status} {str(body)[:120]}")
     finally:
         server.should_exit = True
         thread.join(timeout=10)
@@ -142,17 +231,39 @@ def serve_and_self_test(port: int) -> int:
 
 
 def main() -> int:
+    # Answers and contract details contain Chinese; emit UTF-8 regardless of the
+    # Windows code page so redirects and terminals both read them correctly.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):            # pragma: no cover
+                pass
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8098)
     parser.add_argument("--serve", action="store_true",
                         help="start the app in-process and self-test the HTTP endpoints")
+    parser.add_argument("--url", default="",
+                        help="inspect a server that is already running, e.g. http://127.0.0.1:8000")
     args = parser.parse_args()
-    diagnose(args.port)
-    if args.serve:
-        print("")
-        return serve_and_self_test(args.port)
+
+    if args.url:
+        check_running_server(args.url)
+    else:
+        diagnose(args.port)
+        if args.serve:
+            print("")
+            return serve_and_self_test(args.port)
+
     print("")
-    print("run with --serve to start it in-process and self-test, or use scripts/run_web.py")
+    if FAILURES:
+        print(f"{len(FAILURES)} check(s) failed: {FAILURES}")
+        return 1
+    if args.url:
+        print(f"the running server on {args.url} matches this working tree")
+    else:
+        print("run with --serve to start it in-process and self-test, or use scripts/run_web.py")
     return 1 if FAILURES else 0
 
 

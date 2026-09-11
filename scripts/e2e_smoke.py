@@ -105,9 +105,19 @@ def main() -> None:
     check("agent_meta_tools_exposed",
           status == 200 and any(tool["name"] == "finalize" for tool in tools["meta_tools"]),  # type: ignore[index]
           str(status))
-    status, denied = request("/api/agent/loop", "POST", {"goal": "做一个比大小"})
-    check("agent_loop_fails_safely_without_model",
-          status == 422 and "模型配置" in str(denied), str(status))
+    # The empty-message contract is always checkable and never calls a model.
+    # A configured model would make the goal-based probe below a real, slow LLM
+    # run, so only that branch is conditional.
+    status, denied = request("/api/agent/loop", "POST", {"message": "   "})
+    check("agent_loop_rejects_an_empty_message",
+          status == 422 and "请输入玩法描述" in str(denied), str(status))
+    status, config = request("/api/agent/config")
+    if isinstance(config, dict) and not config.get("configured"):
+        status, denied = request("/api/agent/loop", "POST", {"goal": "做一个比大小"})
+        check("agent_loop_fails_safely_without_model",
+              status == 422 and "模型配置" in str(denied), str(status))
+    else:
+        print("SKIP agent_loop_fails_safely_without_model (a model is configured)")
 
     status, games_all = request("/api/games")
     crazy = next((game for game in games_all["games"] if game["id"] == "crazy_eights"), None)  # type: ignore[index]

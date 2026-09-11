@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pocker Agent · 离线游戏</title><link rel="icon" href="data:,">
+<style>
+body{font-family:system-ui,sans-serif;background:#f5f5f2;color:#242b28;max-width:950px;margin:auto;padding:30px}button{padding:12px 18px;margin:6px;border:1px solid #aabbaf;border-radius:10px;cursor:pointer;background:#fff}#table{background:#164b39;padding:30px;border-radius:18px;min-height:120px;display:flex;gap:12px}img{width:72px;vertical-align:middle;margin:6px}section{padding:15px 0}pre{white-space:pre-wrap;color:#526158}a{color:#236343}
+</style>
+<h1 id="title"></h1><p>离线练习 · 你是 player-1，电脑自动行动 · 固定发牌</p>
+<h2 id="status"></h2><div id="table"></div><section id="hands"></section><section id="moves"></section>
+<button id="restart">重玩此局</button><details><summary>最近事件</summary><pre id="events"></pre></details>
+<p>牌面来自 <a href="https://github.com/hayeah/playing-cards-assets">hayeah/playing-cards-assets</a> · <a href="cards/LICENSE">MIT</a></p>
+<script type="application/json" id="data">__GAME_DATA__</script>
+<script>
+const game=JSON.parse(document.getElementById('data').textContent);
+const labels={play:'出牌',discard:'弃牌',draw:'摸牌',pass:'跳过'};
+const suits={S:'spades',H:'hearts',D:'diamonds',C:'clubs','♠':'spades','♥':'hearts','♦':'diamonds','♣':'clubs'};
+const ranks={A:'ace',K:'king',Q:'queen',J:'jack'};
+let position=0;
+function cardElement(card){const span=document.createElement('span'),img=document.createElement('img');img.alt=card.rank+card.suit;if(suits[card.suit]){img.src='cards/'+(ranks[card.rank]||card.rank)+'_of_'+suits[card.suit]+'.svg';img.onerror=()=>{span.textContent=img.alt};span.append(img)}else{span.textContent=img.alt}return span}
+function render(){
+ const node=game.nodes[position],s=node.state;
+ document.getElementById('title').textContent=game.title;
+ document.getElementById('status').textContent=s.finished?'本局结束 · '+(s.winners.length===1?'获胜：'+s.winners[0]:'平局'):'第 '+s.round+' / '+s.max_rounds+' 轮 · '+s.phase;
+ const table=document.getElementById('table');table.replaceChildren(...s.table.map(cardElement));
+ const hands=document.getElementById('hands');hands.replaceChildren();
+ s.players.forEach(p=>{const row=document.createElement('section'),label=document.createElement('strong');label.textContent=(p.id==='player-1'?'你':p.id+'（电脑）')+' · '+p.score+' 分 ';row.append(label,...p.hand.map(cardElement));hands.append(row)});
+ const moves=document.getElementById('moves');moves.replaceChildren();
+ node.moves.forEach(move=>{const button=document.createElement('button');button.textContent=labels[move.action]+(['play','discard'].includes(move.action)?' · 手牌 '+(move.card_index+1):'');button.onclick=()=>{position=move.next;render()};moves.append(button)});
+ document.getElementById('events').textContent=JSON.stringify(s.events,null,2);
+}
+document.getElementById('restart').onclick=()=>{position=0;render()};render();
+</script></html>

@@ -1,0 +1,29 @@
+[project]
+name = "pocker-agent"
+version = "0.1.0"
+description = "Natural-language agent framework for designing and playing poker games"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "keyring>=25.7.0",
+  "openai>=3.8.0",
+  "pydantic>=2.9.0",
+  "uvicorn[standard]>=0.30.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.0",
+  "httpx>=0.27.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pocker_agent"]

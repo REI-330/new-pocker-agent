@@ -1,0 +1,69 @@
+[
+  {
+    "id": "arithmetic24",
+    "name": "24点单人练习",
+    "source": "https://www.pagat.com/adders/24.html",
+    "prompt": "做一个24点单人练习：使用四种花色的A到10共40张牌，A算1，不用JQK和大小王。每题独立洗牌抽4张，每张必须恰好使用一次，只允许加减乘除和括号，允许中间分数，最终精确等于24。随机出题，允许无解；我可以输入算式或声明无解，答对得1分，答错可以重试，放弃得0分并显示参考答案。共3题，不计时、不抢答。请直接生成。",
+    "kind": "arithmetic",
+    "expect": {"target":24,"card_count":4,"max_rounds":3,"rank_values.A":1,"deal_mode":"random","fractional_intermediates":true,"players.min_players":1,"players.max_players":1,"players.starting_hand_size":0},
+    "sets": {"deck.ranks":["A","2","3","4","5","6","7","8","9","10"],"deck.suits":["S","H","D","C"],"operations":["+","-","*","/"]}
+  },
+  {
+    "id": "arithmetic24_faces",
+    "name": "含JQK的24点变体",
+    "source": "https://www.pagat.com/adders/24.html",
+    "prompt": "生成单人24点练习，标准52张牌无大小王，A=1、2到10按数字、J=11、Q=12、K=13。每题独立洗牌抽4张，四张各用一次，加减乘除和括号，允许中间分数，目标必须精确24。只出有解题。共2题，答对1分，答错重试，放弃0分并看答案，不计时。",
+    "kind": "arithmetic",
+    "expect": {"target":24,"card_count":4,"max_rounds":2,"rank_values.A":1,"rank_values.J":11,"rank_values.Q":12,"rank_values.K":13,"deal_mode":"solvable","fractional_intermediates":true},
+    "sets": {"deck.ranks":["A","2","3","4","5","6","7","8","9","10","J","Q","K"],"operations":["+","-","*","/"]}
+  },
+  {
+    "id": "blackjack",
+    "name": "无下注21点练习",
+    "source": "https://bicyclecards.com/how-to-play/blackjack/",
+    "prompt": "做无下注21点练习，我对电脑庄家。标准52张，每轮独立洗牌，双方各2张，庄家一张暗牌。A可算1或11，JQK算10。我选择要牌或停牌，超过21立即输，庄家不足17要牌，软17停牌。两张牌21点优先于普通21点，同点平局；双方爆牌按我先爆已输处理。胜者得1分，平局不加分，共3轮。不要下注、保险、分牌或加倍。",
+    "kind": "blackjack",
+    "expect": {"target":21,"max_rounds":3,"dealer_stand_on":17,"dealer_hits_soft_17":false,"natural_beats_21":true,"betting":false,"players.min_players":2,"players.max_players":2,"players.starting_hand_size":2}
+  },
+  {
+    "id": "crazy_eights",
+    "name": "疯狂八：强制出牌、摸至可出变体",
+    "source": "https://www.pagat.com/eights/crazy8s.html",
+    "prompt": "我要两人疯狂八，我对电脑，标准52张，每人5张，翻一张非8的起始牌。必须接同花色或同点数，8是万能牌，打出8时指定花色。有可出牌必须出，没有时一直摸到能出为止，不能摸才跳过。牌堆没牌时回收弃牌重新洗牌，但保留顶牌。其他玩家手牌隐藏。先出完手牌的人赢，只玩1局；全员都无法行动时平局。不加罚摸、跳人或反转效果。",
+    "kind": "shedding",
+    "expect": {"match":"suit_or_rank","wild_rank":"8","draw_policy":"until_playable","recycle_discard":true,"blocked_result":"draw","max_rounds":1,"players.min_players":2,"players.max_players":2,"players.starting_hand_size":5}
+  },
+  {
+    "id": "high_card",
+    "name": "三轮比大小回归",
+    "prompt": "两人比大小，标准52张，花色无大小，2到A从小到大。共3轮，每轮各发1张，双方各出一次后结算，最高牌得1分，平局各1分，轮末牌弃置不放回，总分最高者胜。我是第一人，电脑第二人。",
+    "kind": "legacy",
+    "expect": {"max_rounds":3,"players.min_players":2,"players.max_players":2,"players.starting_hand_size":1}
+  },
+  {
+    "id": "doudizhu",
+    "name": "完整斗地主",
+    "source": "https://www.pagat.com/climbing/doudizhu.html",
+    "prompt": "生成完整三人斗地主，54张含大小王，叫地主、3张底牌，地主对两个农民，支持单张、对子、三带一、顺子、连对、飞机、炸弹、王炸和接牌压制，地主或农民一方先出完牌获胜。不要简化成比大小。",
+    "kind": "unsupported"
+  },
+  {
+    "id": "texas_holdem",
+    "name": "完整德州扑克",
+    "source": "https://bicyclecards.com/how-to-play/texas-holdem-poker/",
+    "prompt": "生成四人德州扑克，两张底牌，大小盲、翻牌、转牌、河牌，支持跟注、加注、弃牌、全下和边池，七选五比较标准扑克大小，筹码结算。我要完整规则，不能删掉下注或牌型。",
+    "kind": "unsupported"
+  },
+  {
+    "id": "bridge",
+    "name": "合约桥牌",
+    "prompt": "生成完整四人合约桥牌，对家组队，发完52张，叫牌定约，明手、将牌、必须跟花色、赢墩、宕墩及成约计分。不要简化。",
+    "kind": "unsupported"
+  },
+  {
+    "id": "old_maid",
+    "name": "抽乌龟",
+    "prompt": "生成三人抽乌龟，标准52张去掉一张Q，发完全部牌，先弃掉所有对子，轮流从下一家的隐藏手牌抽一张，凑成对子就弃掉，最后剩单张Q的人输。",
+    "kind": "unsupported"
+  }
+]

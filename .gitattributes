@@ -1,0 +1,2 @@
+# Preserve vendored card artwork, including upstream whitespace and line endings.
+src/pocker_agent/assets/cards/*.svg -text -whitespace

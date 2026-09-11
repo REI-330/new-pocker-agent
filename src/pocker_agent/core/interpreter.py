@@ -1,0 +1,230 @@
+"""Deterministic interpreter for a ``GamePlan``.
+
+Responsibilities are deliberately narrow:
+- resolve ``$state.a.b`` references (never evaluate code),
+- dispatch only declared operations of declared tools,
+- keep every rejection transactional (state + events + pc roll back),
+- expose ``legal_actions`` for the ``wait`` node, nothing else.
+
+There is no model, no network and no clock in this file, so a session is fully
+reproducible from ``serialize()``.
+"""
+from __future__ import annotations
+
+from copy import deepcopy
+from typing import Any
+
+from .cards import decode, encode
+from .contracts import ToolError, ToolRegistry
+from .plan import GamePlan
+from .tools import evaluate_expression
+
+
+class Interpreter:
+    execution_mode = "core"
+
+    def __init__(self, plan: GamePlan, registry: ToolRegistry, seed: int = 0) -> None:
+        self.plan = plan
+        self.registry = registry
+        self.seed = seed
+        self.tools: dict[str, Any] = {
+            binding.name: registry.create(binding.name, **binding.config)
+            for binding in plan.tools
+        }
+        # Fail fast: a plan naming an operation the host never declared is a
+        # contract violation, not a runtime surprise halfway through a game.
+        for node in plan.nodes.values():
+            if node.action is not None:
+                registry.spec(node.action.tool).operation(node.action.operation)
+        self.state: dict[str, Any] = deepcopy(plan.initial)
+        self.state["seed"] = seed
+        self.state["input"] = {}
+        self.events: list[dict[str, Any]] = []
+        self.pc = plan.entry
+        self.started = False
+
+    # ---------------------------------------------------------------- events
+    def emit(self, event: str, **payload: Any) -> dict[str, Any]:
+        entry = {"event": event, "round": self.state.get("round", 1), **payload}
+        self.events.append(entry)
+        return entry
+
+    # ------------------------------------------------------------ references
+    def resolve(self, value: Any) -> Any:
+        """Resolve ``$state.x.y`` only; other strings stay literal."""
+        if isinstance(value, str) and (value == "$state" or value.startswith("$state.")):
+            path = value[len("$state"):].lstrip(".")
+            if not path:
+                return self.state
+            current: Any = self.state
+            for part in path.split("."):
+                if isinstance(current, dict) and part in current:
+                    current = current[part]
+                elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
+                    current = current[int(part)]
+                else:
+                    raise ToolError(f"state_reference_not_found:{value}")
+            return current
+        if isinstance(value, dict):
+            return {key: self.resolve(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self.resolve(item) for item in value]
+        return value
+
+    # -------------------------------------------------------------- dispatch
+    def _check_predicates(self, predicates, kind: str, action) -> None:
+        """Evaluate a tool contract predicate against the current state.
+
+        A false predicate is a contract violation, not a player error, so it is
+        reported with the operation name and rolled back by the caller.
+        """
+        for predicate in predicates:
+            if not evaluate_expression(self.resolve(predicate)):
+                raise ToolError(f"{kind}_failed:{action.tool}.{action.operation}")
+
+    def call(self, action) -> Any:
+        spec = self.registry.spec(action.tool)
+        operation = spec.operation(action.operation)
+        tool = self.tools[action.tool]
+        method = getattr(tool, operation.method, None)
+        if not callable(method):
+            raise ToolError(f"unknown_tool_operation:{action.tool}.{action.operation}")
+        args = self.resolve(action.args)
+        if not isinstance(args, dict):
+            raise ToolError("tool_args_must_be_object")
+        self._check_predicates(operation.requires, "precondition", action)
+        before = deepcopy(self.state)
+        try:
+            result = method(**args)
+        except ToolError:
+            raise
+        except TypeError as error:
+            raise ToolError(f"invalid_tool_args:{action.tool}.{action.operation}") from error
+        if action.result_key:
+            self.state[action.result_key] = result
+        # Contract enforcement: an operation may only change the state keys it
+        # declared (plus its own result_key). "*" opts out (only state.update).
+        if "*" not in operation.effects:
+            allowed = set(operation.effects)
+            if action.result_key:
+                allowed.add(action.result_key)
+            changed = {key for key in set(before) | set(self.state)
+                       if before.get(key) != self.state.get(key)}
+            offending = sorted(changed - allowed)
+            if offending:
+                raise ToolError("out_of_contract_state_change:" + ",".join(offending))
+        self._check_predicates(operation.ensures, "postcondition", action)
+        self.emit("tool_called", tool=action.tool, operation=action.operation,
+                  result_key=action.result_key)
+        return result
+
+    # ----------------------------------------------------------------- flow
+    def advance(self) -> None:
+        for _ in range(self.plan.step_limit):
+            node = self.plan.nodes[self.pc]
+            if node.kind == "call":
+                self.call(node.action)
+                if self.events and self.events[-1].get("event") == "tool_called":
+                    self.events[-1]["flow_node"] = self.pc
+                self.pc = node.next
+            elif node.kind == "branch":
+                value = self.resolve(node.value)
+                target = next((case.target for case in node.cases
+                               if type(value) is type(case.value) and value == case.value), None)
+                self.pc = target or node.next
+            elif node.kind == "wait":
+                if self.state.get("finished"):
+                    raise ToolError("finished_flow_cannot_wait")
+                self.emit("flow_wait", flow_node=self.pc)
+                return
+            else:  # end
+                if not self.state.get("finished"):
+                    raise ToolError("flow_end_requires_finished_state")
+                self.emit("game_finished", winners=list(self.state.get("winners", [])),
+                          scores=list(self.state.get("scores", [])))
+                return
+        raise ToolError("flow_step_limit")
+
+    def setup(self) -> list[dict[str, Any]]:
+        if self.started:
+            raise ToolError("game_already_started")
+        backup = (deepcopy(self.state), deepcopy(self.events), self.pc)
+        try:
+            self.emit("game_started", kind=self.plan.game_kind, execution_mode=self.execution_mode)
+            self.advance()
+        except Exception:
+            self.state, self.events, self.pc = backup
+            raise
+        self.started = True
+        return self.events
+
+    def legal_actions(self) -> list[str]:
+        node = self.plan.nodes[self.pc]
+        if not self.started or node.kind != "wait" or self.state.get("finished"):
+            return []
+        return list(node.inputs)
+
+    def step(self, action: str | None = None, card_index: int = 0, **payload: Any) -> dict[str, Any]:
+        actions = self.legal_actions()
+        if action is None:
+            action = actions[0] if actions else None
+        matched = action if action in actions else next(
+            (pattern for pattern in actions if pattern.endswith("*")
+             and isinstance(action, str) and action.startswith(pattern[:-1])), None)
+        if matched is None:
+            raise ToolError("illegal_action")
+        backup = (deepcopy(self.state), deepcopy(self.events), self.pc)
+        try:
+            self.state["input"] = {"action": action, "card_index": card_index, **payload}
+            self.pc = self.plan.nodes[self.pc].inputs[matched]
+            self.advance()
+        except Exception:
+            self.state, self.events, self.pc = backup
+            raise
+        return self.events[-1]
+
+    def run(self, max_steps: int = 1024) -> list[dict[str, Any]]:
+        self.setup()
+        for _ in range(max_steps):
+            if self.state.get("finished"):
+                return self.events
+            self.step()
+        raise ToolError("simulation_step_limit")
+
+    # ------------------------------------------------------------ persistence
+    def serialize(self) -> dict[str, Any]:
+        return {"executor": self.execution_mode, "plan": self.plan.model_dump(mode="json"),
+                "seed": self.seed, "pc": self.pc, "started": self.started,
+                "state": encode(self.state), "events": deepcopy(self.events)}
+
+    @classmethod
+    def restore(cls, data: dict[str, Any], registry: ToolRegistry) -> "Interpreter":
+        plan = GamePlan.model_validate(data["plan"])
+        interpreter = cls(plan, registry, seed=data["seed"])
+        interpreter.pc, interpreter.started = data["pc"], data["started"]
+        if interpreter.pc not in plan.nodes:
+            raise ToolError("saved_node_missing")
+        interpreter.state = decode(data["state"])
+        interpreter.events = deepcopy(data["events"])
+        return interpreter
+
+    # ------------------------------------------------------------------ view
+    def view(self) -> dict[str, Any]:
+        state = self.state
+        return {
+            "kind": self.plan.game_kind, "execution_mode": self.execution_mode,
+            "flow_node": self.pc, "round": state.get("round", 1),
+            "max_rounds": state.get("max_rounds", 1), "phase": state.get("phase", self.pc),
+            "current_player": f"player-{int(state.get('current_player', 0)) + 1}",
+            "finished": bool(state.get("finished")), "winners": [
+                f"player-{int(i) + 1}" for i in state.get("winners", [])],
+            "legal_actions": self.legal_actions(),
+            "scores": list(state.get("scores", [])),
+            "table": [card.as_dict() for card in state.get("table", [])],
+            "numbers": list(state.get("numbers", [])),
+            "target": state.get("target"),
+            "reveal": bool(state.get("reveal", False)),
+            "solution": state.get("solution"),
+            "feedback": state.get("feedback", ""),
+            "events": self.events[-100:],
+        }

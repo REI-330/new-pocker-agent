@@ -1,0 +1,78 @@
+{
+  "date": "2026-09-07",
+  "notes": "Live model generation and independent DSL/engine assertions; unsupported is not playable. Earlier failures are documented in docs/mainstream-games-review.md.",
+  "cases": [
+    {
+      "id": "arithmetic24",
+      "name": "24点单人练习",
+      "expected": "arithmetic",
+      "status": "PASS",
+      "seconds": 15.23,
+      "model": "gpt-5.5"
+    },
+    {
+      "id": "arithmetic24_faces",
+      "name": "含JQK的24点变体",
+      "expected": "arithmetic",
+      "status": "PASS",
+      "seconds": 27.59,
+      "model": "gpt-5.5"
+    },
+    {
+      "id": "blackjack",
+      "name": "无下注21点练习",
+      "expected": "blackjack",
+      "status": "PASS",
+      "seconds": 13.87,
+      "model": "gpt-5.5"
+    },
+    {
+      "id": "crazy_eights",
+      "name": "疯狂八：强制出牌、摸至可出变体",
+      "expected": "shedding",
+      "status": "PASS",
+      "seconds": 30.17,
+      "model": "gpt-5.5"
+    },
+    {
+      "id": "high_card",
+      "name": "三轮比大小回归",
+      "expected": "legacy",
+      "status": "PASS",
+      "seconds": 20.5,
+      "model": "gpt-5.5"
+    },
+    {
+      "id": "doudizhu",
+      "name": "完整斗地主",
+      "expected": "unsupported",
+      "status": "CORRECTLY_UNSUPPORTED",
+      "seconds": 8.75,
+      "model": "gpt-5.5"
+    },
+    {
+      "id": "texas_holdem",
+      "name": "完整德州扑克",
+      "expected": "unsupported",
+      "status": "CORRECTLY_UNSUPPORTED",
+      "seconds": 6.47,
+      "model": "gpt-5.5"
+    },
+    {
+      "id": "bridge",
+      "name": "合约桥牌",
+      "expected": "unsupported",
+      "status": "CORRECTLY_UNSUPPORTED",
+      "seconds": 6.55,
+      "model": "gpt-5.5"
+    },
+    {
+      "id": "old_maid",
+      "name": "抽乌龟",
+      "expected": "unsupported",
+      "status": "CORRECTLY_UNSUPPORTED",
+      "seconds": 8.01,
+      "model": "gpt-5.5"
+    }
+  ]
+}

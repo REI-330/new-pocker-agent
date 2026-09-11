@@ -209,8 +209,14 @@ def test_the_prompt_advertises_every_family_the_ir_accepts():
     games designed through the chat before this guard were all `war`.
     """
     from pocker_agent.agent.loop import IR_KINDS, SYSTEM_PROMPT
+    from pocker_agent.agent.meta_tools import TOOL_SCHEMAS
     from pocker_agent.core.ir import REQUIRED_AXES
 
     assert set(IR_KINDS.split(" | ")) == set(REQUIRED_AXES)
     for kind in REQUIRED_AXES:
         assert kind in SYSTEM_PROMPT, kind
+
+    # The same list is served to the design UI through /api/agent/tools.
+    propose = next(tool for tool in TOOL_SCHEMAS if tool["name"] == "propose_ir")
+    for kind in REQUIRED_AXES:
+        assert kind in propose["description"], kind

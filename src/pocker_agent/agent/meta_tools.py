@@ -13,11 +13,24 @@ from typing import Any
 
 from ..core.contracts import ToolError, ToolRegistry
 from ..core.interpreter import Interpreter
-from ..core.ir import ArithmeticIR, WarIR, check_ir, host_compile, is_host_compiled, parse_ir, required_axes
+from ..core.ir import (
+    REQUIRED_AXES,
+    ArithmeticIR,
+    WarIR,
+    check_ir,
+    host_compile,
+    is_host_compiled,
+    parse_ir,
+    required_axes,
+)
 from ..core.plan import GamePlan
 from ..core.playtest import playtest
 from ..core.policy import bot_action
 from ..core.registry import core_registry
+
+# Derived, not hand-written: this string advertised "arithmetic | war" until S8
+# and it is also served to the design UI through /api/agent/tools.
+IR_KIND_LIST = ", ".join(sorted(REQUIRED_AXES))
 
 
 @dataclass
@@ -33,7 +46,7 @@ TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
     {"name": "ask_user", "args": {"question": "string", "missing": "string[]"},
      "description": "规则缺少关键字段时集中提问一次。"},
     {"name": "propose_ir", "args": {"ir": "RulesIR"},
-     "description": "提交严谨规则草案（kind = arithmetic | war）。"},
+     "description": f"提交严谨规则草案（kind = {IR_KIND_LIST}）。"},
     {"name": "patch_ir", "args": {"values": "object"},
      "description": "在现有 IR 上按字段打补丁（例如 {\"max_rounds\": 5}）。"},
     {"name": "capability_check", "args": {},

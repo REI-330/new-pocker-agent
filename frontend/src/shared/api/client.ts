@@ -1,5 +1,5 @@
-import type {ActionPayload, ActionResponse, Coverage, GameInfo, LoopResult, MetaTool,
-  ModelConfig, SessionState} from './types'
+import type {ActionPayload, ActionResponse, ChatMessage, Coverage, GameInfo, LoopResult,
+  MetaTool, ModelConfig, SessionState} from './types'
 
 export const API = import.meta.env.VITE_API_URL || ''
 
@@ -37,8 +37,10 @@ export const api = {
   act: (sessionId: string, action: string, payload: ActionPayload) =>
     request<ActionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/actions/${encodeURIComponent(action)}`, payload),
   agentTools: () => request<{meta_tools: MetaTool[]}>('/api/agent/tools'),
-  runLoop: (goal: string, max_steps = 12) =>
-    request<LoopResult>('/api/agent/loop', {goal, max_steps}),
+  runLoop: (message: string, messages: ChatMessage[] = [], max_steps = 12) =>
+    request<LoopResult>('/api/agent/loop', {message, messages, max_steps}),
+  listModels: (body: {base_url: string; api_key: string; model?: string}) =>
+    request<{models: string[]; base_url: string}>('/api/agent/models', body),
   getConfig: () => request<ModelConfig>('/api/agent/config'),
   saveConfig: (body: {base_url: string; model: string; api_key: string}) =>
     request<ModelConfig>('/api/agent/config', body),

@@ -7,6 +7,7 @@ playtest gate: reference games at build time, agent-composed games at
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -27,6 +28,13 @@ class SessionInput(BaseModel):
     seed: int | None = None
 
 
+class ChatTurn(BaseModel):
+    """One prior chat turn, so a design conversation can span requests."""
+
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=4000)
+
+
 class ActionInput(BaseModel):
     revision: int = Field(ge=0)
     card_index: int = Field(default=0, ge=0)
@@ -36,7 +44,9 @@ class ActionInput(BaseModel):
 
 
 class LoopInput(BaseModel):
-    goal: str = Field(min_length=1, max_length=4000)
+    message: str = Field(default="", max_length=4000)
+    goal: str = Field(default="", max_length=4000)          # kept for older clients
+    messages: list[ChatTurn] = Field(default_factory=list, max_length=60)
     max_steps: int = Field(default=12, ge=1, le=24)
 
 
@@ -117,7 +127,12 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
 
     @app.post("/api/agent/loop")
     def agent_loop(payload: LoopInput):
-        result = run_loop(payload.goal, make_model(), max_steps=payload.max_steps)
+        goal = (payload.message or payload.goal).strip()
+        if not goal:
+            raise ValueError("请输入玩法描述")
+        result = run_loop(goal, make_model(),
+                          history=[message.model_dump() for message in payload.messages],
+                          max_steps=payload.max_steps)
         if result.finalized and result.plan and result.ir:
             store.register_plan(result.ir["game_id"], result.plan, result.playtest or {},
                                 result.ir.get("title", ""))

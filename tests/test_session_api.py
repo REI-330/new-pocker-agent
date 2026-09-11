@@ -19,6 +19,40 @@ def action_path(session_id: str, action: str) -> str:
     return f"/api/sessions/{session_id}/actions/{action}"
 
 
+def test_agent_loop_supports_a_multi_turn_conversation_over_http(tmp_path):
+    """The chat flow: ask a question, then answer it, then get a playable rule."""
+    model = _ScriptedModel(
+        _decision("ask_user", question="一共几轮？", missing=["max_rounds"]),
+        _decision("propose_ir", ir={"kind": "war", "game_id": "agent-chat-war",
+                                     "title": "对话生成比大小", "max_rounds": 5, "players": 2}),
+        _decision("compose_plan"),
+        _decision("playtest"),
+        _decision("finalize"),
+    )
+    c = TestClient(create_app(tmp_path / "loop.db", model_factory=lambda: model))
+
+    first = c.post("/api/agent/loop", json={"message": "做个比大小的游戏"}).json()
+    assert first["kind"] == "question", first
+    assert len(first["messages"]) == 2 and first["messages"][1]["content"] == "一共几轮？"
+
+    second = c.post("/api/agent/loop",
+                    json={"message": "5 轮", "messages": first["messages"]}).json()
+    assert second["finalized"] is True, second
+    assert second["ir"]["max_rounds"] == 5
+    assert second["messages"][:2] == first["messages"]      # thread preserved
+    assert second["messages"][-1]["role"] == "assistant"
+
+    games = c.get("/api/games").json()["games"]
+    assert any(game["id"] == "agent-chat-war" for game in games)
+    state = c.post("/api/sessions", json={"game_id": "agent-chat-war", "seed": 3}).json()
+    assert state["legal_actions"] == ["play"]
+
+
+def test_agent_loop_rejects_an_empty_message(tmp_path):
+    c = client(tmp_path)
+    assert c.post("/api/agent/loop", json={"message": "   "}).status_code == 422
+
+
 def test_served_page_references_resolve(tmp_path):
     """The single-port page must load its bundle: /assets is the card mount."""
     built = Path(__file__).resolve().parents[1] / "frontend" / "dist" / "index.html"

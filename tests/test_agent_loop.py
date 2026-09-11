@@ -134,6 +134,42 @@ def test_loop_asks_once_when_the_goal_is_incomplete():
     result = run_loop("做个比大小的游戏", model)
     assert result.kind == "question" and "几轮" in result.message
     assert result.attempts == 1
+    assert result.messages == [{"role": "user", "content": "做个比大小的游戏"},
+                               {"role": "assistant", "content": "共有几轮？"}]
+
+
+def test_loop_continues_a_multi_turn_conversation():
+    first = ScriptedModel(decision("ask_user", question="共有几轮？", missing=["max_rounds"]))
+    asked = run_loop("做个比大小的游戏", first)
+    assert asked.kind == "question" and len(asked.messages) == 2
+
+    second = ScriptedModel(
+        decision("propose_ir", ir=war(max_rounds=5)),
+        decision("compose_plan"),
+        decision("playtest"),
+        decision("finalize"),
+    )
+    done = run_loop("5 轮", second, history=asked.messages)
+    assert done.finalized is True
+    assert done.ir["max_rounds"] == 5
+    # the history is carried forward, so the client can keep the thread
+    assert done.messages[:2] == asked.messages
+    assert done.messages[-2] == {"role": "user", "content": "5 轮"}
+    assert done.messages[-1]["role"] == "assistant" and "已生成" in done.messages[-1]["content"]
+
+
+def test_clean_history_drops_tool_transcript_noise():
+    from pocker_agent.agent.loop import clean_history
+
+    kept = clean_history([
+        {"role": "user", "content": "做UNO"},
+        {"role": "assistant", "content": "{\"tool\": \"propose_ir\"}"},   # tool json is still a turn
+        {"role": "tool", "content": "observation: ..."},                    # dropped
+        {"role": "user", "content": ""},                                   # dropped
+        "not a dict",
+    ])
+    assert kept == [{"role": "user", "content": "做UNO"},
+                    {"role": "assistant", "content": "{\"tool\": \"propose_ir\"}"}]
 
 
 def test_loop_ships_a_model_authored_plan_and_it_becomes_playable():

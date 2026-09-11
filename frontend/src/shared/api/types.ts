@@ -38,6 +38,7 @@ export type ActionPayload = {
 export type ActionResponse = {event: GameEvent; new_events: GameEvent[]; state: SessionState}
 
 export type MetaTool = {name: string; args: Record<string, string>; description: string}
+export type ChatMessage = {role: 'user' | 'assistant'; content: string}
 export type LoopObservation = {
   step: number; ok: boolean; tool: string | null; error?: string; kind?: string
   question?: string; message?: string; game_kind?: string
@@ -52,6 +53,7 @@ export type LoopResult = {
   finalized: boolean
   attempts: number
   observations: LoopObservation[]
+  messages: ChatMessage[]
 }
 export type ModelConfig = {
   configured: boolean; has_key: boolean; base_url: string; model: string

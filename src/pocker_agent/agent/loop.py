@@ -44,11 +44,13 @@ class AgentResult:
     finalized: bool = False
     attempts: int = 0
     observations: list[dict[str, Any]] = field(default_factory=list)
+    messages: list[dict[str, str]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {"kind": self.kind, "message": self.message, "ir": self.ir, "plan": self.plan,
                 "playtest": self.playtest, "finalized": self.finalized,
-                "attempts": self.attempts, "observations": self.observations}
+                "attempts": self.attempts, "observations": self.observations,
+                "messages": self.messages}
 
 
 def parse_decision(raw: Any) -> dict[str, Any]:
@@ -89,18 +91,33 @@ def _summary(state: LoopState) -> str:
     return "\n".join(lines)
 
 
-def run_loop(goal: str, model, *, registry: ToolRegistry | None = None,
+def clean_history(history: Any, limit: int = 40) -> list[dict[str, str]]:
+    """Keep only real chat turns; the tool-call transcript is not replayed."""
+    if not history:
+        return []
+    kept: list[dict[str, str]] = []
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        role, content = item.get("role"), item.get("content")
+        if role in {"user", "assistant"} and isinstance(content, str) and content.strip():
+            kept.append({"role": role, "content": content[:4000]})
+    return kept[-limit:]
+
+
+def run_loop(goal: str, model, *, history: Any = None, registry: ToolRegistry | None = None,
              seeds: tuple[int, ...] = (0, 7, 23), max_steps: int = 12) -> AgentResult:
+    """One design turn. ``history`` is the prior chat; the result carries the new one."""
     registry = registry or core_registry()
     state = LoopState(goal=goal)
-    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT},
-                                      {"role": "user", "content": goal}]
+    chat: list[dict[str, str]] = [*clean_history(history), {"role": "user", "content": goal}]
+    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}, *chat]
     for step in range(max_steps):
         try:
             raw = model.complete(messages)
         except Exception as error:  # transport/credential failures end the budget
-            return AgentResult("error", f"model_failed:{error}",
-                               observations=state.observations, attempts=step)
+            return AgentResult("error", f"model_failed:{error}", observations=state.observations,
+                               attempts=step, messages=chat)
 
         try:
             decision = parse_decision(raw)
@@ -125,16 +142,20 @@ def run_loop(goal: str, model, *, registry: ToolRegistry | None = None,
         messages.append({"role": "user", "content": observation_text(observation)})
 
         if observation.get("kind") == "question":
+            chat.append({"role": "assistant", "content": observation["question"]})
             return AgentResult("question", observation["question"],
-                               observations=state.observations, attempts=step + 1)
+                               observations=state.observations, attempts=step + 1, messages=chat)
         if observation.get("kind") == "unsupported":
+            chat.append({"role": "assistant", "content": observation["message"]})
             return AgentResult("unsupported", observation["message"],
-                               observations=state.observations, attempts=step + 1)
+                               observations=state.observations, attempts=step + 1, messages=chat)
         if tool == "finalize" and observation.get("ok"):
             ir = state.ir.model_dump(mode="json") if state.ir is not None else None
-            return AgentResult("proposal", _summary(state), ir=ir, plan=state.plan,
+            summary = _summary(state)
+            chat.append({"role": "assistant", "content": summary})
+            return AgentResult("proposal", summary, ir=ir, plan=state.plan,
                                playtest=state.report, finalized=True,
-                               observations=state.observations, attempts=step + 1)
+                               observations=state.observations, attempts=step + 1, messages=chat)
 
     return AgentResult("error", "budget_exhausted: 达到步数上限仍未冻结计划",
-                       observations=state.observations, attempts=max_steps)
+                       observations=state.observations, attempts=max_steps, messages=chat)

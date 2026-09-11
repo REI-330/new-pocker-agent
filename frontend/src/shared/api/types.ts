@@ -34,3 +34,24 @@ export type ActionPayload = {
   revision: number; card_index?: number; expression?: string; declared_suit?: string
 }
 export type ActionResponse = {event: GameEvent; new_events: GameEvent[]; state: SessionState}
+
+export type MetaTool = {name: string; args: Record<string, string>; description: string}
+export type LoopObservation = {
+  step: number; ok: boolean; tool: string | null; error?: string; kind?: string
+  question?: string; message?: string; game_kind?: string
+  covered_wait_nodes?: string[]
+}
+export type LoopResult = {
+  kind: string
+  message: string
+  ir: Record<string, unknown> | null
+  plan: Record<string, unknown> | null
+  playtest: Playtest | null
+  finalized: boolean
+  attempts: number
+  observations: LoopObservation[]
+}
+export type ModelConfig = {
+  configured: boolean; has_key: boolean; base_url: string; model: string
+  warning?: string | null
+}

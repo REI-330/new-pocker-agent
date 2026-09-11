@@ -4,18 +4,17 @@ One deterministic path: a validated ``GamePlan`` is interpreted by
 ``Interpreter``, which dispatches only declared tool operations from a
 ``ToolRegistry``. ``playtest`` is the gate that a plan must pass before it can
 be shown as playable.
-
-The old ``engine.py`` / ``family_engines.py`` chain is intentionally not
-imported here; this package is the strangler target.
 """
 from .capability import AXES, Capability, CapabilityReport, capability_check, capability_matrix
 from .cards import CardRef, decode, encode
 from .contracts import Observation, OperationSpec, ToolError, ToolRegistry, ToolSpec
 from .corpus import coverage_report, load_corpus
 from .interpreter import Interpreter
+from .invariants import card_conservation, never_finishes_without_winners_or_scores
+from .ir import ArithmeticIR, RulesIR, WarIR, check_ir, host_compile, is_host_compiled, parse_ir, required_axes
 from .plan import FlowCase, FlowNode, GamePlan, ToolBinding, ToolCall
-from .plans import arithmetic_plan
-from .playtest import PlaytestReport, boundary_first, first_legal, playtest, random_legal
+from .plans import arithmetic_plan, war_plan
+from .playtest import PlaytestReport, boundary_first, first_legal, playtest, random_legal, resilient_first
 from .reference import REFERENCE_GAMES, build_plan, ensure_playtested, list_reference_games
 from .registry import core_registry
 from .session import Session, SessionStore
@@ -23,6 +22,7 @@ from .session import Session, SessionStore
 __all__ = [
     "AXES",
     "REFERENCE_GAMES",
+    "ArithmeticIR",
     "Capability",
     "CapabilityReport",
     "CardRef",
@@ -33,6 +33,7 @@ __all__ = [
     "Observation",
     "OperationSpec",
     "PlaytestReport",
+    "RulesIR",
     "Session",
     "SessionStore",
     "ToolBinding",
@@ -40,19 +41,29 @@ __all__ = [
     "ToolError",
     "ToolRegistry",
     "ToolSpec",
+    "WarIR",
     "arithmetic_plan",
     "boundary_first",
     "build_plan",
     "capability_check",
     "capability_matrix",
+    "card_conservation",
+    "check_ir",
     "core_registry",
     "coverage_report",
     "decode",
     "encode",
     "ensure_playtested",
     "first_legal",
+    "host_compile",
+    "is_host_compiled",
     "list_reference_games",
     "load_corpus",
+    "never_finishes_without_winners_or_scores",
+    "parse_ir",
     "playtest",
     "random_legal",
+    "required_axes",
+    "resilient_first",
+    "war_plan",
 ]

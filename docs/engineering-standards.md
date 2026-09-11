@@ -95,6 +95,17 @@ S4             覆盖度量与交付（横切，贯穿始终）
 | 准出证据 | ① 2 个族（arithmetic + shedding）端到端无人工通过；② 故意注入错误 plan，loop 能修好；③ 超出预算时有明确失败 |
 | 预算 | loop 步数 / token / 时间 各设上限并在测试中断言 |
 
+**S1 准出状态：已完成（核心闭环）。**
+
+- `core/ir.py`：`RulesIR`（arithmetic / war，判别联合）+ `host_compile` + `required_axes` + `check_ir`。
+- `agent/meta_tools.py` + `agent/loop.py`：11 个元工具（ask_user / propose_ir / patch_ir / capability_check / compose_plan / validate_plan / simulate / playtest / finalize / unsupported）、observation 回灌、步数预算、`finalize` 宿主门槛。
+- 新增机制工具 `deck` / `rank_compare` / `winner_resolve`；`rank_compare` 由 planned 升为 **stable**（11 个语料玩法需要它）；新增 planned 轴 `point_total`（软 A 求和），因此 blackjack 仍**不可表达**（诚实，不滥用 axis 标签）。
+- 覆盖：`arithmetic24` + `war` 可表达（2/30）。
+- 测试：`test_ir_and_war.py`、`test_agent_loop.py`（预算耗尽 / 非 JSON 输出修复 / plan 失败后修复 / finalize 前必须过 playtest / unsupported）；HTTP 链路 `test_session_api.py::test_agent_composes_a_game_and_it_becomes_playable_over_http`。
+- 真实端到端：`scripts/e2e_smoke.py` 16 项（含 `agent_meta_tools_exposed`、未配置模型时安全失败）。
+- 前端：新增「新建玩法」（goal → 元工具 → observation 日志 → 开始试玩）与「模型设置」。
+- 有意未做：仍用“JSON 决策”文本协议而非 OpenAI function-calling（接口可替换）；`agent_compose` 仅在已知族回退到 `host_compile`，新机制仍走 `unsupported`。
+
 ### S2 · RulesIR + 编译 + 关键 axis
 
 **目标**：从"能生成"到"覆盖大部分常见玩法的组合"。

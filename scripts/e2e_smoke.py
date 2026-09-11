@@ -101,6 +101,14 @@ def main() -> None:
     status, _ = request("/assets/cards/ace_of_spades.svg")
     check("card_assets_served", status == 200, str(status))
 
+    status, tools = request("/api/agent/tools")
+    check("agent_meta_tools_exposed",
+          status == 200 and any(tool["name"] == "finalize" for tool in tools["meta_tools"]),  # type: ignore[index]
+          str(status))
+    status, denied = request("/api/agent/loop", "POST", {"goal": "做一个比大小"})
+    check("agent_loop_fails_safely_without_model",
+          status == 422 and "模型配置" in str(denied), str(status))
+
     print(f"\n{len(PASSED)} checks passed against {BASE}")
 
 

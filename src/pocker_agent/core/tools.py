@@ -65,6 +65,8 @@ def evaluate_expression(expression: Any, _depth: int = 0) -> Any:
         return not values[0]
     if operation == "count" and len(values) == 1:
         return len(values[0])
+    if operation == "join":
+        return "".join(str(value) for value in values)
     raise ToolError(f"unknown_expression_operation:{operation}")
 
 
@@ -163,3 +165,65 @@ class ScoreSettleTool:
         for winner in winners:
             settled[winner] += points
         return settled
+
+
+class DeckTool:
+    """Generic deck: deterministic shuffle and deal. Strength = rank order."""
+
+    def __init__(self, ranks: Any, suits: Any, copies: int = 1) -> None:
+        self.ranks, self.suits = list(ranks), list(suits)
+        self.copies = int(copies)
+        if not self.ranks or not self.suits or self.copies < 1:
+            raise ToolError("invalid_deck_configuration")
+
+    def catalog(self) -> list[CardRef]:
+        return [CardRef(f"{rank}{suit}", rank, suit, index + 1)
+                for _ in range(self.copies)
+                for index, rank in enumerate(self.ranks)
+                for suit in self.suits]
+
+    def shuffled(self, seed: Any) -> list[CardRef]:
+        deck = self.catalog()
+        random.Random(str(seed)).shuffle(deck)
+        return deck
+
+    def deal(self, seed: Any, hands: int, cards_each: int = 1, kitty: int = 0) -> dict[str, Any]:
+        if type(hands) is not int or type(cards_each) is not int or hands < 1 or cards_each < 1:
+            raise ToolError("invalid_deal_parameters")
+        deck = self.shuffled(seed)
+        if hands * cards_each + kitty > len(deck):
+            raise ToolError("deck_exhausted")
+        dealt = [deck[index * cards_each:(index + 1) * cards_each] for index in range(hands)]
+        rest = deck[hands * cards_each:]
+        return {"hands": dealt, "kitty": rest[:kitty], "deck": rest[kitty:]}
+
+
+class RankCompareTool:
+    """Compare card groups by strength; never knows a game's ranking system."""
+
+    @staticmethod
+    def _best(cards: Any) -> CardRef | None:
+        if isinstance(cards, CardRef):
+            return cards
+        if isinstance(cards, list) and cards:
+            return max(cards, key=lambda card: card.value)
+        return None
+
+    def call(self, left: Any, right: Any) -> dict[str, Any]:
+        best_left, best_right = self._best(left), self._best(right)
+        if best_left is None or best_right is None:
+            raise ToolError("compare_requires_cards_on_both_sides")
+        outcome = "tie" if best_left.value == best_right.value else ("left" if best_left.value > best_right.value else "right")
+        return {"outcome": outcome, "left": best_left.value, "right": best_right.value}
+
+
+class WinnerResolveTool:
+    """Indices of the maximum value (or minimum when requested)."""
+
+    def call(self, values: list[int], mode: str = "max") -> list[int]:
+        if not isinstance(values, list) or not values:
+            raise ToolError("winner_resolve_requires_values")
+        if mode not in {"max", "min"}:
+            raise ToolError("invalid_winner_mode")
+        target = max(values) if mode == "max" else min(values)
+        return [index for index, value in enumerate(values) if value == target]

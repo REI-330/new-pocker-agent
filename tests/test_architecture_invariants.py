@@ -13,7 +13,6 @@ import ast
 from pathlib import Path
 
 from pocker_agent.core import core_registry
-from pocker_agent.core.plans import arithmetic_plan
 
 CORE_DIR = Path(__file__).resolve().parents[1] / "src" / "pocker_agent" / "core"
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "pocker_agent" / "app.py"
@@ -107,6 +106,10 @@ def test_only_state_tool_may_write_arbitrary_keys():
 
 def test_every_registered_tool_is_used_by_a_reference_plan():
     """No dead tools: an unused registration is bloat and must be removed."""
-    used = {binding.name for binding in arithmetic_plan().tools}
+    from pocker_agent.core.reference import REFERENCE_GAMES
+
+    used: set[str] = set()
+    for game in REFERENCE_GAMES.values():
+        used |= {binding.name for binding in game.build().tools}
     assert set(core_registry().names()) == used, (
         f"unused core tools: {sorted(set(core_registry().names()) - used)}")

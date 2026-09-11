@@ -1,18 +1,22 @@
 import {useCallback, useEffect, useState} from 'react'
 import {Pill} from './components/ui'
+import {DesignPage} from './features/design/DesignPage'
 import {LibraryPage} from './features/library/LibraryPage'
 import {ReplayPage} from './features/replay/ReplayPage'
 import {RulesPage} from './features/rules/RulesPage'
+import {SettingsPage} from './features/settings/SettingsPage'
 import {WorkspacePage} from './features/workspace/WorkspacePage'
 import {api, messageOf, type Coverage, type GameInfo, type SessionState} from './shared/api'
 
-type Route = 'library' | 'rules' | 'workspace' | 'replay'
+type Route = 'library' | 'design' | 'rules' | 'workspace' | 'replay' | 'settings'
 
 const NAV: Array<{id: Route; label: string; glyph: string}> = [
   {id: 'library', label: '玩法库', glyph: '♠'},
+  {id: 'design', label: '新建玩法', glyph: '✦'},
   {id: 'rules', label: '规则与能力', glyph: '♦'},
   {id: 'workspace', label: '试玩工作台', glyph: '♣'},
   {id: 'replay', label: '回放与诊断', glyph: '↺'},
+  {id: 'settings', label: '模型设置', glyph: '⚙'},
 ]
 
 export function App() {
@@ -24,12 +28,6 @@ export function App() {
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    api.games()
-      .then(data => { setGames(data.games); setCoverage(data.coverage) })
-      .catch(err => setError(messageOf(err)))
-  }, [])
-
   const currentGame = games.find(game => game.id === gameId) ?? null
 
   const run = useCallback(async (label: string, task: () => Promise<void>) => {
@@ -38,11 +36,19 @@ export function App() {
   }, [])
 
   const openGame = (id: string) => { setGameId(id); setSession(null); setRoute('rules') }
-  const start = () => {
-    if (!gameId) return
+  const refreshGames = useCallback(() => {
+    api.games().then(data => { setGames(data.games); setCoverage(data.coverage) })
+      .catch(err => setError(messageOf(err)))
+  }, [])
+  useEffect(refreshGames, [refreshGames])
+  const start = (target?: string) => {
+    const id = target ?? gameId
+    if (!id) return
     void run('开始试玩', async () => {
-      setSession(await api.createSession(gameId))
+      setGameId(id)
+      setSession(await api.createSession(id))
       setRoute('workspace')
+      refreshGames()
     })
   }
   const act = (action: string, payload: Record<string, unknown>) => {
@@ -99,13 +105,15 @@ export function App() {
         <div><strong>{error}</strong><small>操作未提交；状态保持不变。</small></div></div>}
 
       {route === 'library' && <LibraryPage games={games} coverage={coverage} onOpen={openGame} />}
-      {route === 'rules' && <RulesPage game={currentGame} coverage={coverage} onPlay={start} />}
+      {route === 'design' && <DesignPage onPlay={id => start(id)} />}
+      {route === 'settings' && <SettingsPage />}
+      {route === 'rules' && <RulesPage game={currentGame} coverage={coverage} onPlay={() => start()} />}
       {route === 'workspace' && (session
-        ? <WorkspacePage state={session} busy={!!busy} onAct={act} onRestart={start} onRefresh={refresh} />
+        ? <WorkspacePage state={session} busy={!!busy} onAct={act} onRestart={() => start()} onRefresh={refresh} />
         : <div className="prototype-page workspace-page">
             <div className="page-heading"><div><span className="eyebrow">03 / PLAYTEST</span>
               <h1>试玩工作台</h1><p>先选择一个玩法，然后开始一局。</p></div></div>
-            <button className="action-primary" disabled={!currentGame} onClick={start}>开始试玩</button>
+            <button className="action-primary" disabled={!currentGame} onClick={() => start()}>开始试玩</button>
           </div>)}
       {route === 'replay' && <ReplayPage state={session} />}
     </section>

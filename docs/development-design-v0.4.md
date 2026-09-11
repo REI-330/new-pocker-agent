@@ -894,8 +894,11 @@ team             █              1
 - [x] 摘除旧引擎生产路径（`api` / `family_engines` / `engine` / `executors` / `runtime` / `simulation` / `game_rules` / `validation` / `exporting` / `agent` / `models`）；删除积压归零；删除前已抽取 `benchmarks/oracle/` 黄金 trace
 
 **P1**
-- [ ] `core/ir.py`：`RulesIR` + `host_compile`
-- [ ] `agent/meta_tools.py` + `agent/loop.py`
+- [x] `core/ir.py`：`RulesIR` + `host_compile`
+- [x] `agent/meta_tools.py` + `agent/loop.py`（含 budget / finalize 门槛 / observation 回灌）
+- [x] 新增机制工具 `deck` / `rank_compare` / `winner_resolve`；`rank_compare` → stable
+- [x] 前端「新建玩法」+「模型设置」
+- [x] 真实端到端覆盖整条链路（16 项；HTTP 层 also 覆盖 agent→compose→play）
 
 **P2**
 - [ ] `capability_check` + 语料库 + 覆盖率报表

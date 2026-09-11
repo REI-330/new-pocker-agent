@@ -12,8 +12,8 @@ from functools import lru_cache
 
 from .interpreter import Interpreter
 from .plan import GamePlan
-from .plans import arithmetic_plan
-from .playtest import PlaytestReport, playtest
+from .plans import arithmetic_plan, war_plan
+from .playtest import PlaytestReport, first_legal, playtest
 from .registry import core_registry
 
 RANK_VALUES = {"A": 1, **{str(n): n for n in range(2, 11)}, "J": 11, "Q": 12, "K": 13}
@@ -46,9 +46,14 @@ def _arithmetic24() -> GamePlan:
                            rank_values=RANK_VALUES, deck_ranks=DECK_RANKS, deck_suits=DECK_SUITS)
 
 
+def _war() -> GamePlan:
+    return war_plan(max_rounds=3)
+
+
 REFERENCE_GAMES: dict[str, ReferenceGame] = {
     "arithmetic24": ReferenceGame("arithmetic24", "24点 / 四则算式练习", "arithmetic",
                                   _arithmetic24, _solve_or_claim_none),
+    "war": ReferenceGame("war", "War 比大小", "war", _war, first_legal),
 }
 
 

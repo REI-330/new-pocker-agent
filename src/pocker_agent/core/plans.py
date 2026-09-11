@@ -92,3 +92,78 @@ def arithmetic_plan(*, target: int = 24, max_rounds: int = 3, card_count: int = 
                "instructions": "每张牌恰好使用一次；允许括号与 " + " ".join(operations) + "；结果必须精确等于目标。"}
     return GamePlan(game_kind="arithmetic", players=1, tools=tools, initial=initial,
                     entry="deal", nodes=nodes, step_limit=512)
+
+
+def war_plan(*, max_rounds: int = 3,
+             ranks=("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"),
+             suits=("S", "H", "D", "C")) -> GamePlan:
+    """Two-player rank duel: each round both draw one card; the higher card scores.
+
+    Contract this plan implements (and playtest enforces): ``max_rounds``
+    independent deals, one point to the higher card, ties score nothing, and
+    the highest total wins (ties are shared).
+    """
+    tools = [
+        {"name": "state"},
+        {"name": "logic"},
+        {"name": "deck", "config": {"ranks": list(ranks), "suits": list(suits)}},
+        {"name": "rank_compare"},
+        {"name": "score_settle"},
+        {"name": "winner_resolve"},
+    ]
+    nodes = {
+        "round_seed": {"kind": "call", "next": "deal", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"join": ["$state.seed", ":", "$state.round"]}},
+            "result_key": "round_seed"}},
+        "deal": {"kind": "call", "next": "init", "action": {
+            "tool": "deck", "operation": "deal",
+            "args": {"seed": "$state.round_seed", "hands": 2, "cards_each": 1},
+            "result_key": "deal"}},
+        "init": {"kind": "call", "next": "wait", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {
+                "hands": "$state.deal.hands", "phase": "play"}}}},
+        "wait": {"kind": "wait", "inputs": {"play": "judge"}},
+        "judge": {"kind": "call", "next": "verdict_branch", "action": {
+            "tool": "rank_compare", "operation": "call",
+            "args": {"left": "$state.hands.0", "right": "$state.hands.1"},
+            "result_key": "verdict"}},
+        "verdict_branch": {"kind": "branch", "value": "$state.verdict.outcome",
+                           "cases": [{"value": "left", "target": "score_left"},
+                                     {"value": "right", "target": "score_right"}],
+                           "next": "round_check"},
+        "score_left": {"kind": "call", "next": "round_check", "action": {
+            "tool": "score_settle", "operation": "call",
+            "args": {"scores": "$state.scores", "winners": [0], "points": 1},
+            "result_key": "scores"}},
+        "score_right": {"kind": "call", "next": "round_check", "action": {
+            "tool": "score_settle", "operation": "call",
+            "args": {"scores": "$state.scores", "winners": [1], "points": 1},
+            "result_key": "scores"}},
+        "round_check": {"kind": "call", "next": "round_branch", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"ge": ["$state.round", "$state.max_rounds"]}},
+            "result_key": "at_end"}},
+        "round_branch": {"kind": "branch", "value": "$state.at_end",
+                         "cases": [{"value": True, "target": "resolve"}], "next": "bump"},
+        "bump": {"kind": "call", "next": "apply_round", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"add": ["$state.round", 1]}}, "result_key": "next_round"}},
+        "apply_round": {"kind": "call", "next": "round_seed", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {"round": "$state.next_round", "phase": "play"}}}},
+        "resolve": {"kind": "call", "next": "finish", "action": {
+            "tool": "winner_resolve", "operation": "call",
+            "args": {"values": "$state.scores"}, "result_key": "winners_indexes"}},
+        "finish": {"kind": "call", "next": "end", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {
+                "finished": True, "winners": "$state.winners_indexes", "phase": "finished"}}}},
+        "end": {"kind": "end"},
+    }
+    initial = {"finished": False, "winners": [], "scores": [0, 0], "current_player": 0,
+               "round": 1, "max_rounds": max_rounds, "phase": "play",
+               "instructions": "每轮各抽一张，点数大者得 1 分；最后总分高者获胜（并列平局）。"}
+    return GamePlan(game_kind="war", players=2, tools=tools, initial=initial,
+                    entry="round_seed", nodes=nodes, step_limit=256)

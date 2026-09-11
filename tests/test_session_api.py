@@ -112,3 +112,63 @@ def test_playtest_gate_blocks_a_failing_game(tmp_path, monkeypatch):
     blocked = c.post("/api/sessions", json={"game_id": "arithmetic24", "seed": 7})
     assert blocked.status_code == 422
     assert "game_not_playtested" in blocked.json()["detail"]
+
+
+# ------------------------------------------------------- agent loop over HTTP
+
+class _ScriptedModel:
+    def __init__(self, *responses: str) -> None:
+        self.responses = list(responses)
+        self.calls = 0
+
+    def complete(self, messages, **kwargs):
+        response = self.responses[self.calls]
+        self.calls += 1
+        return response
+
+
+def _decision(tool: str, **args) -> str:
+    import json
+    return json.dumps({"tool": tool, "args": args})
+
+
+def test_agent_composes_a_game_and_it_becomes_playable_over_http(tmp_path):
+    model = _ScriptedModel(
+        _decision("propose_ir", ir={"kind": "war", "game_id": "agent-war",
+                                     "title": "Agent 比大小", "max_rounds": 3, "players": 2}),
+        _decision("capability_check"),
+        _decision("compose_plan"),
+        _decision("playtest"),
+        _decision("finalize"),
+    )
+    c = TestClient(create_app(tmp_path / "agent.db", model_factory=lambda: model))
+
+    tools = c.get("/api/agent/tools").json()
+    assert any(tool["name"] == "finalize" for tool in tools["meta_tools"])
+
+    result = c.post("/api/agent/loop", json={"goal": "做一个两人各抽一张比大小的游戏"}).json()
+    assert result["kind"] == "proposal" and result["finalized"] is True, result
+    assert result["playtest"]["ok"] is True
+
+    game_id = result["ir"]["game_id"]
+    games = c.get("/api/games").json()["games"]
+    assert any(game["id"] == game_id and game.get("source") == "agent_compose" for game in games)
+
+    state = c.post("/api/sessions", json={"game_id": game_id, "seed": 3}).json()
+    session_id = state["session_id"]
+    for _ in range(20):
+        if state["finished"]:
+            break
+        response = c.post(f"/api/sessions/{session_id}/actions/play",
+                          json={"revision": state["revision"]})
+        assert response.status_code == 200, response.text
+        state = response.json()["state"]
+    assert state["finished"] is True
+    assert state["scores"] and sum(state["scores"]) > 0
+
+
+def test_agent_loop_fails_safely_without_a_model(tmp_path):
+    c = client(tmp_path)
+    response = c.post("/api/agent/loop", json={"goal": "做一个比大小"})
+    assert response.status_code == 422
+    assert "模型配置" in response.json()["detail"]

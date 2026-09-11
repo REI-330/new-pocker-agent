@@ -1,4 +1,5 @@
-import type {ActionPayload, ActionResponse, Coverage, GameInfo, SessionState} from './types'
+import type {ActionPayload, ActionResponse, Coverage, GameInfo, LoopResult, MetaTool,
+  ModelConfig, SessionState} from './types'
 
 export const API = import.meta.env.VITE_API_URL || ''
 
@@ -35,6 +36,12 @@ export const api = {
   getSession: (sessionId: string) => request<SessionState>(`/api/sessions/${encodeURIComponent(sessionId)}`),
   act: (sessionId: string, action: string, payload: ActionPayload) =>
     request<ActionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/actions/${encodeURIComponent(action)}`, payload),
+  agentTools: () => request<{meta_tools: MetaTool[]}>('/api/agent/tools'),
+  runLoop: (goal: string, max_steps = 12) =>
+    request<LoopResult>('/api/agent/loop', {goal, max_steps}),
+  getConfig: () => request<ModelConfig>('/api/agent/config'),
+  saveConfig: (body: {base_url: string; model: string; api_key: string}) =>
+    request<ModelConfig>('/api/agent/config', body),
 }
 
 export const messageOf = (error: unknown) => error instanceof Error ? error.message : '操作失败，请重试'

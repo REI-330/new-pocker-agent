@@ -5,6 +5,11 @@ a session for a game whose playtest gate has not passed, keeps a monotonic
 ``revision`` for optimistic concurrency, and persists the interpreter so a
 session survives a restart without re-running the model (there is no model in
 this path at all).
+
+Games come from two places, both gated:
+- host-compiled reference games (``reference.py``);
+- agent-composed plans, registered only after the loop's ``finalize`` passed
+  ``playtest``.
 """
 from __future__ import annotations
 
@@ -19,7 +24,7 @@ from typing import Any
 from ..storage import connect
 from .interpreter import Interpreter
 from .plan import GamePlan
-from .reference import build_plan, ensure_playtested
+from .reference import build_plan, ensure_playtested, list_reference_games
 from .registry import core_registry
 
 
@@ -37,11 +42,45 @@ class SessionStore:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path
         self.sessions: dict[str, Session] = {}
+        self.plans: dict[str, dict[str, Any]] = {}
         self.lock = threading.RLock()
         if path:
             with connect(path) as db:
                 db.execute("CREATE TABLE IF NOT EXISTS core_sessions "
                            "(id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+                db.execute("CREATE TABLE IF NOT EXISTS core_agent_plans "
+                           "(game_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+
+    # ------------------------------------------------------- plan registry
+    def register_plan(self, game_id: str, plan: dict[str, Any], playtest_report: dict[str, Any],
+                      title: str = "") -> None:
+        """Register an agent-composed plan. Only a passing playtest may call this."""
+        if not playtest_report.get("ok"):
+            raise ValueError("plan_not_playtested:" + game_id)
+        GamePlan.model_validate(plan)
+        payload = {"plan": plan, "playtest": playtest_report,
+                   "title": title or plan.get("game_kind", game_id)}
+        if self.path:
+            with connect(self.path) as db:
+                db.execute("INSERT OR REPLACE INTO core_agent_plans VALUES (?, ?)",
+                           (game_id, json.dumps(payload)))
+        else:
+            self.plans[game_id] = payload
+
+    def _stored_plans(self) -> dict[str, dict[str, Any]]:
+        if not self.path:
+            return dict(self.plans)
+        with connect(self.path) as db:
+            rows = db.execute("SELECT game_id, payload FROM core_agent_plans").fetchall()
+        return {game_id: json.loads(payload) for game_id, payload in rows}
+
+    def list_games(self) -> list[dict[str, Any]]:
+        games = list_reference_games()
+        for game_id, payload in sorted(self._stored_plans().items()):
+            games.append({"id": game_id, "title": payload.get("title", game_id),
+                          "kind": payload["plan"].get("game_kind", "unknown"),
+                          "playtest": payload["playtest"], "source": "agent_compose"})
+        return games
 
     # ------------------------------------------------------------- lifecycle
     def _save(self, session: Session) -> None:
@@ -54,12 +93,18 @@ class SessionStore:
         else:
             self.sessions[session.id] = session
 
-    def create(self, game_id: str, seed: int | None = None) -> Session:
+    def _resolve_plan(self, game_id: str) -> GamePlan:
+        stored = self._stored_plans().get(game_id)
+        if stored:
+            return GamePlan.model_validate(stored["plan"])
         report = ensure_playtested(game_id)
         if not report.ok:
             raise ValueError("game_not_playtested:" + "; ".join(report.failures))
+        return build_plan(game_id)
+
+    def create(self, game_id: str, seed: int | None = None) -> Session:
+        plan = self._resolve_plan(game_id)
         seed = secrets.randbelow(2**31) if seed is None else int(seed)
-        plan = build_plan(game_id)
         interpreter = Interpreter(plan, core_registry(), seed=seed)
         interpreter.setup()
         session = Session(uuid.uuid4().hex, game_id, plan, interpreter, revision=0, seed=seed)
@@ -74,9 +119,8 @@ class SessionStore:
             if not row:
                 raise KeyError("session_not_found")
             data = json.loads(row[0])
-            plan = build_plan(data["game_id"])
-            interpreter = Interpreter.restore(data["engine"], core_registry())
-            return Session(session_id, data["game_id"], plan, interpreter,
+            return Session(session_id, data["game_id"], self._resolve_plan(data["game_id"]),
+                           Interpreter.restore(data["engine"], core_registry()),
                            data["revision"], data["seed"])
         if session_id in self.sessions:
             return self.sessions[session_id]

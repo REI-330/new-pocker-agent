@@ -1,8 +1,8 @@
-"""v0.4 application surface: capabilities, reference games, playable sessions.
+"""v0.4 application surface: capabilities, games, sessions, and the agent loop.
 
-This app talks only to ``core``. The legacy ``api.py`` (v0.2 family engines) is
-kept only as a test oracle during the strangler migration and is not served by
-this application.
+This app talks only to ``core`` and ``agent``. Every playable game passes the
+playtest gate: reference games at build time, agent-composed games at
+``finalize`` time (enforced again by ``SessionStore.register_plan``).
 """
 from __future__ import annotations
 
@@ -15,7 +15,10 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .core import SessionStore, capability_matrix, coverage_report, list_reference_games
+from .agent import TOOL_SCHEMAS, run_loop
+from .configuration import ConfigInput, ConfigStore
+from .core import SessionStore, capability_matrix, core_registry, coverage_report
+from .llm import OpenAICompatibleClient
 from .storage import data_path
 
 
@@ -31,18 +34,33 @@ class ActionInput(BaseModel):
     declared_suit: str = Field(default="", max_length=16)
 
 
-def create_app(path: Path | None = None) -> FastAPI:
+class LoopInput(BaseModel):
+    goal: str = Field(min_length=1, max_length=4000)
+    max_steps: int = Field(default=12, ge=1, le=24)
+
+
+def create_app(path: Path | None = None, vault=None, model_factory=None) -> FastAPI:
     app = FastAPI(title="Pocker Agent", version="0.4.0")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173",
                        "http://127.0.0.1:5174", "http://127.0.0.1:4173"],
         allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
-    store = SessionStore(path or data_path())
+    database = path or data_path()
+    config = ConfigStore(database, vault)
+    store = SessionStore(database)
     app.state.session_store = store
+    app.state.config_store = config
 
-    assets = Path(__file__).parent / "assets"
-    app.mount("/assets", StaticFiles(directory=assets), name="assets")
+    def default_model():
+        saved = config.read()
+        if not saved.public()["configured"]:
+            raise ValueError("请先保存模型配置")
+        return OpenAICompatibleClient.from_config(saved)
+
+    make_model = model_factory or default_model
+
+    app.mount("/assets", StaticFiles(directory=Path(__file__).parent / "assets"), name="assets")
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, error):
@@ -69,7 +87,40 @@ def create_app(path: Path | None = None) -> FastAPI:
 
     @app.get("/api/games")
     def games():
-        return {"games": list_reference_games(), "coverage": coverage_report()}
+        return {"games": store.list_games(), "coverage": coverage_report()}
+
+    @app.get("/api/agent/tools")
+    def agent_tools():
+        return {"meta_tools": TOOL_SCHEMAS, "game_tools": core_registry().export()}
+
+    @app.get("/api/agent/config")
+    def get_config():
+        return config.read().public()
+
+    @app.post("/api/agent/config")
+    def save_config(payload: ConfigInput):
+        return config.save(payload)
+
+    @app.post("/api/agent/models")
+    def discover(payload: ConfigInput):
+        draft = config.draft(payload, require_model=False)
+        return {"models": OpenAICompatibleClient.from_config(draft).list_models(),
+                "base_url": draft.base_url}
+
+    @app.post("/api/agent/test-connection")
+    def test_connection(payload: ConfigInput):
+        draft = config.draft(payload)
+        result = OpenAICompatibleClient.from_config(draft).complete(
+            [{"role": "user", "content": "Reply with OK."}])
+        return {"ok": bool(result), "model": draft.model, "base_url": draft.base_url}
+
+    @app.post("/api/agent/loop")
+    def agent_loop(payload: LoopInput):
+        result = run_loop(payload.goal, make_model(), max_steps=payload.max_steps)
+        if result.finalized and result.plan and result.ir:
+            store.register_plan(result.ir["game_id"], result.plan, result.playtest or {},
+                                result.ir.get("title", ""))
+        return result.as_dict()
 
     @app.post("/api/sessions")
     def create_session(payload: SessionInput):
@@ -85,7 +136,6 @@ def create_app(path: Path | None = None) -> FastAPI:
                          card_index=payload.card_index, expression=payload.expression,
                          declared_suit=payload.declared_suit)
 
-    # Single-port demo: serve the built frontend when it exists.
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if dist.is_dir():
         app.mount("/", StaticFiles(directory=dist, html=True), name="web")

@@ -70,6 +70,27 @@ def boundary_first(interpreter: Interpreter):
     return (actions[-1], {})
 
 
+def resilient_first(interpreter: Interpreter):
+    """Generic gate policy: the first legal action the host actually accepts.
+
+    Composed games have no game-specific policy, so the gate probes each legal
+    action on a throwaway copy and uses the first that does not raise. It is
+    deterministic given the state, which keeps replay byte-exact. It proves
+    termination and wait coverage, not that the happy path is reachable.
+    """
+    actions = interpreter.legal_actions()
+    if not actions:
+        return None
+    for action in actions:
+        probe = Interpreter.restore(interpreter.serialize(), interpreter.registry)
+        try:
+            probe.step(action)
+        except ToolError:
+            continue
+        return (action, {})
+    raise ToolError("no_legal_action_succeeded")
+
+
 def _play_one(plan: GamePlan, registry: ToolRegistry, seed: int, strategy: Strategy,
               invariants: Sequence[Invariant], max_steps: int) -> list[dict[str, Any]]:
     interpreter = Interpreter(plan, registry, seed=seed)

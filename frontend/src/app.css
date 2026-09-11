@@ -15,3 +15,8 @@
 .event-dot { width: 10px; height: 10px; border-radius: 50%; background: #2e7e62; margin-top: 5px; }
 .timeline span { display: inline-flex; align-items: center; gap: 6px; }
 .timeline i { width: 18px; height: 1px; background: #cbd8d1; display: inline-block; }
+.chat-card { display: flex; flex-direction: column; gap: 12px; }
+.chat-card label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; }
+.chat-card input, .chat-card textarea { padding: 11px 13px; border: 1px solid #bdcec4; border-radius: 10px;
+  font-size: 15px; font-family: inherit; background: #fcfdfb; resize: vertical; }
+.chat-card input:focus-visible, .chat-card textarea:focus-visible { outline: 2px solid #307455; outline-offset: 1px; }

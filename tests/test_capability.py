@@ -45,6 +45,12 @@ def test_coverage_report_shape_and_histogram():
     assert arithmetic["expressible"] is True
     assert arithmetic["builtin"] == "arithmetic24"
     assert arithmetic["missing"] == []
+    war = next(game for game in report["games"] if game["id"] == "war")
+    assert war["expressible"] is True and war["builtin"] == "war"
+    # Blackjack needs soft-ace totals, a different axis from rank comparison.
+    blackjack = next(game for game in report["games"] if game["id"] == "blackjack")
+    assert blackjack["expressible"] is False
+    assert any(gap["axis"] == "point_total" for gap in blackjack["missing"])
 
 
 def test_corpus_entries_declare_axes_and_unique_ids():

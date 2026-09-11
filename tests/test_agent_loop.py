@@ -1,0 +1,136 @@
+"""The agent loop: bounded, host-gated, and repairable from observations."""
+from __future__ import annotations
+
+import json
+
+from pocker_agent.agent import run_loop
+
+
+class ScriptedModel:
+    """Deterministic stand-in for the LLM; records the transcript it was given."""
+
+    def __init__(self, *responses: str) -> None:
+        self.responses = list(responses)
+        self.calls = 0
+        self.messages: list[dict[str, str]] = []
+
+    def complete(self, messages, **kwargs):
+        self.messages = messages
+        if self.calls >= len(self.responses):
+            raise RuntimeError("scripted responses exhausted")
+        response = self.responses[self.calls]
+        self.calls += 1
+        return response
+
+
+def decision(tool: str, **args) -> str:
+    return json.dumps({"tool": tool, "args": args})
+
+
+def war(**overrides) -> dict:
+    payload = {"kind": "war", "game_id": "agent-war", "title": "Agent 比大小", "max_rounds": 3, "players": 2}
+    payload.update(overrides)
+    return payload
+
+
+def test_loop_composes_a_new_game_without_a_human():
+    model = ScriptedModel(
+        decision("propose_ir", ir=war()),
+        decision("capability_check"),
+        decision("compose_plan"),
+        decision("playtest"),
+        decision("finalize"),
+    )
+    result = run_loop("做一个两人各抽一张比大小的游戏", model)
+    assert result.kind == "proposal" and result.finalized is True
+    assert result.ir["kind"] == "war"
+    assert result.playtest["ok"] is True
+    assert result.attempts == 5
+    assert all(observation["ok"] for observation in result.observations)
+
+
+def test_loop_repairs_an_invalid_ir_from_the_observation():
+    model = ScriptedModel(
+        decision("propose_ir", ir=war(max_rounds=0)),      # rejected by the host
+        decision("propose_ir", ir=war()),
+        decision("compose_plan"),
+        decision("playtest"),
+        decision("finalize"),
+    )
+    result = run_loop("x", model)
+    assert result.finalized is True
+    assert any(not observation["ok"] for observation in result.observations)
+    assert "invalid_ir" in json.dumps(result.observations, ensure_ascii=False)
+
+
+def test_loop_cannot_finalize_before_playtest():
+    model = ScriptedModel(
+        decision("propose_ir", ir=war()),
+        decision("compose_plan"),
+        decision("finalize"),        # rejected: no playtest yet
+        decision("playtest"),
+        decision("finalize"),
+    )
+    result = run_loop("x", model)
+    assert result.finalized is True
+    finalize_outcomes = [observation["ok"] for observation in result.observations
+                         if observation["tool"] == "finalize"]
+    assert finalize_outcomes == [False, True]
+
+
+def test_loop_recovers_from_a_plan_that_fails_playtest():
+    broken = {"schema_version": "0.4", "game_kind": "war", "players": 2,
+              "tools": [{"name": "deck"}], "initial": {}, "entry": "end",
+              "nodes": {"end": {"kind": "end"}}}
+    model = ScriptedModel(
+        decision("propose_ir", ir=war(max_rounds=2)),
+        decision("compose_plan", plan=broken),
+        decision("playtest"),        # fails: end requires a finished state
+        decision("compose_plan"),    # falls back to host_compile
+        decision("playtest"),
+        decision("finalize"),
+    )
+    result = run_loop("x", model)
+    assert result.finalized is True
+    playtests = [observation["ok"] for observation in result.observations
+                 if observation["tool"] == "playtest"]
+    assert playtests == [False, True]
+
+
+def test_loop_survives_non_json_output():
+    model = ScriptedModel(
+        "抱歉，我先解释一下我的思路。",                       # not JSON
+        decision("propose_ir", ir=war()),
+        decision("compose_plan"),
+        decision("playtest"),
+        decision("finalize"),
+    )
+    result = run_loop("x", model)
+    assert result.finalized is True
+    assert any(observation.get("error") == "model_output_invalid_json"
+               for observation in result.observations)
+
+
+def test_loop_stops_at_the_step_budget():
+    model = ScriptedModel(*[decision("capability_check") for _ in range(5)])
+    result = run_loop("x", model, max_steps=3)
+    assert result.kind == "error"
+    assert "budget_exhausted" in result.message
+    assert result.attempts == 3
+    assert len(result.observations) == 3
+
+
+def test_loop_reports_unsupported_with_missing_axes():
+    model = ScriptedModel(decision("unsupported", message="缺少 info_set 与 trigger",
+                                   missing=["info_set", "trigger"]))
+    result = run_loop("做一个抽乌龟", model)
+    assert result.kind == "unsupported"
+    assert "info_set" in result.message
+    assert result.finalized is False
+
+
+def test_loop_asks_once_when_the_goal_is_incomplete():
+    model = ScriptedModel(decision("ask_user", question="共有几轮？", missing=["max_rounds"]))
+    result = run_loop("做个比大小的游戏", model)
+    assert result.kind == "question" and "几轮" in result.message
+    assert result.attempts == 1

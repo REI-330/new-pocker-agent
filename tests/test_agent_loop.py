@@ -200,3 +200,17 @@ def test_loop_ships_a_model_authored_plan_and_it_becomes_playable():
         session.interpreter.step("play")
     assert session.interpreter.state["finished"] is True
     assert session.interpreter.state["round"] == 7
+
+
+def test_the_prompt_advertises_every_family_the_ir_accepts():
+    """The header said "arithmetic | war" until S8, so the list must be derived.
+
+    A stale header biases the whole design conversation toward one family: four
+    games designed through the chat before this guard were all `war`.
+    """
+    from pocker_agent.agent.loop import IR_KINDS, SYSTEM_PROMPT
+    from pocker_agent.core.ir import REQUIRED_AXES
+
+    assert set(IR_KINDS.split(" | ")) == set(REQUIRED_AXES)
+    for kind in REQUIRED_AXES:
+        assert kind in SYSTEM_PROMPT, kind

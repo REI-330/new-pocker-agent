@@ -246,6 +246,9 @@ S4             覆盖度量与交付（横切，贯穿始终）
 - `scripts/e2e_smoke.py`：模型已配置时不再发 `goal` 探测（那会变成真实 LLM 调用并超时），
   改为始终校验空 `message` 合约，跳过的项打印 `SKIP` 说明。
 - 验证：`171 passed`；真实 HTTP 端到端 `27/27`（1 项 SKIP）；`doctor.py --serve` 与 `doctor.py --url` 全绿。
+- 同时修掉一处同类陈量：`SYSTEM_PROMPT` 的能力清单到 S8 仍写 `kind = arithmetic | war`（实际 8 个族）。
+  已改为从 `core/ir.REQUIRED_AXES` 推导（`IR_KINDS`），并加测试断言每个 kind 都出现在提示里；
+  否则设计对话会被带偏（修前 4 个对话生成的玩法全是 `war`）。
 
 ## 4. 测试规范
 
@@ -443,6 +446,7 @@ K 默认 2，可在 ADR 中调整。**注册表只能按"被证明的复用"增�
 | 文档写在实现之前且不同步 | "166 passed"、"9 种游戏"等与实际不符 |
 | 让"暂时保留旧路径"没有 deadline | 双路径永久化 |
 | 长驻进程存活于一次改动之后 | 前端已更新、API 还是旧 schema；"发不出去"被误判为前端 bug |
+| 提示词里的能力清单手工维护 | `SYSTEM_PROMPT` 到 S8 仍写 `kind = arithmetic \| war`，设计对话被带偏到 war 族 |
 
 **红线（一票否决）**：新增第二执行路径、新增游戏专属引擎、add-only 结构性 PR、未过 playtest 即可玩、让模型自证正确。
 

@@ -12,9 +12,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..core.contracts import ToolError, ToolRegistry
-from ..core.ir import IR_ADAPTER
+from ..core.ir import IR_ADAPTER, REQUIRED_AXES
 from ..core.registry import core_registry
 from .meta_tools import TOOL_SCHEMAS, LoopState, _fail, dispatch, observation_text
+
+# Derived from the canonical table so adding a family cannot leave the prompt
+# advertising the old set (it said "arithmetic | war" until S8).
+IR_KINDS = " | ".join(sorted(REQUIRED_AXES))
 
 SYSTEM_PROMPT = f"""你是 Pocker Agent 的规则设计编排器。你只能调用下面的元工具；永远不要执行游戏、不要调用游戏工具、不要写代码、不要返回解释性文字。
 
@@ -29,7 +33,7 @@ SYSTEM_PROMPT = f"""你是 Pocker Agent 的规则设计编排器。你只能调�
 元工具：
 {json.dumps(TOOL_SCHEMAS, ensure_ascii=False)}
 
-RulesIR JSON Schema（kind = arithmetic | war）：
+RulesIR JSON Schema（kind = {IR_KINDS}）：
 {json.dumps(IR_ADAPTER.json_schema(), ensure_ascii=False)}
 """
 

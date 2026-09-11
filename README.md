@@ -59,6 +59,11 @@ npm run build --prefix frontend
 ~~~
 
 - [架构](docs/architecture.md)
+- [v0.4 开发设计](docs/development-design-v0.4.md)
+- [v0.4 执行内核](docs/core-v0.4.md)
+- [工程规范（阶段门/测试/Review/防膨胀）](docs/engineering-standards.md)
+- [v0.3 可回收清单](docs/salvage-from-v0.3.md)
+- [架构决策记录](docs/adr/)
 - [代码审查和验收](docs/review-and-acceptance.md)
 - [开源来源与许可证](THIRD_PARTY_NOTICES.md)
 - [项目进度](PROJECT.md)

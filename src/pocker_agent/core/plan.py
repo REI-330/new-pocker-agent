@@ -42,7 +42,7 @@ class FlowNode(_Strict):
     inputs: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def complete(self) -> "FlowNode":
+    def complete(self) -> FlowNode:
         if self.kind == "call" and (self.action is None or self.next is None):
             raise ValueError("flow_call_requires_action_and_next")
         if self.kind == "branch" and (not self.cases or self.next is None):
@@ -67,7 +67,7 @@ class GamePlan(_Strict):
     step_limit: int = Field(default=1024, ge=1, le=8192)
 
     @model_validator(mode="after")
-    def graph(self) -> "GamePlan":
+    def graph(self) -> GamePlan:
         names = [binding.name for binding in self.tools]
         if len(names) != len(set(names)):
             raise ValueError("plan_duplicate_tool")

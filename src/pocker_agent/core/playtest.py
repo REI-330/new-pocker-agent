@@ -9,8 +9,9 @@ the interpreter only knows mechanics, so correctness must be observed.
 """
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any
 
 from .contracts import ToolError, ToolRegistry
 from .interpreter import Interpreter
@@ -32,7 +33,7 @@ class PlaytestReport:
     checks: list[str] = field(default_factory=list)
     covered_wait_nodes: list[str] = field(default_factory=list)
 
-    def raise_if_failed(self) -> "PlaytestReport":
+    def raise_if_failed(self) -> PlaytestReport:
         if not self.ok:
             raise ToolError("playtest_failed: " + "; ".join(self.failures))
         return self

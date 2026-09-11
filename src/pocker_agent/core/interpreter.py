@@ -198,7 +198,7 @@ class Interpreter:
                 "state": encode(self.state), "events": deepcopy(self.events)}
 
     @classmethod
-    def restore(cls, data: dict[str, Any], registry: ToolRegistry) -> "Interpreter":
+    def restore(cls, data: dict[str, Any], registry: ToolRegistry) -> Interpreter:
         plan = GamePlan.model_validate(data["plan"])
         interpreter = cls(plan, registry, seed=data["seed"])
         interpreter.pc, interpreter.started = data["pc"], data["started"]

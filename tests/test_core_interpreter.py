@@ -3,11 +3,17 @@ import copy
 
 import pytest
 
-from pocker_agent.core import (GamePlan, Interpreter, ToolError, ToolSpec,
-                               core_registry, playtest, random_legal, boundary_first,
-                               first_legal)
+from pocker_agent.core import (
+    GamePlan,
+    Interpreter,
+    ToolError,
+    ToolSpec,
+    boundary_first,
+    core_registry,
+    first_legal,
+    playtest,
+)
 from pocker_agent.core.contracts import OperationSpec, ToolRegistry
-
 
 RANK_VALUES = {"A": 1, **{str(n): n for n in range(2, 11)}, "J": 11, "Q": 12, "K": 13}
 
@@ -15,8 +21,9 @@ RANK_VALUES = {"A": 1, **{str(n): n for n in range(2, 11)}, "J": 11, "Q": 12, "K
 def arithmetic(**overrides):
     from pocker_agent.core import arithmetic_plan
 
-    base = dict(target=24, max_rounds=3, card_count=4, operations=("+", "-", "*", "/"),
-                fractional=True, rank_values=RANK_VALUES, deal_mode="solvable")
+    base = {"target": 24, "max_rounds": 3, "card_count": 4,
+            "operations": ("+", "-", "*", "/"), "fractional": True,
+            "rank_values": RANK_VALUES, "deal_mode": "solvable"}
     base.update(overrides)
     return arithmetic_plan(**base)
 
@@ -250,7 +257,7 @@ def test_operation_precondition_is_enforced():
     registry = _mini_registry("guarded", _Guarded(),
                               OperationSpec("call", requires=(({"gt": ["$state.n", 0]}),), effects=()))
     interpreter = Interpreter(_mini_plan(name="guarded", initial={"n": 0}), registry, seed=7)
-    with pytest.raises(ToolError, match="precondition_failed:guarded.call"):
+    with pytest.raises(ToolError, match=r"precondition_failed:guarded\.call"):
         interpreter.setup()
 
 

@@ -1,0 +1,50 @@
+name: ci
+
+# Gates defined in docs/engineering-standards.md §7. Steps 6-7 (corpus coverage
+# and generation benchmark) are added at stage S2; they are not applicable yet.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install (frozen lock)
+        run: uv sync --frozen --all-groups
+
+      - name: Lint (core + guardrail tests)
+        run: uvx ruff check src/pocker_agent/core tests/test_core_interpreter.py tests/test_architecture_invariants.py
+
+      - name: Architecture invariants (blocking)
+        run: uv run --frozen pytest tests/test_architecture_invariants.py -q
+
+      - name: Test suite
+        run: uv run --frozen pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install (locked)
+        run: npm ci
+      - name: Build (tsc + vite)
+        run: npm run build

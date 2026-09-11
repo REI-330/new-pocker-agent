@@ -40,7 +40,7 @@ def decode(value: Any) -> Any:
         if set(value) == {"$card"}:
             return CardRef(**value["$card"])
         if set(value) == {"$set"}:
-            return set(decode(item) for item in value["$set"])
+            return {decode(item) for item in value["$set"]}
         return {key: decode(item) for key, item in value.items()}
     if isinstance(value, list):
         return [decode(item) for item in value]

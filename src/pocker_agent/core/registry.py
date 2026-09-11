@@ -14,8 +14,13 @@ Contract policy for the core tools:
 from __future__ import annotations
 
 from .contracts import OperationSpec, ToolRegistry, ToolSpec
-from .tools import (SolvableDealTool, ExactExpressionTool, LogicTool,
-                    ScoreSettleTool, StateTool)
+from .tools import (
+    ExactExpressionTool,
+    LogicTool,
+    ScoreSettleTool,
+    SolvableDealTool,
+    StateTool,
+)
 
 # The solver operations read the current table; an empty or missing table is a
 # contract violation rather than a silent empty-puzzle answer.

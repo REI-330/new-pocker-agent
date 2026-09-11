@@ -12,16 +12,36 @@ from .cards import CardRef, decode, encode
 from .contracts import Observation, OperationSpec, ToolError, ToolRegistry, ToolSpec
 from .interpreter import Interpreter
 from .plan import FlowCase, FlowNode, GamePlan, ToolBinding, ToolCall
-from .playtest import (PlaytestReport, boundary_first, first_legal, playtest,
-                      random_legal)
 from .plans import arithmetic_plan
+from .playtest import (
+                      PlaytestReport,
+                      boundary_first,
+                      first_legal,
+                      playtest,
+                      random_legal,
+)
 from .registry import core_registry
 
 __all__ = [
-    "CardRef", "decode", "encode",
-    "Observation", "OperationSpec", "ToolError", "ToolRegistry", "ToolSpec",
-    "Interpreter",
-    "FlowCase", "FlowNode", "GamePlan", "ToolBinding", "ToolCall",
-    "PlaytestReport", "playtest", "first_legal", "random_legal", "boundary_first",
-    "arithmetic_plan", "core_registry",
+                      "CardRef",
+                      "FlowCase",
+                      "FlowNode",
+                      "GamePlan",
+                      "Interpreter",
+                      "Observation",
+                      "OperationSpec",
+                      "PlaytestReport",
+                      "ToolBinding",
+                      "ToolCall",
+                      "ToolError",
+                      "ToolRegistry",
+                      "ToolSpec",
+                      "arithmetic_plan",
+                      "boundary_first",
+                      "core_registry",
+                      "decode",
+                      "encode",
+                      "first_legal",
+                      "playtest",
+                      "random_legal",
 ]

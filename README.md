@@ -53,11 +53,17 @@ npm run dev -- --host 127.0.0.1
 
 ## 运行 v0.4 应用
 
-一条命令（构建前端 + 启动应用）：
+一条命令（构建前端 + 启动应用；端口被占用时自动换端口）：
+
+~~~powershell
+uv run python scripts\run_web.py
+# 浏览器打开 http://127.0.0.1:8000
+~~~
+
+也可以（等价，走 PowerShell）：
 
 ~~~powershell
 powershell -ExecutionPolicy Bypass -File scripts\run_web.ps1
-# 浏览器打开 http://127.0.0.1:8000
 ~~~
 
 或者手动：

@@ -1,3 +1,5 @@
+> 历史文档（v0.2）：描述的是已删除的家族引擎架构，已被 `docs/development-design-v0.4.md` 取代。仅作追溯参考。
+
 # 可执行 DSL v0.1 合约
 
 - deck.ranks 从弱到强排列。标准牌 A 最大时为 2…10,J,Q,K,A。

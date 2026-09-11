@@ -1,0 +1,122 @@
+{
+ "id": "blackjack",
+ "kind": "blackjack",
+ "schema_version": "0.2",
+ "seed": 7,
+ "captured_from": "v0.2 family_engines.BlackjackEngine @ v0.4-core baseline",
+ "confirmation": "pending_human",
+ "known_defects": [],
+ "checks": {
+  "finished": true,
+  "events": 9,
+  "winners": [
+   "player-2"
+  ],
+  "card_conservation": null,
+  "scores": [
+   1,
+   2
+  ]
+ },
+ "rules": {
+  "schema_version": "0.2",
+  "game_id": "oracle-blackjack",
+  "title": "Oracle blackjack",
+  "description": "",
+  "deck": {
+   "suits": [
+    "S",
+    "H",
+    "D",
+    "C"
+   ],
+   "ranks": [
+    "A",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "J",
+    "Q",
+    "K"
+   ],
+   "copies": 1
+  },
+  "players": {
+   "min_players": 2,
+   "max_players": 2,
+   "starting_hand_size": 2
+  },
+  "max_rounds": 3,
+  "kind": "blackjack",
+  "target": 21,
+  "dealer_stand_on": 17,
+  "dealer_hits_soft_17": false,
+  "natural_beats_21": true,
+  "dealing": "fresh_deck_each_round",
+  "betting": false
+ },
+ "events": [
+  {
+   "event": "game_started",
+   "round": 1,
+   "kind": "blackjack"
+  },
+  {
+   "event": "round_started",
+   "round": 1
+  },
+  {
+   "event": "round_finished",
+   "round": 1,
+   "human_total": 17,
+   "dealer_total": 20,
+   "winner": "player-2",
+   "reason": "庄家的点数更高，获胜"
+  },
+  {
+   "event": "round_started",
+   "round": 2
+  },
+  {
+   "event": "action_executed",
+   "round": 2,
+   "player": "player-1",
+   "action": "hit"
+  },
+  {
+   "event": "round_finished",
+   "round": 2,
+   "human_total": 23,
+   "dealer_total": 13,
+   "winner": "player-2",
+   "reason": "你爆牌，庄家获胜"
+  },
+  {
+   "event": "round_started",
+   "round": 3
+  },
+  {
+   "event": "round_finished",
+   "round": 3,
+   "human_total": 20,
+   "dealer_total": 22,
+   "winner": "player-1",
+   "reason": "庄家爆牌，你获胜"
+  },
+  {
+   "event": "game_finished",
+   "round": 3,
+   "winners": [
+    "player-2"
+   ],
+   "winner": "player-2",
+   "reason": "round_limit"
+  }
+ ]
+}

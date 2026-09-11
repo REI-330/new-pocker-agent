@@ -891,7 +891,7 @@ team             █              1
 - [x] `core/session.py`：Session + revision + 持久化
 - [x] v0.4 API（`app.py`）+ 真实 HTTP 端到端（`scripts/e2e_smoke.py`）
 - [x] 前端按原型改造并接通真实接口（玩法库 / 规则与能力 / 试玩工作台 / 回放）
-- [ ] 摘除旧引擎生产路径（`api.py` + `family_engines` 等）；删除积压归零
+- [x] 摘除旧引擎生产路径（`api` / `family_engines` / `engine` / `executors` / `runtime` / `simulation` / `game_rules` / `validation` / `exporting` / `agent` / `models`）；删除积压归零；删除前已抽取 `benchmarks/oracle/` 黄金 trace
 
 **P1**
 - [ ] `core/ir.py`：`RulesIR` + `host_compile`

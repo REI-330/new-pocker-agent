@@ -1,3 +1,5 @@
+> 历史文档（v0.2）：描述的是已删除的家族引擎架构，已被 `docs/development-design-v0.4.md` 取代。仅作追溯参考。
+
 # Review 与验收记录
 
 日期：2026-09-07（Asia/Shanghai）。范围：配置、SDK、Agent、DSL、引擎、模拟、运行时、导出、前端状态与既有测试。

@@ -1,0 +1,408 @@
+{
+ "id": "shedding",
+ "kind": "shedding",
+ "schema_version": "0.2",
+ "seed": 7,
+ "captured_from": "v0.2 family_engines.SheddingEngine @ v0.4-core baseline",
+ "confirmation": "pending_human",
+ "known_defects": [],
+ "checks": {
+  "finished": true,
+  "events": 35,
+  "winners": [
+   "player-1"
+  ],
+  "card_conservation": 52,
+  "scores": [
+   1,
+   0
+  ],
+  "conservation_note": "hands + deck + discard (table mirrors discard top, excluded)"
+ },
+ "rules": {
+  "schema_version": "0.2",
+  "game_id": "oracle-shedding",
+  "title": "Oracle shedding",
+  "description": "",
+  "deck": {
+   "suits": [
+    "S",
+    "H",
+    "D",
+    "C"
+   ],
+   "ranks": [
+    "A",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "J",
+    "Q",
+    "K"
+   ],
+   "copies": 1
+  },
+  "players": {
+   "min_players": 2,
+   "max_players": 2,
+   "starting_hand_size": 5
+  },
+  "max_rounds": 1,
+  "kind": "shedding",
+  "match": "suit_or_rank",
+  "wild_rank": "8",
+  "draw_policy": "until_playable",
+  "recycle_discard": true,
+  "blocked_result": "draw"
+ },
+ "events": [
+  {
+   "event": "game_started",
+   "round": 1,
+   "kind": "shedding"
+  },
+  {
+   "event": "round_started",
+   "round": 1,
+   "top": {
+    "suit": "H",
+    "rank": "K",
+    "value": 13
+   }
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "play",
+   "card": {
+    "suit": "C",
+    "rank": "K",
+    "value": 13
+   },
+   "active_suit": "C"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "play",
+   "card": {
+    "suit": "C",
+    "rank": "Q",
+    "value": 12
+   },
+   "active_suit": "C"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "draw",
+   "count": 1
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "draw",
+   "count": 1
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "draw",
+   "count": 1
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "draw",
+   "count": 1
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "play",
+   "card": {
+    "suit": "C",
+    "rank": "3",
+    "value": 3
+   },
+   "active_suit": "C"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "play",
+   "card": {
+    "suit": "C",
+    "rank": "J",
+    "value": 11
+   },
+   "active_suit": "C"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "draw",
+   "count": 1
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "play",
+   "card": {
+    "suit": "C",
+    "rank": "5",
+    "value": 5
+   },
+   "active_suit": "C"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "draw",
+   "count": 1
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "play",
+   "card": {
+    "suit": "C",
+    "rank": "10",
+    "value": 10
+   },
+   "active_suit": "C"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "play",
+   "card": {
+    "suit": "S",
+    "rank": "10",
+    "value": 10
+   },
+   "active_suit": "S"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "draw",
+   "count": 1
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "draw",
+   "count": 1
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "play",
+   "card": {
+    "suit": "S",
+    "rank": "A",
+    "value": 1
+   },
+   "active_suit": "S"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "play",
+   "card": {
+    "suit": "S",
+    "rank": "7",
+    "value": 7
+   },
+   "active_suit": "S"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "draw",
+   "count": 1
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "play",
+   "card": {
+    "suit": "S",
+    "rank": "5",
+    "value": 5
+   },
+   "active_suit": "S"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "play",
+   "card": {
+    "suit": "S",
+    "rank": "2",
+    "value": 2
+   },
+   "active_suit": "S"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "draw",
+   "count": 1
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "draw",
+   "count": 1
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "play",
+   "card": {
+    "suit": "S",
+    "rank": "Q",
+    "value": 12
+   },
+   "active_suit": "S"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "play",
+   "card": {
+    "suit": "S",
+    "rank": "3",
+    "value": 3
+   },
+   "active_suit": "S"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "draw",
+   "count": 1
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "draw",
+   "count": 1
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "play",
+   "card": {
+    "suit": "S",
+    "rank": "J",
+    "value": 11
+   },
+   "active_suit": "S"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "play",
+   "card": {
+    "suit": "S",
+    "rank": "4",
+    "value": 4
+   },
+   "active_suit": "S"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "play",
+   "card": {
+    "suit": "C",
+    "rank": "4",
+    "value": 4
+   },
+   "active_suit": "C"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "play",
+   "card": {
+    "suit": "H",
+    "rank": "4",
+    "value": 4
+   },
+   "active_suit": "H"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "play",
+   "card": {
+    "suit": "H",
+    "rank": "9",
+    "value": 9
+   },
+   "active_suit": "H"
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "play",
+   "card": {
+    "suit": "H",
+    "rank": "3",
+    "value": 3
+   },
+   "active_suit": "H"
+  },
+  {
+   "event": "game_finished",
+   "round": 1,
+   "winners": [
+    "player-1"
+   ],
+   "winner": "player-1",
+   "reason": "hand_empty"
+  }
+ ]
+}

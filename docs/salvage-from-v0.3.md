@@ -52,9 +52,12 @@ v0.3 的问题不是"代码没用"，而是**接线的架构是错的**（双执
 
 ## C. 仅作 oracle / 参照（不进生产 dispatch）
 
+**状态：v0.2 引擎已在 S0 从新仓库删除**（`engine` / `family_engines` / `runtime` / `simulation` / `executors` / `game_rules` / `validation` / `exporting` / `agent` / `models` / `api`）。
+删除前已把行为抽取为数据：`benchmarks/oracle/*-seed7.json`（`confirmation: pending_human`），由 `tests/test_oracle_fixtures.py` 校验。原始实现保留在旧仓库，迁移时再差分。
+
 | 项 | 用途 | 必须同时保存 |
 |---|---|---|
-| `family_engines.py`、`doudizhu_engine.py`、`holdem_engine.py` | 黄金 trace 差分参照 | 规则样例 + 人工确认的 trace + **已知旧缺陷列表**（否则会把旧 bug 固化成新测试） |
+| `family_engines.py`、`engine.py`、`doudizhu_engine.py`、`holdem_engine.py`（旧仓库保留） | 黄金 trace 差分参照 | 规则样例 + 人工确认的 trace + **已知旧缺陷列表**（否则会把旧 bug 固化成新测试） |
 | `docs/review-and-acceptance.md`、`docs/mainstream-games-review.md` | 历史验收 | 标注对应 commit 与日期 |
 
 ## D. 禁止移植（污染源）

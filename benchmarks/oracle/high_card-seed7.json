@@ -1,0 +1,326 @@
+{
+ "id": "high_card",
+ "kind": "legacy",
+ "schema_version": "0.1",
+ "seed": 7,
+ "captured_from": "v0.1 RuleEngine @ v0.4-core baseline",
+ "confirmation": "pending_human",
+ "known_defects": [],
+ "checks": {
+  "finished": true,
+  "events": 23,
+  "winners": [
+   "player-2"
+  ]
+ },
+ "rules": {
+  "schema_version": "0.1",
+  "game_id": "oracle-high-card",
+  "title": "High card oracle",
+  "deck": {
+   "suits": [
+    "S",
+    "H",
+    "D",
+    "C"
+   ],
+   "ranks": [
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "J",
+    "Q",
+    "K",
+    "A"
+   ]
+  },
+  "players": {
+   "min_players": 2,
+   "max_players": 2,
+   "starting_hand_size": 1
+  },
+  "phases": [
+   {
+    "name": "play",
+    "actions": [
+     "play"
+    ],
+    "max_turns": 2
+   }
+  ],
+  "actions": [
+   {
+    "name": "play",
+    "amount": 1
+   }
+  ],
+  "scoring": [
+   {
+    "condition": "highest_card",
+    "points": 1
+   }
+  ],
+  "max_rounds": 3
+ },
+ "events": [
+  {
+   "event": "game_started",
+   "round": 1,
+   "phase": "play",
+   "players": [
+    "player-1",
+    "player-2"
+   ]
+  },
+  {
+   "event": "round_started",
+   "round": 1,
+   "phase": "play"
+  },
+  {
+   "event": "card_drawn",
+   "round": 1,
+   "player": "player-1",
+   "card": {
+    "suit": "S",
+    "rank": "7",
+    "value": 6
+   }
+  },
+  {
+   "event": "card_drawn",
+   "round": 1,
+   "player": "player-2",
+   "card": {
+    "suit": "H",
+    "rank": "4",
+    "value": 3
+   }
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-1",
+   "action": "play",
+   "cards": [
+    {
+     "suit": "S",
+     "rank": "7",
+     "value": 6
+    }
+   ]
+  },
+  {
+   "event": "action_executed",
+   "round": 1,
+   "player": "player-2",
+   "action": "play",
+   "cards": [
+    {
+     "suit": "H",
+     "rank": "4",
+     "value": 3
+    }
+   ]
+  },
+  {
+   "event": "phase_finished",
+   "round": 1,
+   "phase": "play"
+  },
+  {
+   "event": "round_finished",
+   "round": 1,
+   "awards": [
+    {
+     "condition": "highest_card",
+     "winners": [
+      "player-1"
+     ],
+     "values": {
+      "player-1": 6,
+      "player-2": 3
+     },
+     "points": 1
+    }
+   ],
+   "scores": {
+    "player-1": 1,
+    "player-2": 0
+   }
+  },
+  {
+   "event": "round_started",
+   "round": 2,
+   "phase": "play"
+  },
+  {
+   "event": "card_drawn",
+   "round": 2,
+   "player": "player-1",
+   "card": {
+    "suit": "H",
+    "rank": "8",
+    "value": 7
+   }
+  },
+  {
+   "event": "card_drawn",
+   "round": 2,
+   "player": "player-2",
+   "card": {
+    "suit": "H",
+    "rank": "Q",
+    "value": 11
+   }
+  },
+  {
+   "event": "action_executed",
+   "round": 2,
+   "player": "player-1",
+   "action": "play",
+   "cards": [
+    {
+     "suit": "H",
+     "rank": "8",
+     "value": 7
+    }
+   ]
+  },
+  {
+   "event": "action_executed",
+   "round": 2,
+   "player": "player-2",
+   "action": "play",
+   "cards": [
+    {
+     "suit": "H",
+     "rank": "Q",
+     "value": 11
+    }
+   ]
+  },
+  {
+   "event": "phase_finished",
+   "round": 2,
+   "phase": "play"
+  },
+  {
+   "event": "round_finished",
+   "round": 2,
+   "awards": [
+    {
+     "condition": "highest_card",
+     "winners": [
+      "player-2"
+     ],
+     "values": {
+      "player-1": 7,
+      "player-2": 11
+     },
+     "points": 1
+    }
+   ],
+   "scores": {
+    "player-1": 1,
+    "player-2": 1
+   }
+  },
+  {
+   "event": "round_started",
+   "round": 3,
+   "phase": "play"
+  },
+  {
+   "event": "card_drawn",
+   "round": 3,
+   "player": "player-1",
+   "card": {
+    "suit": "C",
+    "rank": "2",
+    "value": 1
+   }
+  },
+  {
+   "event": "card_drawn",
+   "round": 3,
+   "player": "player-2",
+   "card": {
+    "suit": "S",
+    "rank": "3",
+    "value": 2
+   }
+  },
+  {
+   "event": "action_executed",
+   "round": 3,
+   "player": "player-1",
+   "action": "play",
+   "cards": [
+    {
+     "suit": "C",
+     "rank": "2",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "event": "action_executed",
+   "round": 3,
+   "player": "player-2",
+   "action": "play",
+   "cards": [
+    {
+     "suit": "S",
+     "rank": "3",
+     "value": 2
+    }
+   ]
+  },
+  {
+   "event": "phase_finished",
+   "round": 3,
+   "phase": "play"
+  },
+  {
+   "event": "round_finished",
+   "round": 3,
+   "awards": [
+    {
+     "condition": "highest_card",
+     "winners": [
+      "player-2"
+     ],
+     "values": {
+      "player-1": 1,
+      "player-2": 2
+     },
+     "points": 1
+    }
+   ],
+   "scores": {
+    "player-1": 1,
+    "player-2": 2
+   }
+  },
+  {
+   "event": "game_finished",
+   "round": 3,
+   "winner": "player-2",
+   "winners": [
+    "player-2"
+   ],
+   "reason": "round_limit",
+   "scores": {
+    "player-1": 1,
+    "player-2": 2
+   }
+  }
+ ]
+}

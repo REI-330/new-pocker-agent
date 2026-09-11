@@ -20,3 +20,9 @@
 .chat-card input, .chat-card textarea { padding: 11px 13px; border: 1px solid #bdcec4; border-radius: 10px;
   font-size: 15px; font-family: inherit; background: #fcfdfb; resize: vertical; }
 .chat-card input:focus-visible, .chat-card textarea:focus-visible { outline: 2px solid #307455; outline-offset: 1px; }
+.hand-cards { display: flex; gap: 8px; flex-wrap: wrap; }
+.card-choice { background: transparent; border: 2px solid transparent; border-radius: 8px; padding: 2px; cursor: pointer; }
+.card-choice.selected { border-color: #1f7a5a; background: #ecf5ef; }
+.card-choice:disabled { opacity: .45; cursor: not-allowed; }
+.suit-choice { display: block; margin: 12px 0; font-size: 13px; font-weight: 600; }
+.suit-choice select { display: block; margin-top: 6px; padding: 9px; border: 1px solid #bdcec4; border-radius: 8px; }

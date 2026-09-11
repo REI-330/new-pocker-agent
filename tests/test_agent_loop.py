@@ -134,3 +134,33 @@ def test_loop_asks_once_when_the_goal_is_incomplete():
     result = run_loop("做个比大小的游戏", model)
     assert result.kind == "question" and "几轮" in result.message
     assert result.attempts == 1
+
+
+def test_loop_ships_a_model_authored_plan_and_it_becomes_playable():
+    """agent_compose: the plan comes from the model, not from host_compile."""
+    from pocker_agent.core.plans import war_plan
+    from pocker_agent.core.session import SessionStore
+
+    authored = war_plan(max_rounds=7).model_dump(mode="json")
+    model = ScriptedModel(
+        decision("propose_ir", ir={"kind": "war", "game_id": "agent-novel-war",
+                                     "title": "七轮比大小", "max_rounds": 7, "players": 2}),
+        decision("compose_plan", plan=authored),
+        decision("playtest"),
+        decision("finalize"),
+    )
+    result = run_loop("做一个七轮的比大小", model)
+    assert result.finalized is True
+    composed = next(observation for observation in result.observations
+                    if observation["tool"] == "compose_plan")
+    assert composed["source"] == "agent_compose"
+
+    store = SessionStore()
+    store.register_plan("agent-novel-war", result.plan, result.playtest)
+    session = store.create("agent-novel-war", seed=3)
+    for _ in range(20):
+        if session.interpreter.state["finished"]:
+            break
+        session.interpreter.step("play")
+    assert session.interpreter.state["finished"] is True
+    assert session.interpreter.state["round"] == 7

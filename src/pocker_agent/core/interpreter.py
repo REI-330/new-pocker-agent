@@ -209,16 +209,23 @@ class Interpreter:
         return interpreter
 
     # ------------------------------------------------------------------ view
-    def view(self) -> dict[str, Any]:
+    def view(self, viewer: str = "player-1") -> dict[str, Any]:
         state = self.state
         scores = list(state.get("scores", []))
         hands = state.get("hands")
+        private = (bool(state.get("private_hands")) and not state.get("reveal")
+                   and not state.get("finished"))
+        known_hands = isinstance(hands, list) and bool(hands)
+        count = len(hands) if known_hands else len(scores)
         players = []
-        for index, score in enumerate(scores):
-            hand = hands[index] if isinstance(hands, list) and index < len(hands) else []
-            players.append({"id": f"player-{index + 1}",
-                            "hand": [card.as_dict() for card in hand],
-                            "score": score, "hidden_count": 0})
+        for index in range(count):
+            hand = hands[index] if known_hands and index < len(hands) else []
+            player_id = f"player-{index + 1}"
+            visible = not (private and player_id != viewer)
+            players.append({"id": player_id,
+                            "hand": [card.as_dict() for card in hand] if visible else [],
+                            "score": scores[index] if index < len(scores) else 0,
+                            "hidden_count": 0 if visible else len(hand)})
         return {
             "kind": self.plan.game_kind, "execution_mode": self.execution_mode,
             "flow_node": self.pc, "round": state.get("round", 1),
@@ -236,5 +243,8 @@ class Interpreter:
             "solution": state.get("solution"),
             "instructions": state.get("instructions", ""),
             "feedback": state.get("feedback", ""),
+            "legal_card_indices": list(state.get("legal_card_indices", [])),
+            "wild_ranks": list(state.get("wild_ranks", [])),
+            "private_hands": private,
             "events": self.events[-100:],
         }

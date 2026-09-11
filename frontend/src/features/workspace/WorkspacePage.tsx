@@ -4,8 +4,9 @@ import {Pill, PlayingCard} from '../../components/ui'
 
 const LABELS: Record<string, string> = {
   submit_expression: '提交答案', no_solution: '我认为无解', give_up: '放弃并看答案',
-  next_round: '下一题 / 下一轮',
+  play: '出牌', draw: '摸牌', next_round: '下一题 / 下一轮',
 }
+const SUIT_NAMES: Record<string, string> = {S: '黑桃 ♠', H: '红桃 ♥', D: '方块 ♦', C: '梅花 ♣'}
 
 export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
   state: SessionState | null; busy: boolean
@@ -13,18 +14,30 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
   onRestart: () => void; onRefresh: () => void
 }) {
   const [expression, setExpression] = useState('')
+  const [index, setIndex] = useState(0)
+  const [suit, setSuit] = useState('S')
 
   if (!state) {
     return <div className="prototype-page workspace-page">
       <div className="page-heading"><div><span className="eyebrow">03 / PLAYTEST</span>
-        <h1>试玩工作台</h1><p>从玩法库选择并开始一局。这里的每个状态都来自后端解释器。</p></div></div>
+        <h1>试玩工作台</h1><p>从玩法库或新建玩法选择一个游戏开始。每个状态都来自后端解释器。</p></div></div>
       <p className="muted">尚未开局。</p>
     </div>
   }
 
-  const score = state.players[0]?.score ?? 0
-  const submit = () => { if (!busy && expression.trim()) onAct('submit_expression', {expression: expression.trim()}) }
+  const mine = state.players[0]
+  const legal = state.legal_card_indices ?? []
+  const canChooseCards = legal.length > 0
+  const selected = mine.hand[index]
+  const isWild = !!selected && (state.wild_ranks ?? []).includes(selected.rank)
+  const score = mine.score
   const recent = state.events.slice(-6).reverse()
+
+  const fire = (action: string) => {
+    if (busy) return
+    const payload = action === 'play' ? {card_index: index, declared_suit: suit} : {}
+    onAct(action, payload)
+  }
 
   return <div className="prototype-page workspace-page">
     <div className="page-heading">
@@ -37,14 +50,18 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
 
     <div className="workspace-grid">
       <section className="side-panel players-panel">
-        <div className="panel-title"><span className="eyebrow">PLAYERS</span><h2>玩家与分数</h2></div>
-        {state.players.map((player, index) => <div className={`player-row ${index === 0 ? 'active' : ''}`} key={player.id}>
-          <span className="player-avatar red">{index === 0 ? '♠' : '♥'}</span>
-          <div><strong>{index === 0 ? '你' : player.id}</strong>
-            <small>{player.hidden_count ? `隐藏手牌 · ${player.hidden_count} 张` : '可见'}</small></div>
+        <div className="panel-title"><span className="eyebrow">PLAYERS</span><h2>玩家与信息</h2></div>
+        {state.players.map((player, seat) => <div className={`player-row ${seat === 0 ? 'active' : ''}`} key={player.id}>
+          <span className="player-avatar red">{seat === 0 ? '♠' : '♥'}</span>
+          <div><strong>{seat === 0 ? '你' : player.id}</strong>
+            <small>{player.hidden_count ? `隐藏手牌 · ${player.hidden_count} 张` : `${player.hand.length} 张可见`}</small></div>
           <b>{String(player.score).padStart(2, '0')}</b>
         </div>)}
-        <div className="info-note">分数来自 <code>scores[]</code>；回合由解释器的 wait 节点决定。</div>
+        <div className="info-note">
+          {state.private_hands
+            ? '对手手牌由解释器隐藏（info_set：按视角可见性）。'
+            : '所有手牌可见。'}
+        </div>
       </section>
 
       <section className="felt-table">
@@ -55,9 +72,8 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
           <strong>{state.numbers.join(' · ')}</strong>
           <small>用这四张牌各一次，得到 {state.target}</small></div>}
         {state.table.length > 0 && <div className="public-zone">
-          <span className="zone-label">TABLE · {state.table.length} CARDS</span>
-          {state.table.map(card => <PlayingCard key={card.id} card={card} small />)}
-        </div>}
+          <span className="zone-label">TABLE / DISCARD</span>
+          {state.table.map(card => <PlayingCard key={card.id} card={card} />)}</div>}
         {state.reveal && state.solution && <div className="state-banner finished">
           <span className="state-icon">✓</span>
           <div><strong>参考答案 {state.solution} = {state.target}</strong>
@@ -80,13 +96,33 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
       </section>
     </div>
 
+    <section className="felt-table">
+      <div className="felt-top"><span className="mono">YOUR HAND · {mine.hand.length} CARDS</span>
+        {canChooseCards && <Pill tone="warning">可选 {legal.length} 张</Pill>}</div>
+      <div className="hand-cards">
+        {mine.hand.map((card, position) => {
+          const playable = !canChooseCards || legal.includes(position)
+          return <button className={'card-choice ' + (index === position ? 'selected' : '')}
+            key={card.id} disabled={busy || !playable}
+            title={playable ? undefined : '不符合当前出牌条件'}
+            onClick={() => setIndex(position)} aria-pressed={index === position}>
+            <PlayingCard card={card} /></button>
+        })}
+      </div>
+      {isWild && <label className="suit-choice">万能牌指定花色
+        <select value={suit} onChange={event => setSuit(event.target.value)} disabled={busy}>
+          {(state.suit_options ?? ['S', 'H', 'D', 'C']).map(option =>
+            <option key={option} value={option}>{SUIT_NAMES[option] ?? option}</option>)}
+        </select></label>}
+    </section>
+
     {!state.finished && <section className="action-dock">
       <div className="dock-heading">
         <div><span className="eyebrow">LEGAL ACTIONS</span><h2>选择下一步</h2></div>
         <span className="mono action-source">source: legal_actions[] = {state.legal_actions.join(', ')}</span>
       </div>
       {state.legal_actions.includes('submit_expression') && <form className="expression-form"
-        onSubmit={event => { event.preventDefault(); submit() }}>
+        onSubmit={event => { event.preventDefault(); if (!busy && expression.trim()) onAct('submit_expression', {expression: expression.trim()}) }}>
         <label htmlFor="expression">输入算式</label>
         <div className="expression-input">
           <input id="expression" value={expression} onChange={event => setExpression(event.target.value)}
@@ -97,14 +133,14 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
       </form>}
       <div className="action-buttons">
         {state.legal_actions.filter(action => action !== 'submit_expression').map(action =>
-          <button className={action === 'give_up' ? 'action-ghost' : 'action-secondary'} key={action}
-            disabled={busy} onClick={() => onAct(action, {})}>{LABELS[action] ?? action}</button>)}
+          <button className={['give_up', 'no_solution'].includes(action) ? 'action-ghost' : 'action-secondary'}
+            key={action} disabled={busy} onClick={() => fire(action)}>{LABELS[action] ?? action}</button>)}
       </div>
     </section>}
 
     {state.finished && <section className="action-dock">
       <div className="dock-heading"><div><span className="eyebrow">RESULT</span>
-        <h2>得分 {score} / {state.max_rounds}</h2></div>
+        <h2>{state.kind === 'arithmetic' ? `得分 ${score} / ${state.max_rounds}` : (state.winners[0] === 'player-1' ? '你赢了' : `获胜者 ${state.winners.join(', ') || '—'}`)}</h2></div>
         <span className="mono">{state.winners.length ? `winners: ${state.winners.join(', ')}` : 'no winner（练习局只记分）'}</span></div>
       <div className="action-buttons">
         <button className="action-primary" onClick={onRestart}>再来一局</button>
@@ -115,8 +151,8 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
     <section className="action-dock">
       <div className="timeline-row"><span className="mono">EVENT TIMELINE</span>
         <div className="timeline">
-          {recent.reverse().map((event, index) =>
-            <span key={index} className={index === recent.length - 1 ? 'done' : ''}>
+          {recent.reverse().map((event, position) =>
+            <span key={position} className={position === recent.length - 1 ? 'done' : ''}>
               {String(event.event)}<i /></span>)}
         </div></div>
     </section>

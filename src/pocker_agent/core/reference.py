@@ -12,8 +12,8 @@ from functools import lru_cache
 
 from .interpreter import Interpreter
 from .plan import GamePlan
-from .plans import arithmetic_plan, war_plan
-from .playtest import PlaytestReport, first_legal, playtest
+from .plans import arithmetic_plan, crazy_eights_plan, war_plan
+from .playtest import PlaytestReport, card_first, first_legal, playtest
 from .registry import core_registry
 
 RANK_VALUES = {"A": 1, **{str(n): n for n in range(2, 11)}, "J": 11, "Q": 12, "K": 13}
@@ -50,10 +50,16 @@ def _war() -> GamePlan:
     return war_plan(max_rounds=3)
 
 
+def _crazy_eights() -> GamePlan:
+    return crazy_eights_plan(hand_size=5, wild_rank="8")
+
+
 REFERENCE_GAMES: dict[str, ReferenceGame] = {
     "arithmetic24": ReferenceGame("arithmetic24", "24点 / 四则算式练习", "arithmetic",
                                   _arithmetic24, _solve_or_claim_none),
     "war": ReferenceGame("war", "War 比大小", "war", _war, first_legal),
+    "crazy_eights": ReferenceGame("crazy_eights", "疯狂八（隐藏手牌）", "shedding",
+                                  _crazy_eights, card_first),
 }
 
 

@@ -901,8 +901,11 @@ team             █              1
 - [x] 真实端到端覆盖整条链路（16 项；HTTP 层 also 覆盖 agent→compose→play）
 
 **P2**
-- [ ] `capability_check` + 语料库 + 覆盖率报表
-- [ ] P0 三条 axis（信息集、参数化牌型、触发器）
+- [x] `capability_check` + 语料库 + 覆盖率报表
+- [x] `pattern_lang`（参数化牌型/合法性）+ `info_set`（按视角可见性）→ stable，新增可玩族 `crazy_eights`
+- [x] `agent_compose` 真实路径（模型提供 plan → playtest → finalize → 可玩）
+- [ ] `turn_adapter` + `team`（7/30 → 约 15/30 的最大杠杆）
+- [ ] `trigger` / `betting` / `ledger` / `layout` / `hidden_draw` / `point_total`
 
 ---
 

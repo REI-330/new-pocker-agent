@@ -119,6 +119,18 @@ S4             覆盖度量与交付（横切，贯穿始终）
 | 准出证据 | ① 语料库覆盖率报表 + 失败直方图；② 每个 `stable` 族有 golden trace；③ `planned` 状态不得被当作 covered |
 | 预算 | 每条 axis 的 operation 数 ≤ 8；语料库 ≥ 30 个玩法并标注所需 axis |
 
+**S2 准出状态：部分完成（两条关键 axis 已落地，覆盖 7/30）。**
+
+- `pattern_lang` → **stable**：`pattern` 工具（match / choices / describe / classify / beats）+ `matching` 工具（play / draw）。一套参数化牌型与合法性引擎，不再按玩法分叉。
+- `info_set` → **stable**：`state.private_hands` + `Interpreter.view(viewer)`；非授权玩家的手牌按视角隐藏，终止后揭示。
+- 新增可玩族 `crazy_eights`（隐藏手牌 + 同花/同点 + 万能牌指定花色 + 摸到能出），已过 playtest。
+- `agent_compose` 真实路径跑通：模型提供 **plan**（非 `host_compile`）→ validate → playtest → finalize → 注册 → 可玩。
+- 新增 planned 轴 `hidden_draw`，因此 Go Fish / 抽乌龟仍**不可表达**（不滥用 axis 标签）。
+- 契约检查又抓到一类真实 bug：`init` 把 `state.hands/stock/table` 别名到 `deal` 载荷上，导致后续出牌“越权”改了 `deal`——被 `out_of_contract_state_change` 拦下，已修。
+- 覆盖：**2/30 → 7/30（23.3%）**；缺口直方图 `turn_adapter 9 · team 7 · betting 6 · layout 3 · ledger 3 · trigger 3 · hidden_draw 2 · point_total 1`。
+- 验证：`90 passed`；真实 HTTP 端到端 `19/19`。
+- **缺口重估（诚实）**：之前估“pattern_lang + info_set → 12–15/30”偏高，实际 7/30。要到 12–15 必须补 **`turn_adapter`（+`team`）**，它是当前最大杠杆。
+
 ### S3 · 工具库扩展 + 沙箱
 
 **目标**：处理长尾/陌生机制，且不破坏主执行面。

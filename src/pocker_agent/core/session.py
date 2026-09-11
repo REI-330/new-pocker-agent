@@ -24,6 +24,7 @@ from typing import Any
 from ..storage import connect
 from .interpreter import Interpreter
 from .plan import GamePlan
+from .policy import run_bots
 from .reference import build_plan, ensure_playtested, list_reference_games
 from .registry import core_registry
 
@@ -107,6 +108,7 @@ class SessionStore:
         seed = secrets.randbelow(2**31) if seed is None else int(seed)
         interpreter = Interpreter(plan, core_registry(), seed=seed)
         interpreter.setup()
+        run_bots(interpreter)
         session = Session(uuid.uuid4().hex, game_id, plan, interpreter, revision=0, seed=seed)
         with self.lock:
             self._save(session)
@@ -133,14 +135,15 @@ class SessionStore:
                 raise ValueError("stale_revision: 牌局已经更新，请刷新牌局")
             start = len(session.interpreter.events)
             event = session.interpreter.step(action, **payload)
+            run_bots(session.interpreter)
             session.revision += 1
             self._save(session)
             return {"event": event,
                     "new_events": session.interpreter.events[start:],
                     "state": self.snapshot(session)}
 
-    def snapshot(self, session: Session) -> dict[str, Any]:
-        view = session.interpreter.view()
+    def snapshot(self, session: Session, viewer: str = "player-1") -> dict[str, Any]:
+        view = session.interpreter.view(viewer)
         view.pop("seed", None)
         return {**view, "session_id": session.id, "game_id": session.game_id,
                 "revision": session.revision}

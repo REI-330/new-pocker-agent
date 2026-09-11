@@ -39,7 +39,8 @@ class LogicTool:
 
 _BINARY = {"eq": lambda a, b: a == b, "lt": lambda a, b: a < b,
            "le": lambda a, b: a <= b, "gt": lambda a, b: a > b,
-           "ge": lambda a, b: a >= b, "add": lambda a, b: a + b}
+           "ge": lambda a, b: a >= b, "add": lambda a, b: a + b,
+           "sub": lambda a, b: a - b}
 
 
 def evaluate_expression(expression: Any, _depth: int = 0) -> Any:
@@ -227,3 +228,136 @@ class WinnerResolveTool:
             raise ToolError("invalid_winner_mode")
         target = max(values) if mode == "max" else min(values)
         return [index for index, value in enumerate(values) if value == target]
+
+
+class PatternTool:
+    """Parameterized card patterns and following rules.
+
+    One engine instead of one per game: *what a pattern is* is configuration,
+    and no game's ranking system is baked in.
+    """
+
+    @staticmethod
+    def _top(top: Any) -> CardRef | None:
+        if isinstance(top, CardRef):
+            return top
+        if isinstance(top, (list, tuple)) and top:
+            return top[-1]
+        return None
+
+    def match(self, card: Any, top: Any, active_suit: str = "", wild_ranks: Any = ()) -> bool:
+        """Shedding-style legality: wild, or same suit, or same rank."""
+        target = self._top(top)
+        if not isinstance(card, CardRef) or target is None:
+            return False
+        if card.rank in set(wild_ranks or ()):
+            return True
+        if active_suit and card.suit == active_suit:
+            return True
+        return card.suit == target.suit or card.rank == target.rank
+
+    def choices(self, cards: Any, top: Any = None, active_suit: str = "",
+                wild_ranks: Any = ()) -> list[int]:
+        if not isinstance(cards, list):
+            raise ToolError("choices_requires_card_list")
+        return [index for index, card in enumerate(cards)
+                if self.match(card, top, active_suit, wild_ranks)]
+
+    def describe(self, cards: Any) -> dict[str, Any]:
+        top = self._top(cards)
+        if top is None:
+            raise ToolError("describe_requires_cards")
+        return {"rank": top.rank, "suit": top.suit, "value": top.value, "id": top.id}
+
+    def classify(self, cards: Any, pattern: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(cards, list) or not cards:
+            raise ToolError("classify_requires_cards")
+        if not all(isinstance(card, CardRef) for card in cards):
+            raise ToolError("classify_requires_cards")
+        kind = pattern.get("type", "single")
+        values = sorted(card.value for card in cards)
+        length = len(cards)
+        if kind == "single":
+            if length != 1:
+                raise ToolError("pattern_size_mismatch")
+        elif kind == "same_rank":
+            if len({card.rank for card in cards}) != 1:
+                raise ToolError("pattern_requires_same_rank")
+            if pattern.get("size") is not None and length != int(pattern["size"]):
+                raise ToolError("pattern_size_mismatch")
+        elif kind == "run":
+            if len({card.rank for card in cards}) != length:
+                raise ToolError("run_requires_distinct_ranks")
+            if length < int(pattern.get("min_length", 3)):
+                raise ToolError("run_too_short")
+            if values != list(range(values[0], values[0] + length)):
+                raise ToolError("run_not_consecutive")
+            if pattern.get("same_suit") and len({card.suit for card in cards}) != 1:
+                raise ToolError("run_requires_same_suit")
+        elif kind == "flush":
+            if len({card.suit for card in cards}) != 1:
+                raise ToolError("flush_requires_same_suit")
+            if pattern.get("size") is not None and length != int(pattern["size"]):
+                raise ToolError("pattern_size_mismatch")
+        else:
+            raise ToolError(f"unknown_pattern:{kind}")
+        return {"kind": kind, "rank": max(values), "min_rank": min(values), "length": length,
+                "cards": [card.id for card in cards]}
+
+    def beats(self, candidate: Any, previous: Any, bombs: Any = ()) -> bool:
+        if not isinstance(candidate, dict) or not isinstance(previous, dict):
+            raise ToolError("beats_requires_classified_patterns")
+        bomb_set = set(bombs or ())
+        if candidate.get("kind") in bomb_set:
+            return True
+        if previous.get("kind") in bomb_set:
+            return False
+        return (candidate.get("kind") == previous.get("kind")
+                and candidate.get("length") == previous.get("length")
+                and candidate.get("rank", 0) > previous.get("rank", 0))
+
+
+class MatchingTool:
+    """Play/draw mechanics for matching games; operates on the shared state."""
+
+    def play(self, state: dict[str, Any], hand_index: int, card_index: int,
+             declared_suit: str = "", wild_ranks: Any = (),
+             suits: Any = ("S", "H", "D", "C")) -> dict[str, Any]:
+        hands = state.get("hands")
+        if not isinstance(hands, list) or not 0 <= hand_index < len(hands):
+            raise ToolError("invalid_hand_index")
+        hand = hands[hand_index]
+        if type(card_index) is not int or not 0 <= card_index < len(hand):
+            raise ToolError("card_index_out_of_range")
+        card = hand[card_index]
+        pattern = PatternTool()
+        if not pattern.match(card, state.get("table"), state.get("active_suit", ""), wild_ranks):
+            raise ToolError("card_does_not_match")
+        wild = bool(wild_ranks) and card.rank in set(wild_ranks)
+        if wild and declared_suit not in list(suits):
+            raise ToolError("wild_requires_declared_suit")
+        hand.pop(card_index)
+        state["table"] = [card]
+        state["active_suit"] = declared_suit if wild else card.suit
+        if not hand:
+            state.update(finished=True, winners=[hand_index], phase="finished")
+        return {"played": card.id, "active_suit": state["active_suit"], "hand_size": len(hand)}
+
+    def draw(self, state: dict[str, Any], hand_index: int, seed: Any = 0,
+             recycle: bool = True) -> dict[str, Any]:
+        hands = state.get("hands")
+        if not isinstance(hands, list) or not 0 <= hand_index < len(hands):
+            raise ToolError("invalid_hand_index")
+        stock = state.get("stock") or []
+        if not stock and recycle:
+            table = state.get("table") or []
+            if len(table) > 1:
+                stock = list(table[1:])
+                state["table"] = table[:1]
+                random.Random(str(seed)).shuffle(stock)
+        if not stock:
+            raise ToolError("deck_exhausted")
+        card = stock.pop(0)
+        hands[hand_index].append(card)
+        state["stock"] = stock
+        return {"hand_size": len(hands[hand_index])}

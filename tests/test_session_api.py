@@ -172,3 +172,30 @@ def test_agent_loop_fails_safely_without_a_model(tmp_path):
     response = c.post("/api/agent/loop", json={"goal": "做一个比大小"})
     assert response.status_code == 422
     assert "模型配置" in response.json()["detail"]
+
+
+def test_crazy_eights_over_http_hides_the_opponent_and_is_playable(tmp_path):
+    c = client(tmp_path)
+    state = c.post("/api/sessions", json={"game_id": "crazy_eights", "seed": 7}).json()
+    session_id = state["session_id"]
+    assert state["private_hands"] is True
+    assert len(state["players"][0]["hand"]) == 5
+    assert state["players"][1]["hand"] == []
+    assert state["players"][1]["hidden_count"] == 5
+
+    for _ in range(400):
+        if state["finished"]:
+            break
+        if "play" in state["legal_actions"]:
+            payload = {"revision": state["revision"],
+                       "card_index": state["legal_card_indices"][0],
+                       "declared_suit": "S"}
+            response = c.post(f"/api/sessions/{session_id}/actions/play", json=payload)
+        else:
+            response = c.post(f"/api/sessions/{session_id}/actions/draw",
+                              json={"revision": state["revision"]})
+        assert response.status_code == 200, response.text
+        state = response.json()["state"]
+
+    assert state["finished"] is True
+    assert state["players"][1]["hidden_count"] == 0     # revealed once the game ends

@@ -70,6 +70,22 @@ def boundary_first(interpreter: Interpreter):
     return (actions[-1], {})
 
 
+def card_first(interpreter: Interpreter):
+    """Generic matching-game policy: play a legal card, otherwise draw.
+
+    Used as the playtest policy and as the host bot for non-human seats. It is
+    seat-agnostic because the plan exposes ``legal_card_indices`` for whichever
+    seat is active.
+    """
+    actions = interpreter.legal_actions()
+    if not actions:
+        return None
+    if "play" in actions:
+        indices = interpreter.state.get("legal_card_indices") or [0]
+        return ("play", {"card_index": indices[0], "declared_suit": "S"})
+    return (actions[0], {})
+
+
 def resilient_first(interpreter: Interpreter):
     """Generic gate policy: the first legal action the host actually accepts.
 

@@ -62,7 +62,7 @@ def main() -> None:
     check("capabilities_status", status == 200, str(status))
     coverage = capabilities["coverage"]  # type: ignore[index]
     check("coverage_total", coverage["total"] >= 20, str(coverage["total"]))
-    check("coverage_has_gaps", "pattern_lang" in coverage["missing_histogram"])
+    check("coverage_has_gaps", "turn_adapter" in coverage["missing_histogram"])
 
     status, games = request("/api/games")
     arithmetic = next(game for game in games["games"] if game["id"] == "arithmetic24")  # type: ignore[index]
@@ -108,6 +108,16 @@ def main() -> None:
     status, denied = request("/api/agent/loop", "POST", {"goal": "做一个比大小"})
     check("agent_loop_fails_safely_without_model",
           status == 422 and "模型配置" in str(denied), str(status))
+
+    status, games_all = request("/api/games")
+    crazy = next((game for game in games_all["games"] if game["id"] == "crazy_eights"), None)  # type: ignore[index]
+    check("crazy_eights_is_playtested",
+          crazy is not None and crazy["playtest"]["ok"] is True, str(crazy))
+    status, hidden = request("/api/sessions", "POST", {"game_id": "crazy_eights", "seed": 5})
+    check("hidden_hands_are_private",
+          status == 200 and hidden["players"][1]["hand"] == [] and hidden["players"][1]["hidden_count"] == 5,  # type: ignore[index]
+          str(status))
+    check("own_hand_is_visible", len(hidden["players"][0]["hand"]) == 5)  # type: ignore[index]
 
     print(f"\n{len(PASSED)} checks passed against {BASE}")
 

@@ -18,6 +18,8 @@ from .tools import (
     DeckTool,
     ExactExpressionTool,
     LogicTool,
+    MatchingTool,
+    PatternTool,
     RankCompareTool,
     ScoreSettleTool,
     SolvableDealTool,
@@ -62,4 +64,20 @@ def core_registry() -> ToolRegistry:
                       returns="outcome/left/right"),)))
     registry.register(ToolSpec("winner_resolve", lambda **_: WinnerResolveTool(), (
         OperationSpec("call", params=("values", "mode"), effects=(), returns="winners"),)))
+    registry.register(ToolSpec("pattern", lambda **_: PatternTool(), (
+        OperationSpec("match", params=("card", "top", "active_suit", "wild_ranks"), effects=(),
+                      returns="bool"),
+        OperationSpec("choices", params=("cards", "top", "active_suit", "wild_ranks"), effects=(),
+                      returns="list[int]"),
+        OperationSpec("describe", params=("cards",), effects=(), returns="rank/suit/value/id"),
+        OperationSpec("classify", params=("cards", "pattern"), effects=(),
+                      returns="kind/rank/length/cards"),
+        OperationSpec("beats", params=("candidate", "previous", "bombs"), effects=(),
+                      returns="bool"))))
+    registry.register(ToolSpec("matching", lambda **_: MatchingTool(), (
+        OperationSpec("play", params=("state", "hand_index", "card_index", "declared_suit", "wild_ranks", "suits"),
+                      effects=("hands", "table", "active_suit", "finished", "winners", "phase"),
+                      returns="played/active_suit/hand_size"),
+        OperationSpec("draw", params=("state", "hand_index", "seed", "recycle"),
+                      effects=("hands", "stock", "table"), returns="hand_size"),)))
     return registry

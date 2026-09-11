@@ -94,6 +94,111 @@ def arithmetic_plan(*, target: int = 24, max_rounds: int = 3, card_count: int = 
                     entry="deal", nodes=nodes, step_limit=512)
 
 
+def crazy_eights_plan(*, hand_size: int = 5, wild_rank: str | None = "8",
+                      ranks=("A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"),
+                      suits=("S", "H", "D", "C")) -> GamePlan:
+    """Two-player matching game with hidden hands and draw-until-playable.
+
+    Contract: match suit or rank (``wild_rank`` also matches anything and
+    declares the next suit); no legal card means keep drawing; the first empty
+    hand wins; opponent hands are private (``private_hands``).
+    """
+    wild = [wild_rank] if wild_rank else []
+    tools = [
+        {"name": "state"},
+        {"name": "logic"},
+        {"name": "deck", "config": {"ranks": list(ranks), "suits": list(suits)}},
+        {"name": "pattern"},
+        {"name": "matching"},
+    ]
+    match = {"wild_ranks": wild}
+
+    def play_node(player: int) -> dict:
+        return {"kind": "call", "next": "check_end", "action": {
+            "tool": "matching", "operation": "play",
+            "args": {"state": "$state", "hand_index": player,
+                     "card_index": "$state.input.card_index",
+                     "declared_suit": "$state.input.declared_suit",
+                     "suits": list(suits), **match}}}
+
+    def draw_node(player: int) -> dict:
+        return {"kind": "call", "next": "turn", "action": {
+            "tool": "matching", "operation": "draw",
+            "args": {"state": "$state", "hand_index": player, "seed": "$state.round_seed"}}}
+
+    def turn_nodes(player: int) -> dict:
+        """A seat's turn: expose the real choice set, then wait accordingly.
+
+        Offering ``play`` only when a legal card exists is what makes
+        ``legal_actions`` truthful; a generic policy can then trust it.
+        """
+        return {
+            f"turn{player}": {"kind": "call", "next": f"has{player}", "action": {
+                "tool": "pattern", "operation": "choices",
+                "args": {"cards": f"$state.hands.{player}", "top": "$state.table",
+                         "active_suit": "$state.active_suit", **match},
+                "result_key": "legal_card_indices"}},
+            f"has{player}": {"kind": "call", "next": f"gate{player}", "action": {
+                "tool": "logic", "operation": "evaluate",
+                "args": {"expression": {"gt": [{"count": ["$state.legal_card_indices"]}, 0]}},
+                "result_key": "has_choice"}},
+            f"gate{player}": {"kind": "branch", "value": "$state.has_choice",
+                              "cases": [{"value": True, "target": f"wait{player}"}],
+                              "next": f"drawwait{player}"},
+            f"wait{player}": {"kind": "wait", "inputs": {"play": f"play{player}"}},
+            f"drawwait{player}": {"kind": "wait", "inputs": {"draw": f"draw{player}"}},
+            f"play{player}": play_node(player),
+            f"draw{player}": draw_node(player),
+        }
+
+    nodes = {
+        "round_seed": {"kind": "call", "next": "deal", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"join": ["$state.seed", ":ce"]}},
+            "result_key": "round_seed"}},
+        "deal": {"kind": "call", "next": "init", "action": {
+            "tool": "deck", "operation": "deal",
+            "args": {"seed": "$state.round_seed", "hands": 2, "cards_each": hand_size, "kitty": 1},
+            "result_key": "deal"}},
+        "init": {"kind": "call", "next": "top_card", "action": {
+            "tool": "state", "operation": "update", "args": {"state": "$state", "values": {
+                "hands": "$state.deal.hands", "stock": "$state.deal.deck",
+                "table": "$state.deal.kitty", "deal": None,
+                "suits": list(suits),
+                "current_player": 0, "phase": "play", "finished": False, "winners": [],
+                "private_hands": True, "wild_ranks": wild}}}},
+        "top_card": {"kind": "call", "next": "set_suit", "action": {
+            "tool": "pattern", "operation": "describe",
+            "args": {"cards": "$state.table"}, "result_key": "top_desc"}},
+        "set_suit": {"kind": "call", "next": "turn", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {"active_suit": "$state.top_desc.suit"}}}},
+        "turn": {"kind": "branch", "value": "$state.current_player",
+                 "cases": [{"value": 0, "target": "turn0"}, {"value": 1, "target": "turn1"}],
+                 "next": "turn0"},
+        **turn_nodes(0),
+        **turn_nodes(1),
+        "check_end": {"kind": "branch", "value": "$state.finished",
+                      "cases": [{"value": True, "target": "finish"}], "next": "advance"},
+        "advance": {"kind": "call", "next": "apply_turn", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"sub": [1, "$state.current_player"]}},
+            "result_key": "next_player"}},
+        "apply_turn": {"kind": "call", "next": "turn", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {"current_player": "$state.next_player"}}}},
+        "finish": {"kind": "call", "next": "end", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {"phase": "finished"}}}},
+        "end": {"kind": "end"},
+    }
+    initial = {"finished": False, "winners": [], "current_player": 0, "round": 1, "max_rounds": 1,
+               "phase": "play", "private_hands": True, "suits": list(suits), "wild_ranks": wild,
+               "instructions": "接同花色或同点数；万能牌可指定花色；无牌可出时持续摸牌；先出完手牌者获胜。"}
+    return GamePlan(game_kind="crazy_eights", players=2, tools=tools, initial=initial,
+                    entry="round_seed", nodes=nodes, step_limit=512)
+
+
 def war_plan(*, max_rounds: int = 3,
              ranks=("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"),
              suits=("S", "H", "D", "C")) -> GamePlan:

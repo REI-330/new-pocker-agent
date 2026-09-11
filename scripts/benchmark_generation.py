@@ -36,6 +36,8 @@ IR_TEMPLATES: dict[str, dict] = {
               "stacks": 100, "min_raise": 10},
     "blackjack": {"kind": "blackjack", "game_id": "bench-blackjack", "title": "21点",
                   "max_rounds": 3},
+    "go_fish": {"kind": "go_fish", "game_id": "bench-go-fish", "title": "钓鱼",
+                "cards_each": 5},
 }
 
 

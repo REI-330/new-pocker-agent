@@ -12,7 +12,15 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from .capability import CapabilityReport, capability_check
 from .plan import GamePlan
-from .plans import arithmetic_plan, blackjack_plan, crazy_eights_plan, five_card_poker_plan, war_plan, whist_plan
+from .plans import (
+    arithmetic_plan,
+    blackjack_plan,
+    crazy_eights_plan,
+    five_card_poker_plan,
+    go_fish_plan,
+    war_plan,
+    whist_plan,
+)
 
 DEFAULT_RANK_VALUES = {"A": 1, **{str(n): n for n in range(2, 11)}, "J": 11, "Q": 12, "K": 13}
 DEFAULT_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
@@ -168,11 +176,32 @@ class BlackjackIR(_Strict):
         return self
 
 
-RulesIR = Annotated[ArithmeticIR | WarIR | SheddingIR | WhistIR | PokerIR | BlackjackIR,
+class GoFishIR(_Strict):
+    """Two-player Go Fish: ask for a rank from the hidden hand, pairs score."""
+
+    schema_version: Literal["0.4"] = "0.4"
+    kind: Literal["go_fish"]
+    game_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=2000)
+    players: Literal[2] = 2
+    cards_each: int = Field(default=5, ge=1, le=10)
+    max_rounds: Literal[1] = 1
+    ranks: list[str] = Field(default_factory=lambda: list(DEFAULT_RANKS), min_length=4)
+    suits: list[str] = Field(default_factory=lambda: list(DEFAULT_SUITS), min_length=1)
+
+    @model_validator(mode="after")
+    def executable(self) -> GoFishIR:
+        if len(self.ranks) * len(self.suits) <= self.players * self.cards_each:
+            raise ValueError("牌组必须留出可摸的牌堆")
+        return self
+
+
+RulesIR = Annotated[ArithmeticIR | WarIR | SheddingIR | WhistIR | PokerIR | BlackjackIR | GoFishIR,
                     Field(discriminator="kind")]
 IR_ADAPTER = TypeAdapter(RulesIR)
 
-HOST_COMPILED = ("arithmetic", "war", "shedding", "whist", "poker", "blackjack")
+HOST_COMPILED = ("arithmetic", "war", "shedding", "whist", "poker", "blackjack", "go_fish")
 REQUIRED_AXES: dict[str, tuple[str, ...]] = {
     "arithmetic": ("sequential_turn", "exact_expression", "score_settle"),
     "war": ("sequential_turn", "rank_compare", "score_settle"),
@@ -180,6 +209,7 @@ REQUIRED_AXES: dict[str, tuple[str, ...]] = {
     "whist": ("sequential_turn", "turn_adapter", "team", "pattern_lang"),
     "poker": ("sequential_turn", "betting", "ledger", "hand_rank", "info_set"),
     "blackjack": ("sequential_turn", "point_total", "info_set", "score_settle"),
+    "go_fish": ("sequential_turn", "hidden_draw", "info_set"),
 }
 
 
@@ -222,4 +252,6 @@ def host_compile(ir: ArithmeticIR | WarIR) -> GamePlan:
                               dealer_stand_on=ir.dealer_stand_on,
                               dealer_hits_soft_17=ir.dealer_hits_soft_17,
                               ranks=ir.ranks, suits=ir.suits)
+    if isinstance(ir, GoFishIR):
+        return go_fish_plan(cards_each=ir.cards_each, ranks=ir.ranks, suits=ir.suits)
     raise ValueError(f"no_host_compiler:{getattr(ir, 'kind', 'unknown')}")

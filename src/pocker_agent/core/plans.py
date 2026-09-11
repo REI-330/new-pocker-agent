@@ -475,6 +475,89 @@ def blackjack_plan(*, max_rounds: int = 3, target: int = 21, dealer_stand_on: in
                     entry="round_seed", nodes=nodes, step_limit=512)
 
 
+def go_fish_plan(*, cards_each: int = 5, players: int = 2,
+                 ranks=("A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"),
+                 suits=("S", "H", "D", "C")) -> GamePlan:
+    """Two-player Go Fish: ask for a rank from the hidden hand, pairs score.
+
+    Contract: ask for a rank you hold; a successful ask transfers every matching
+    hidden card and lets you ask again; a failed ask fishes one card from the
+    stock and passes the turn; a player with no cards draws one; the game ends
+    when the stock is empty and a hand is empty; the most pairs wins.
+    """
+    tools = [
+        {"name": "state"},
+        {"name": "logic"},
+        {"name": "deck", "config": {"ranks": list(ranks), "suits": list(suits)}},
+        {"name": "hidden_draw"},
+        {"name": "winner_resolve"},
+    ]
+
+    def seat_nodes(seat: int) -> dict:
+        return {
+            f"turn{seat}": {"kind": "call", "next": f"end_check{seat}", "action": {
+                "tool": "hidden_draw", "operation": "is_finished", "args": {"state": "$state"},
+                "result_key": "no_more"}},
+            f"end_check{seat}": {"kind": "branch", "value": "$state.no_more",
+                                 "cases": [{"value": True, "target": "result"}],
+                                 "next": f"refill{seat}"},
+            f"refill{seat}": {"kind": "call", "next": f"askable{seat}", "action": {
+                "tool": "hidden_draw", "operation": "refill", "args": {"state": "$state"}}},
+            f"askable{seat}": {"kind": "call", "next": f"wait{seat}", "action": {
+                "tool": "hidden_draw", "operation": "askable", "args": {"state": "$state"},
+                "result_key": "available_actions"}},
+            f"wait{seat}": {"kind": "wait", "inputs": {"ask:*": f"ask{seat}"}},
+            f"ask{seat}": {"kind": "call", "next": "pairs", "action": {
+                "tool": "hidden_draw", "operation": "ask",
+                "args": {"state": "$state", "action": "$state.input.action"},
+                "result_key": "ask_result"}},
+        }
+
+    nodes = {
+        "round_seed": {"kind": "call", "next": "deal", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"join": ["$state.seed", ":gf"]}},
+            "result_key": "round_seed"}},
+        "deal": {"kind": "call", "next": "init", "action": {
+            "tool": "deck", "operation": "deal",
+            "args": {"seed": "$state.round_seed", "hands": players, "cards_each": cards_each},
+            "result_key": "deal"}},
+        "init": {"kind": "call", "next": "turn", "action": {
+            "tool": "state", "operation": "update", "args": {"state": "$state", "values": {
+                "hands": "$state.deal.hands", "stock": "$state.deal.deck", "deal": None,
+                "current_player": 0, "phase": "ask", "finished": False, "winners": [],
+                "private_hands": True,
+                "instructions": "向对手要一个你手上已有的点数；成功就继续，失败则摸一张并换手；成对自动消除，对数多者胜。"}}}},
+        "turn": {"kind": "branch", "value": "$state.current_player",
+                 "cases": [{"value": seat, "target": f"turn{seat}"} for seat in range(players)],
+                 "next": "turn0"},
+        **{key: value for seat in range(players) for key, value in seat_nodes(seat).items()},
+        "pairs": {"kind": "call", "next": "decide", "action": {
+            "tool": "hidden_draw", "operation": "discard_pairs", "args": {"state": "$state"},
+            "result_key": "discarded"}},
+        "decide": {"kind": "branch", "value": "$state.ask_result.fished",
+                   "cases": [{"value": True, "target": "advance"}], "next": "turn"},
+        "advance": {"kind": "call", "next": "apply_turn", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"sub": [players - 1, "$state.current_player"]}},
+            "result_key": "next_player"}},
+        "apply_turn": {"kind": "call", "next": "turn", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {"current_player": "$state.next_player"}}}},
+        "result": {"kind": "call", "next": "finish", "action": {
+            "tool": "winner_resolve", "operation": "call",
+            "args": {"values": "$state.pairs"}, "result_key": "winners_indexes"}},
+        "finish": {"kind": "call", "next": "end", "action": {
+            "tool": "state", "operation": "update", "args": {"state": "$state", "values": {
+                "finished": True, "winners": "$state.winners_indexes", "phase": "finished"}}}},
+        "end": {"kind": "end"},
+    }
+    initial = {"finished": False, "winners": [], "pairs": [0] * players, "current_player": 0,
+               "round": 1, "max_rounds": 1, "phase": "ask", "private_hands": True}
+    return GamePlan(game_kind="go_fish", players=players, tools=tools, initial=initial,
+                    entry="round_seed", nodes=nodes, step_limit=1024)
+
+
 def war_plan(*, max_rounds: int = 3,
              ranks=("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"),
              suits=("S", "H", "D", "C")) -> GamePlan:

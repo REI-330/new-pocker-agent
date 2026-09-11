@@ -909,7 +909,8 @@ team             █              1
 - [x] `betting` + `ledger` + `hand_rank` → stable（ADR-0002 预算 12→16），新增可玩族 `five_card_poker`
 - [x] `point_total` → stable，新增可玩族 `blackjack`
 - [x] 生成基准（`scripts/benchmark_generation.py` + 语料用例 + 缺口直方图）
-- [ ] `trigger` / `layout` / `hidden_draw`（工具预算 15/16，下一条需 ADR-0003）
+- [x] `hidden_draw` → stable（ADR-0003 预算 16→17），新增可玩族 `go_fish`；wait 通配输入展开为具体动作
+- [ ] `trigger`（UNO 类）/ `layout`（接龙）（工具预算 16/17，下一条需 ADR-0004）
 - [ ] macro 形式化 + 提升规则；沙箱隔离协议
 
 ---

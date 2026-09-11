@@ -138,6 +138,14 @@ def main() -> None:
           status == 200 and jack["players"][1]["hand"] == []  # type: ignore[index]
           and jack["players"][1]["hidden_count"] == 2, str(status))  # type: ignore[index]
 
+    status, fish = request("/api/sessions", "POST", {"game_id": "go_fish", "seed": 7})
+    fish_actions = fish.get("legal_actions", []) if isinstance(fish, dict) else []
+    check("go_fish_offers_concrete_ask_actions",
+          status == 200 and fish_actions and all(a.startswith("ask:") for a in fish_actions)  # type: ignore[union-attr]
+          and "ask:*" not in fish_actions, str(status))
+    check("go_fish_hides_the_opponent",
+          fish["players"][1]["hidden_count"] == 5)  # type: ignore[index]
+
     print(f"\n{len(PASSED)} checks passed against {BASE}")
 
 

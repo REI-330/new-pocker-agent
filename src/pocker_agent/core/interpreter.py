@@ -162,29 +162,44 @@ class Interpreter:
         node = self.plan.nodes[self.pc]
         if not self.started or node.kind != "wait" or self.state.get("finished"):
             return []
-        actions = list(node.inputs)
-        # A plan may narrow the wait's static inputs per state (betting rounds,
-        # matching turns); the engine never invents an action, it only filters.
+        return self._available(list(node.inputs))
+
+    def _available(self, patterns: list[str]) -> list[str]:
+        """Expand a wait node's static inputs against ``state.available_actions``.
+
+        A plan may publish concrete options (e.g. ``ask:7``) for a wildcard input
+        (``ask:*``); the engine filters and expands, it never invents an action
+        that the plan did not offer.
+        """
         available = self.state.get("available_actions")
-        if isinstance(available, list):
-            actions = [action for action in actions if action in available]
-        return actions
+        if not isinstance(available, list):
+            return patterns
+        resolved: list[str] = []
+        for pattern in patterns:
+            if pattern in available:
+                resolved.append(pattern)
+            elif pattern.endswith("*"):
+                prefix = pattern[:-1]
+                resolved.extend(action for action in available
+                                if isinstance(action, str) and action.startswith(prefix))
+        return resolved
 
     def step(self, action: str | None = None, card_index: int = 0, **payload: Any) -> dict[str, Any]:
         actions = self.legal_actions()
         if action is None:
             action = actions[0] if actions else None
-        matched = action if action in actions else next(
-            (pattern for pattern in actions if pattern.endswith("*")
+        node_inputs = self.plan.nodes[self.pc].inputs
+        key = action if action in node_inputs else next(
+            (pattern for pattern in node_inputs if pattern.endswith("*")
              and isinstance(action, str) and action.startswith(pattern[:-1])), None)
-        if matched is None:
+        if key is None or (action not in actions and key not in actions):
             raise ToolError("illegal_action")
         backup = (deepcopy(self.state), deepcopy(self.events), self.pc)
         try:
             self.state["input"] = {"action": action, "card_index": card_index,
                                      "expression": "", "declared_suit": "", "amount": 0,
                                      **payload}
-            self.pc = self.plan.nodes[self.pc].inputs[matched]
+            self.pc = node_inputs[key]
             self.advance()
         except Exception:
             self.state, self.events, self.pc = backup
@@ -256,10 +271,10 @@ class Interpreter:
             "private_hands": private,
             "events": self.events[-100:],
         }
-        # Extra table state (chips, teams, tricks) is exposed read-only so a UI
-        # can render it without knowing the game family.
+        # Extra table state (chips, teams, tricks, pairs) is exposed read-only so
+        # a UI can render it without knowing the game family.
         for key in ("pot", "stacks", "committed", "hand_committed", "folded",
-                    "teams", "tricks_won", "trump", "current_bet", "min_raise"):
+                    "teams", "tricks_won", "trump", "current_bet", "min_raise", "pairs"):
             if key in state:
                 result[key] = state[key]
         return result

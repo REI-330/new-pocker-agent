@@ -12,8 +12,16 @@ from functools import lru_cache
 
 from .interpreter import Interpreter
 from .plan import GamePlan
-from .plans import arithmetic_plan, blackjack_plan, crazy_eights_plan, five_card_poker_plan, war_plan, whist_plan
-from .playtest import PlaytestReport, card_first, first_legal, playtest
+from .plans import (
+    arithmetic_plan,
+    blackjack_plan,
+    crazy_eights_plan,
+    five_card_poker_plan,
+    go_fish_plan,
+    war_plan,
+    whist_plan,
+)
+from .playtest import PlaytestReport, card_first, first_legal, playtest, resilient_first
 from .policy import bet_first
 from .registry import core_registry
 
@@ -75,6 +83,10 @@ def _blackjack() -> GamePlan:
     return blackjack_plan(max_rounds=3, dealer_hits_soft_17=False)
 
 
+def _go_fish() -> GamePlan:
+    return go_fish_plan(cards_each=5)
+
+
 REFERENCE_GAMES: dict[str, ReferenceGame] = {
     "arithmetic24": ReferenceGame("arithmetic24", "24点 / 四则算式练习", "arithmetic",
                                   _arithmetic24, _solve_or_claim_none),
@@ -86,6 +98,8 @@ REFERENCE_GAMES: dict[str, ReferenceGame] = {
                                      _five_card_poker, bet_first),
     "blackjack": ReferenceGame("blackjack", "无下注 21 点（隐藏庄家手牌）", "blackjack",
                                _blackjack, _stand_at_17),
+    "go_fish": ReferenceGame("go_fish", "Go Fish（向对手要牌）", "go_fish",
+                             _go_fish, resilient_first),
 }
 
 

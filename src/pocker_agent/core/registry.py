@@ -14,6 +14,7 @@ Contract policy for the core tools:
 from __future__ import annotations
 
 from .contracts import OperationSpec, ToolRegistry, ToolSpec
+from .hidden_tools import HiddenDrawTool
 from .point_tools import PointTotalTool
 from .poker_tools import BettingTool, HandRankTool, LedgerTool
 from .tools import (
@@ -114,4 +115,13 @@ def core_registry() -> ToolRegistry:
                       effects=("stock", "hands"), returns="total/soft/bust/draws"),
         OperationSpec("settle", params=("player", "dealer", "player_natural", "dealer_natural",
                                          "first_bust_loses"), effects=(), returns="winner/reason"),)))
+    registry.register(ToolSpec("hidden_draw", lambda **_: HiddenDrawTool(), (
+        OperationSpec("askable", params=("state", "seat"), effects=(), returns="list[str]"),
+        OperationSpec("ask", params=("state", "action", "asker"),
+                      effects=("hands", "stock"), returns="got/fished/drawn"),
+        OperationSpec("discard_pairs", params=("state", "seat"),
+                      effects=("hands", "pairs"), returns="pairs/hand_size/total"),
+        OperationSpec("refill", params=("state", "seat"), effects=("hands", "stock"),
+                      returns="drew"),
+        OperationSpec("is_finished", params=("state",), effects=(), returns="bool"),)))
     return registry

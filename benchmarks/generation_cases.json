@@ -5,6 +5,7 @@
   {"id": "whist", "goal": "四人两队墩牌，跟牌、翻牌定将，吃墩最多的队获胜", "expect": "whist"},
   {"id": "poker", "goal": "两人各五张牌，一轮无上限下注后摊牌比牌型", "expect": "poker"},
   {"id": "blackjack", "goal": "无下注21点，我对庄家，共3轮，庄家不足17要牌", "expect": "blackjack"},
-  {"id": "go_fish", "goal": "三人抽乌龟，轮流从下一家隐藏手牌抽一张", "expect": "unsupported", "missing": ["hidden_draw"]},
+  {"id": "go_fish", "goal": "两人钓鱼：向对手要一个我手上已有的点数，成功继续、失败摸一张", "expect": "go_fish"},
+  {"id": "spoons", "goal": "做个抢勺子游戏，需要特殊牌效果和连锁触发", "expect": "unsupported", "missing": ["trigger"]},
   {"id": "klondike", "goal": "做一个接龙纸牌，多个牌区、自动移动、目标区", "expect": "unsupported", "missing": ["layout"]}
 ]

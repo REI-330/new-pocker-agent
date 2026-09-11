@@ -174,6 +174,27 @@ def test_agent_loop_fails_safely_without_a_model(tmp_path):
     assert "模型配置" in response.json()["detail"]
 
 
+def test_go_fish_over_http_asks_concrete_ranks(tmp_path):
+    c = client(tmp_path)
+    state = c.post("/api/sessions", json={"game_id": "go_fish", "seed": 7}).json()
+    session_id = state["session_id"]
+    assert state["private_hands"] is True
+    assert state["players"][1]["hand"] == [] and state["players"][1]["hidden_count"] == 5
+    actions = state["legal_actions"]
+    assert actions and all(action.startswith("ask:") and action != "ask:*" for action in actions)
+    assert c.post(f"/api/sessions/{session_id}/actions/ask:*",
+                  json={"revision": 0}).status_code != 200
+
+    for _ in range(30):
+        if state["finished"]:
+            break
+        response = c.post(f"/api/sessions/{session_id}/actions/{state['legal_actions'][0]}",
+                          json={"revision": state["revision"]})
+        assert response.status_code == 200, response.text
+        state = response.json()["state"]
+    assert "pairs" in state
+
+
 def test_blackjack_over_http_hides_the_dealer(tmp_path):
     c = client(tmp_path)
     state = c.post("/api/sessions", json={"game_id": "blackjack", "seed": 7}).json()

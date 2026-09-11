@@ -29,7 +29,7 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export const api = {
-  capabilities: () => request<{matrix: import('./types').CapabilityMatrix; coverage: Coverage}>('/api/capabilities'),
+  capabilities: () => request<import('./types').CapabilityResponse>('/api/capabilities'),
   games: () => request<{games: GameInfo[]; coverage: Coverage}>('/api/games'),
   createSession: (game_id: string, seed?: number) =>
     request<SessionState>('/api/sessions', seed === undefined ? {game_id} : {game_id, seed}),

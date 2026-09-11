@@ -21,7 +21,15 @@ from pydantic import BaseModel, Field
 
 from .agent import TOOL_SCHEMAS, run_loop
 from .configuration import ConfigInput, ConfigStore
-from .core import SessionStore, capability_matrix, core_registry, coverage_report
+from .core import (
+    PLAN_MACROS,
+    SessionStore,
+    capability_matrix,
+    core_registry,
+    coverage_report,
+    default_macros,
+    promotion_report,
+)
 from .llm import OpenAICompatibleClient
 from .storage import data_path
 
@@ -139,7 +147,8 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
 
     @app.get("/api/capabilities")
     def capabilities():
-        return {"matrix": capability_matrix(), "coverage": coverage_report()}
+        return {"matrix": capability_matrix(), "coverage": coverage_report(),
+                "macro_promotion": promotion_report(PLAN_MACROS, default_macros())}
 
     @app.get("/api/games")
     def games():

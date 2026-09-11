@@ -248,7 +248,21 @@ S4             覆盖度量与交付（横切，贯穿始终）
 - 验证：`171 passed`；真实 HTTP 端到端 `27/27`（1 项 SKIP）；`doctor.py --serve` 与 `doctor.py --url` 全绿。
 - 同时修掉一处同类陈量：`SYSTEM_PROMPT` 的能力清单到 S8 仍写 `kind = arithmetic | war`（实际 8 个族）。
   已改为从 `core/ir.REQUIRED_AXES` 推导（`IR_KINDS`），并加测试断言每个 kind 都出现在提示里；
-  否则设计对话会被带偏（修前 4 个对话生成的玩法全是 `war`）。
+  否则设计对话会被带偏（修前 4 个对话生成的玩法全是 `war`）。同一处陈量也在 `propose_ir` 的工具描述里（会显示到前端），已一并推导。
+
+**S8 补丁 2：轴状态与实现对齐（2026-09-11）。**
+
+- `Capability` 新增 `note`：**未覆盖的轴必须说明到底缺什么**（否则缺口会变成静默失败），由架构测试强制。
+  四条 `planned` 轴现在各自写清楚了缺口：`layout`（无区域原语）、`simultaneous`（wait 只能挂一个座位）、
+  `sandbox`（需独立隔离协议）、`macro`。
+- 新不变量：**`stable` 轴不得建立在占位机制上**（`axis.*` / `protocol.*`）。
+  `stable` 的含义是「宿主能编译且能验证需要它的玩法」，占位符只是承诺，不是实现。
+- `macro` 轴澄清（它看似矛盾：实现已完成，轴却是 `planned`）：
+  `core/macros.py` 的**构建期内联**已实现且 `match_turn` 被 2 个计划真实复用（宿主侧完成）；
+  但**模型没有生成/注册宏的元工具**，而轴的名字正是「声明式宏生成与注册」——对 agent 而言仍是缺口。
+  故保持 `planned`，并用测试钉住：一旦有人加了 macro 元工具，就必须同时提升该轴。
+- 提升规则变成活规则：`promotion_report(PLAN_MACROS, default_macros())` 必须为空，且其结果现在从
+  `/api/capabilities.macro_promotion` 暴露，玩法库页「宏提升规则」一栏直接显示（当前：无待提升项）。
 
 ## 4. 测试规范
 
@@ -270,6 +284,7 @@ S4             覆盖度量与交付（横切，贯穿始终）
 |---|---|
 | 新增/修改 tool operation | 契约测试（effects/requires/ensures）+ 单元测试 |
 | 新增 axis | 属性测试（守恒/边界/确定性）+ 至少 2 个消费它的玩法编译测试 |
+| 修改 axis 状态 | `stable` 必须指向真实机制且该机制的玩法过 playtest；`planned` 必须带 note 说明缺口 |
 | 修改 plan schema | 计划测试 + 全部引用它的族重跑 |
 | 修改 IR | `host_compile` 一致性测试 + 覆盖率报表重跑 |
 | 修改 API | 一致性护栏测试（同 seed 同动作 trace 与 playtest 一致） |
@@ -357,9 +372,12 @@ nondeterministic_replay
 |---|---|---|
 | 执行路径数 | 1 | `test_core_has_exactly_one_interpreter` |
 | 游戏专属工具数 | 0 | `test_no_game_specific_tool_in_the_core_registry` |
-| core 工具数 | ≤ 16（ADR-0002） | `test_core_tool_budget_is_a_ratchet` |
+| core 工具数 | ≤ 18（ADR-0004）· 当前 17 | `test_core_tool_budget_is_a_ratchet` |
 | 未使用工具数 | 0 | `test_every_registered_tool_is_used_by_a_reference_plan` |
 | 只允许 `state` 用 `"*"` effects | — | `test_only_state_tool_may_write_arbitrary_keys` |
+| `stable` 轴必须指向真实机制 | 0 个占位 | `test_a_stable_axis_must_name_a_real_mechanism` |
+| 未覆盖轴必须说明缺口 | 4/4 有 note | `test_every_uncovered_axis_says_what_is_missing` |
+| 宏提升欠账 | 0 | `test_the_shipped_macro_library_owes_no_promotion` |
 | core LOC / 文件数 | 记录并只许持平 | 报表（S2 起自动化） |
 | 删除积压 | 0 | §6.3 · `tests/test_oracle_fixtures.py::test_no_legacy_engine_module_remains_in_the_package`（旧引擎已删，行为以 `benchmarks/oracle/` 数据保留） |
 

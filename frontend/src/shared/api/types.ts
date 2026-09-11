@@ -1,9 +1,15 @@
 export type Card = {id: string; rank: string; suit: string; value: number}
 export type GameEvent = Record<string, unknown>
 
-export type Capability = {id: string; title: string; status: string; covered: boolean; mechanisms: string[]}
+export type Capability = {id: string; title: string; status: string; covered: boolean
+  mechanisms: string[]; note: string}
 export type CapabilityMatrix = {version: string; status_order: string[]; axes: Capability[]}
 export type CapabilityGap = {axis: string; status: string; reason: string}
+
+export type MacroPromotion = {macro: string; plans: string[]; uses: number; action: string}
+export type CapabilityResponse = {
+  matrix: CapabilityMatrix; coverage: Coverage; macro_promotion: MacroPromotion[]
+}
 
 export type CoverageGame = {
   id: string; name: string; category: string; required_axes: string[]

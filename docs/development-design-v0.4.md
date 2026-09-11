@@ -914,6 +914,7 @@ team             █              1
 - [ ] `layout`（接龙 3 个玩法）/ `simultaneous`（同时行动）
 - [x] macro 形式化 + 提升规则（`core/macros.py`，`match_turn` 被两个计划真实复用）
 - [x] 长驻进程陈旧检测：`/health` 暴露 `code` 指纹 + `doctor.py --url` + 启动器端口归属提示
+- [x] 轴状态与实现对齐：`Capability.note`（缺口必须说明）+ `stable` 不得建立在占位机制上 + 宏提升欠账为 0
 - [ ] 沙箱隔离协议
 
 ---

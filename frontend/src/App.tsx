@@ -6,7 +6,8 @@ import {ReplayPage} from './features/replay/ReplayPage'
 import {RulesPage} from './features/rules/RulesPage'
 import {SettingsPage} from './features/settings/SettingsPage'
 import {WorkspacePage} from './features/workspace/WorkspacePage'
-import {api, messageOf, type Coverage, type GameInfo, type SessionState} from './shared/api'
+import {api, messageOf, type CapabilityMatrix, type Coverage, type GameInfo,
+  type MacroPromotion, type SessionState} from './shared/api'
 
 type Route = 'library' | 'design' | 'rules' | 'workspace' | 'replay' | 'settings'
 
@@ -23,6 +24,8 @@ export function App() {
   const [route, setRoute] = useState<Route>('library')
   const [games, setGames] = useState<GameInfo[]>([])
   const [coverage, setCoverage] = useState<Coverage | null>(null)
+  const [matrix, setMatrix] = useState<CapabilityMatrix | null>(null)
+  const [macroPromotion, setMacroPromotion] = useState<MacroPromotion[]>([])
   const [gameId, setGameId] = useState<string | null>(null)
   const [session, setSession] = useState<SessionState | null>(null)
   const [busy, setBusy] = useState('')
@@ -38,6 +41,8 @@ export function App() {
   const openGame = (id: string) => { setGameId(id); setSession(null); setRoute('rules') }
   const refreshGames = useCallback(() => {
     api.games().then(data => { setGames(data.games); setCoverage(data.coverage) })
+      .catch(err => setError(messageOf(err)))
+    api.capabilities().then(data => { setMatrix(data.matrix); setMacroPromotion(data.macro_promotion) })
       .catch(err => setError(messageOf(err)))
   }, [])
   useEffect(refreshGames, [refreshGames])
@@ -104,7 +109,8 @@ export function App() {
       {error && <div className="state-banner conflict"><span className="state-icon">!</span>
         <div><strong>{error}</strong><small>操作未提交；状态保持不变。</small></div></div>}
 
-      {route === 'library' && <LibraryPage games={games} coverage={coverage} onOpen={openGame} />}
+      {route === 'library' && <LibraryPage games={games} coverage={coverage} matrix={matrix}
+        macroPromotion={macroPromotion} onOpen={openGame} />}
       {route === 'design' && <DesignPage onPlay={id => start(id)} />}
       {route === 'settings' && <SettingsPage />}
       {route === 'rules' && <RulesPage game={currentGame} coverage={coverage} onPlay={() => start()} />}

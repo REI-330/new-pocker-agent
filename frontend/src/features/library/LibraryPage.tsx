@@ -1,8 +1,10 @@
-import type {Coverage, GameInfo} from '../../shared/api'
+import type {CapabilityMatrix, Coverage, GameInfo, MacroPromotion} from '../../shared/api'
 import {Pill, statusLabel} from '../../components/ui'
 
-export function LibraryPage({games, coverage, onOpen}: {
-  games: GameInfo[]; coverage: Coverage | null; onOpen: (gameId: string) => void
+export function LibraryPage({games, coverage, matrix, macroPromotion, onOpen}: {
+  games: GameInfo[]; coverage: Coverage | null
+  matrix: CapabilityMatrix | null; macroPromotion: MacroPromotion[]
+  onOpen: (gameId: string) => void
 }) {
   return <div className="prototype-page library-page">
     <div className="page-heading">
@@ -30,11 +32,32 @@ export function LibraryPage({games, coverage, onOpen}: {
       <div className="library-section">
         <div className="section-heading"><h2>能力缺口（按影响排序）</h2>
           <span className="mono">corpus {coverage.total}</span></div>
-        {Object.entries(coverage.missing_histogram).map(([axis, count]) =>
-          <div className="rule-card" key={axis}>
-            <div><h3>{axis}</h3><p>{count} 个玩法需要它</p></div>
-            <Pill tone="warning">待开发</Pill>
-          </div>)}
+        {Object.entries(coverage.missing_histogram).map(([axis, count]) => {
+          const capability = matrix?.axes.find(item => item.id === axis)
+          return <div className="rule-card" key={axis}>
+            <div><h3>{capability?.title ?? axis}</h3>
+              <p>{count} 个玩法需要它
+                {capability?.note ? <><br />{capability.note}</> : null}</p></div>
+            <Pill tone={capability?.covered ? 'success' : 'warning'}>
+              {statusLabel(capability?.status ?? 'planned')}</Pill>
+          </div>
+        })}
+      </div>
+
+      <div className="library-section">
+        <div className="section-heading"><h2>宏提升规则</h2>
+          <span className="mono">§6.4 · 阈值 2</span></div>
+        {macroPromotion.length
+          ? macroPromotion.map(item => <div className="rule-card" key={item.macro}>
+              <div><h3>{item.macro}</h3>
+                <p>被 {item.uses} 个计划复用：{item.plans.join(', ')}</p></div>
+              <Pill tone="warning">待提升为轴</Pill>
+            </div>)
+          : <div className="rule-card"><div><h3>无待提升项</h3>
+              <p>被 ≥2 个计划复用的「机制」宏必须提升为轴；控制流宏不计入
+                （当前 match_turn 属控制流，由 crazy_eights 与 uno 复用）。</p></div>
+              <Pill tone="success">已对齐</Pill>
+            </div>}
       </div>
 
       <div className="library-section">

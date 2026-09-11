@@ -24,6 +24,9 @@ class Capability:
     title: str
     status: str
     mechanisms: tuple[str, ...] = ()
+    # A gap is a claim about the host, so it must say what is actually missing.
+    # Non-stable axes are required to carry one (enforced by an architecture test).
+    note: str = ""
 
     def __post_init__(self) -> None:
         if self.status not in STATUS_ORDER:
@@ -35,7 +38,8 @@ class Capability:
 
     def as_dict(self) -> dict[str, Any]:
         return {"id": self.id, "title": self.title, "status": self.status,
-                "covered": self.covered, "mechanisms": list(self.mechanisms)}
+                "covered": self.covered, "mechanisms": list(self.mechanisms),
+                "note": self.note}
 
 
 # Axes available to plans. `stable` means the host can compile AND verify a game
@@ -64,7 +68,8 @@ AXES: tuple[Capability, ...] = (
     Capability("trigger", "特殊牌效果 / 连锁触发", "stable",
                ("tool.trigger",)),
     Capability("simultaneous", "同时行动 / 抢牌反应", "planned",
-               ("axis.simultaneous",)),
+               ("axis.simultaneous",),
+               note="缺同时行动原语：wait 只能挂住一个座位，无法表达同时亮牌/抢牌反应。"),
     Capability("team", "队伍与合作胜负", "stable",
                ("tool.trick.team_winners", "state.teams")),
     Capability("betting", "下注轮与边池", "stable",
@@ -72,11 +77,15 @@ AXES: tuple[Capability, ...] = (
     Capability("ledger", "通用资源账本 / 经济", "stable",
                ("tool.ledger", "state.stacks")),
     Capability("layout", "耐心 / 目标牌区与自动移动", "planned",
-               ("axis.layout",)),
+               ("axis.layout",),
+               note="缺区域原语：没有 tableau/foundation 这类牌区，也没有自动翻牌与再发牌规则。"),
     Capability("macro", "声明式宏生成与注册", "planned",
-               ("axis.macro",)),
+               ("axis.macro",),
+               note="宏的构建期内联已实现（core/macros.py，match_turn 被 2 个计划复用），"
+                    "但模型没有生成/注册宏的元工具，对 agent 而言仍是缺口；且无语料玩法需要它。"),
     Capability("sandbox", "隔离代码逃生口（独立执行面）", "planned",
-               ("protocol.sandbox",)),
+               ("protocol.sandbox",),
+               note="需要独立的隔离执行协议，而不是一个工具：逃生口必须与 Interpreter 分开，且不能绕过契约。"),
 )
 
 AXIS_BY_ID = {axis.id: axis for axis in AXES}

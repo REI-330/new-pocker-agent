@@ -104,6 +104,57 @@ def test_only_state_tool_may_write_arbitrary_keys():
     assert wildcard == ["state"], wildcard
 
 
+def test_a_stable_axis_must_name_a_real_mechanism():
+    """`stable` claims the host can compile AND verify a game needing this axis.
+
+    A placeholder mechanism (`axis.x` / `protocol.x`) is a promise, not an
+    implementation, so it can never back a covered axis. Without this check the
+    axis table drifts into claiming capability it does not have.
+    """
+    from pocker_agent.core.capability import AXES
+
+    placeholders = ("axis.", "protocol.")
+    for axis in AXES:
+        if not axis.covered:
+            continue
+        assert axis.mechanisms, f"stable axis '{axis.id}' names no mechanism"
+        fake = [m for m in axis.mechanisms if m.startswith(placeholders)]
+        assert not fake, f"axis '{axis.id}' is stable on a placeholder: {fake}"
+
+
+def test_every_uncovered_axis_says_what_is_missing():
+    """A gap without an explanation becomes a silent failure."""
+    from pocker_agent.core.capability import AXES
+
+    for axis in AXES:
+        if axis.covered:
+            continue
+        assert axis.note.strip(), f"axis '{axis.id}' is {axis.status} but has no note"
+
+
+def test_the_macro_axis_stays_a_gap_until_the_agent_can_author_macros():
+    """The macro machinery exists, yet the agent-facing capability does not.
+
+    ``core/macros.py`` inlines macros at build time and ``match_turn`` is reused
+    by two plans, so the host side is done. What is missing is a meta-tool that
+    lets the model *generate* a macro, which is exactly what the axis names.
+    """
+    from pocker_agent.agent.meta_tools import TOOL_SCHEMAS
+    from pocker_agent.core.capability import AXIS_BY_ID
+
+    assert AXIS_BY_ID["macro"].status == "planned"
+    assert not any("macro" in tool["name"] for tool in TOOL_SCHEMAS), (
+        "the macro axis is only planned while the model has no macro meta-tool; "
+        "if one was added, promote the axis (and say so)")
+
+
+def test_the_shipped_macro_library_owes_no_promotion():
+    """Section 6.4 is a live rule, not a one-off review note."""
+    from pocker_agent.core import PLAN_MACROS, default_macros, promotion_report
+
+    assert promotion_report(PLAN_MACROS, default_macros()) == []
+
+
 def test_every_registered_tool_is_used_by_a_reference_plan():
     """No dead tools: an unused registration is bloat and must be removed."""
     from pocker_agent.core.reference import REFERENCE_GAMES

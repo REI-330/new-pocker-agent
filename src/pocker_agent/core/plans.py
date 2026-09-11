@@ -7,6 +7,8 @@ compares against.
 """
 from __future__ import annotations
 
+from .macro_library import MATCH_TURN
+from .macros import expand_macro, wire
 from .plan import GamePlan
 
 
@@ -126,30 +128,21 @@ def crazy_eights_plan(*, hand_size: int = 5, wild_rank: str | None = "8",
             "tool": "matching", "operation": "draw",
             "args": {"state": "$state", "hand_index": player, "seed": "$state.round_seed"}}}
 
-    def turn_nodes(player: int) -> dict:
-        """A seat's turn: expose the real choice set, then wait accordingly.
+    def turn_nodes(player: int) -> tuple[dict, str]:
+        """A seat's turn, built from the shared ``match_turn`` macro.
 
-        Offering ``play`` only when a legal card exists is what makes
-        ``legal_actions`` truthful; a generic policy can then trust it.
+        The macro owns "compute the legal set, then wait for play or draw"; this
+        plan only supplies the cards and wires the two exits.
         """
-        return {
-            f"turn{player}": {"kind": "call", "next": f"has{player}", "action": {
-                "tool": "pattern", "operation": "choices",
-                "args": {"cards": f"$state.hands.{player}", "top": "$state.table",
-                         "active_suit": "$state.active_suit", **match},
-                "result_key": "legal_card_indices"}},
-            f"has{player}": {"kind": "call", "next": f"gate{player}", "action": {
-                "tool": "logic", "operation": "evaluate",
-                "args": {"expression": {"gt": [{"count": ["$state.legal_card_indices"]}, 0]}},
-                "result_key": "has_choice"}},
-            f"gate{player}": {"kind": "branch", "value": "$state.has_choice",
-                              "cases": [{"value": True, "target": f"wait{player}"}],
-                              "next": f"drawwait{player}"},
-            f"wait{player}": {"kind": "wait", "inputs": {"play": f"play{player}"}},
-            f"drawwait{player}": {"kind": "wait", "inputs": {"draw": f"draw{player}"}},
-            f"play{player}": play_node(player),
-            f"draw{player}": draw_node(player),
-        }
+        nodes, entry = expand_macro(MATCH_TURN, f"seat{player}",
+                                    cards=f"$state.hands.{player}")
+        wire(nodes, {"play": f"play{player}", "draw": f"draw{player}"})
+        nodes[f"play{player}"] = play_node(player)
+        nodes[f"draw{player}"] = draw_node(player)
+        return nodes, entry
+
+    turn0, entry0 = turn_nodes(0)
+    turn1, entry1 = turn_nodes(1)
 
     nodes = {
         "round_seed": {"kind": "call", "next": "deal", "action": {
@@ -174,10 +167,10 @@ def crazy_eights_plan(*, hand_size: int = 5, wild_rank: str | None = "8",
             "tool": "state", "operation": "update",
             "args": {"state": "$state", "values": {"active_suit": "$state.top_desc.suit"}}}},
         "turn": {"kind": "branch", "value": "$state.current_player",
-                 "cases": [{"value": 0, "target": "turn0"}, {"value": 1, "target": "turn1"}],
-                 "next": "turn0"},
-        **turn_nodes(0),
-        **turn_nodes(1),
+                 "cases": [{"value": 0, "target": entry0}, {"value": 1, "target": entry1}],
+                 "next": entry0},
+        **turn0,
+        **turn1,
         "check_end": {"kind": "branch", "value": "$state.finished",
                       "cases": [{"value": True, "target": "finish"}], "next": "advance"},
         "advance": {"kind": "call", "next": "apply_turn", "action": {
@@ -581,34 +574,25 @@ def uno_plan(*, hand_size: int = 5, wild_rank: str | None = "8",
     ]
     match = {"wild_ranks": wild}
 
-    def seat_nodes(seat: int) -> dict:
-        return {
-            f"turn{seat}": {"kind": "call", "next": f"has{seat}", "action": {
-                "tool": "pattern", "operation": "choices",
-                "args": {"cards": f"$state.hands.{seat}", "top": "$state.table",
-                         "active_suit": "$state.active_suit", **match},
-                "result_key": "legal_card_indices"}},
-            f"has{seat}": {"kind": "call", "next": f"gate{seat}", "action": {
-                "tool": "logic", "operation": "evaluate",
-                "args": {"expression": {"gt": [{"count": ["$state.legal_card_indices"]}, 0]}},
-                "result_key": "has_choice"}},
-            f"gate{seat}": {"kind": "branch", "value": "$state.has_choice",
-                            "cases": [{"value": True, "target": f"wait{seat}"}],
-                            "next": f"drawwait{seat}"},
-            f"wait{seat}": {"kind": "wait", "inputs": {"play": f"play{seat}"}},
-            f"drawwait{seat}": {"kind": "wait", "inputs": {"draw": f"draw{seat}"}},
-            f"play{seat}": {"kind": "call", "next": "check_win", "action": {
-                "tool": "matching", "operation": "play",
-                "args": {"state": "$state", "hand_index": seat,
-                         "card_index": "$state.input.card_index",
-                         "declared_suit": "$state.input.declared_suit",
-                         "suits": list(suits), **match},
-                "result_key": "played"}},
-            f"draw{seat}": {"kind": "call", "next": "turn", "action": {
-                "tool": "matching", "operation": "draw",
-                "args": {"state": "$state", "hand_index": seat,
-                         "seed": "$state.round_seed"}}},
-        }
+    def seat_nodes(seat: int) -> tuple[dict, str]:
+        """A seat's turn built from the shared ``match_turn`` macro."""
+        nodes, entry = expand_macro(MATCH_TURN, f"seat{seat}",
+                                    cards=f"$state.hands.{seat}")
+        wire(nodes, {"play": f"play{seat}", "draw": f"draw{seat}"})
+        nodes[f"play{seat}"] = {"kind": "call", "next": "check_win", "action": {
+            "tool": "matching", "operation": "play",
+            "args": {"state": "$state", "hand_index": seat,
+                     "card_index": "$state.input.card_index",
+                     "declared_suit": "$state.input.declared_suit",
+                     "suits": list(suits), **match},
+            "result_key": "played"}}
+        nodes[f"draw{seat}"] = {"kind": "call", "next": "turn", "action": {
+            "tool": "matching", "operation": "draw",
+            "args": {"state": "$state", "hand_index": seat,
+                     "seed": "$state.round_seed"}}}
+        return nodes, entry
+
+    seat_turns = {seat: seat_nodes(seat) for seat in range(players)}
 
     effect_cases = []
     if draw_two_rank:
@@ -642,9 +626,10 @@ def uno_plan(*, hand_size: int = 5, wild_rank: str | None = "8",
             "tool": "state", "operation": "update",
             "args": {"state": "$state", "values": {"active_suit": "$state.top_desc.suit"}}}},
         "turn": {"kind": "branch", "value": "$state.current_player",
-                 "cases": [{"value": seat, "target": f"turn{seat}"} for seat in range(players)],
-                 "next": "turn0"},
-        **{key: value for seat in range(players) for key, value in seat_nodes(seat).items()},
+                 "cases": [{"value": seat, "target": seat_turns[seat][1]}
+                           for seat in range(players)],
+                 "next": seat_turns[0][1]},
+        **{key: value for nodes_, _ in seat_turns.values() for key, value in nodes_.items()},
         "check_win": {"kind": "branch", "value": "$state.finished",
                       "cases": [{"value": True, "target": "finish"}], "next": "effect_branch"},
         "effect_branch": {"kind": "branch", "value": "$state.played.rank",

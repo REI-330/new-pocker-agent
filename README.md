@@ -53,6 +53,15 @@ npm run dev -- --host 127.0.0.1
 
 ## 运行 v0.4 应用
 
+一条命令（构建前端 + 启动应用）：
+
+~~~powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_web.ps1
+# 浏览器打开 http://127.0.0.1:8000
+~~~
+
+或者手动：
+
 ~~~powershell
 # 1) 构建前端（产物由后端单端口托管）
 npm run build --prefix frontend

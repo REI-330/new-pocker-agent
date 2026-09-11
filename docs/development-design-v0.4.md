@@ -912,7 +912,8 @@ team             █              1
 - [x] `hidden_draw` → stable（ADR-0003 预算 16→17），新增可玩族 `go_fish`；wait 通配输入展开为具体动作
 - [x] `trigger` → stable（ADR-0004 预算 17→18），新增可玩族 `uno`；新增 planned 轴 `simultaneous`
 - [ ] `layout`（接龙 3 个玩法）/ `simultaneous`（同时行动）
-- [ ] macro 形式化 + 提升规则；沙箱隔离协议
+- [x] macro 形式化 + 提升规则（`core/macros.py`，`match_turn` 被两个计划真实复用）
+- [ ] 沙箱隔离协议
 
 ---
 

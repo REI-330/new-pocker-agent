@@ -219,6 +219,19 @@ S4             覆盖度量与交付（横切，贯穿始终）
 - 验证：`152 passed`；真实 HTTP 端到端 `27/27`。
 - 未做：macro 形式化 + 提升规则、沙箱隔离协议。
 
+**S8 准出状态：完成（macro 形式化 + 提升规则）。**
+
+- `core/macros.py`：`MacroSpec` / `expand_macro` / `wire` / `MacroRegistry` / `validate_macro` / `promotion_report`。
+  - 宏是**声明式数据**，在**构建期内联**进计划（解释器不变），因此宏不可能引入新的运行时能力。
+  - 展开时前缀节点 id 并重写内部引用；`@exit:` 占位符由调用方 `wire`，**未接线即报错**。
+  - `validate_macro` 拒绝 `end` 节点、未声明的 exit、不存在的 operation（对接 registry）。
+- `core/macro_library.py`：`match_turn` 宏（“算出该座位的合法牌 → 等待出牌或摸牌”），由 **crazy_eights 与 uno 两个计划真实复用**（不是声明性的）。
+- **提升规则**：`promotion_report` 只标记 `kind="mechanism"` 且被 ≥2 个计划复用的宏；**flow 宏不参与**（axis 是机制，不是控制流形状）。
+- 覆盖与工具数不变（27/31，17/18）；**两个被重构的族仍过 playtest 与完整对局测试**。
+- 验证：`161 passed`；Web 逐族启动验证 **8/8**（每族 `legal_actions` 正确）。
+- 新增 `scripts/run_web.ps1`：一条命令构建前端并启动应用。
+- 未做：`layout`、`simultaneous`、沙箱隔离协议。
+
 ## 4. 测试规范
 
 ### 4.1 测试层次（每层证明什么）

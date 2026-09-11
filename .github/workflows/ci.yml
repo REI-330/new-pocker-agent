@@ -23,8 +23,12 @@ jobs:
       - name: Install (frozen lock)
         run: uv sync --frozen --all-groups
 
-      - name: Lint (core + guardrail tests)
-        run: uvx ruff check src/pocker_agent/core tests/test_core_interpreter.py tests/test_architecture_invariants.py
+      - name: Lint (core, app, guardrail tests)
+        run: >
+          uvx ruff check src/pocker_agent/core src/pocker_agent/app.py
+          scripts/e2e_smoke.py
+          tests/test_core_interpreter.py tests/test_capability.py
+          tests/test_session_api.py tests/test_architecture_invariants.py
 
       - name: Architecture invariants (blocking)
         run: uv run --frozen pytest tests/test_architecture_invariants.py -q

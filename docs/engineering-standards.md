@@ -77,8 +77,8 @@ S4             覆盖度量与交付（横切，贯穿始终）
 | 准出证据 | ① `pytest` 全绿含架构不变量；② 旧引擎已移出 dispatch（有删除 commit）；③ 一条真实 rules 的条款与 trace 逐条一致 |
 | 预算 | core 工具 ≤ 12（架构测试棘轮）；execution paths = 1 |
 
-**已完成的准出项**：契约强制、playtest 策略与覆盖门槛、serialize/restore 不变量、架构不变量测试。
-**未完成**：`capability_check` + 能力状态机、Session/API 接线、摘除 `ArithmeticEngine`。
+**已完成的准出项**：契约强制、playtest 策略与覆盖门槛、serialize/restore 不变量、架构不变量测试、`capability_check` + 能力状态机、语料库覆盖率报表、`core/session.py` + v0.4 API（`app.py`）、真实 HTTP 端到端（`scripts/e2e_smoke.py`，14 项检查）、前端按原型改造并接通真实接口。
+**未完成**：摘除旧引擎生产路径（`api.py` + `family_engines` 等），删除积压尚未归零。
 
 ### S1 · Agent loop
 
@@ -243,7 +243,7 @@ nondeterministic_replay
 | 未使用工具数 | 0 | `test_every_registered_tool_is_used_by_a_reference_plan` |
 | 只允许 `state` 用 `"*"` effects | — | `test_only_state_tool_may_write_arbitrary_keys` |
 | core LOC / 文件数 | 记录并只许持平 | 报表（S2 起自动化） |
-| 删除积压 | 0 | §6.3 |
+| 删除积压 | 0 | §6.3（当前：`api.py`/`family_engines`/`doudizhu_engine`/`holdem_engine`/`plugin_engine` 仍在，待迁移时逐个删除） |
 
 ### 6.3 删除纪律（防止"只加不减"）
 

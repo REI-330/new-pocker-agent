@@ -38,6 +38,11 @@ class PlaytestReport:
             raise ToolError("playtest_failed: " + "; ".join(self.failures))
         return self
 
+    def as_dict(self) -> dict[str, Any]:
+        return {"ok": self.ok, "seeds": list(self.seeds),
+                "event_counts": dict(self.event_counts), "failures": list(self.failures),
+                "checks": list(self.checks), "covered_wait_nodes": list(self.covered_wait_nodes)}
+
 
 def first_legal(interpreter: Interpreter):
     """First legal action; the minimal deterministic policy."""

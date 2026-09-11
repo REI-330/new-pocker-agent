@@ -211,6 +211,14 @@ class Interpreter:
     # ------------------------------------------------------------------ view
     def view(self) -> dict[str, Any]:
         state = self.state
+        scores = list(state.get("scores", []))
+        hands = state.get("hands")
+        players = []
+        for index, score in enumerate(scores):
+            hand = hands[index] if isinstance(hands, list) and index < len(hands) else []
+            players.append({"id": f"player-{index + 1}",
+                            "hand": [card.as_dict() for card in hand],
+                            "score": score, "hidden_count": 0})
         return {
             "kind": self.plan.game_kind, "execution_mode": self.execution_mode,
             "flow_node": self.pc, "round": state.get("round", 1),
@@ -219,12 +227,14 @@ class Interpreter:
             "finished": bool(state.get("finished")), "winners": [
                 f"player-{int(i) + 1}" for i in state.get("winners", [])],
             "legal_actions": self.legal_actions(),
-            "scores": list(state.get("scores", [])),
+            "players": players,
+            "scores": scores,
             "table": [card.as_dict() for card in state.get("table", [])],
             "numbers": list(state.get("numbers", [])),
             "target": state.get("target"),
             "reveal": bool(state.get("reveal", False)),
             "solution": state.get("solution"),
+            "instructions": state.get("instructions", ""),
             "feedback": state.get("feedback", ""),
             "events": self.events[-100:],
         }

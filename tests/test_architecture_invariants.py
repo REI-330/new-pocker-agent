@@ -16,6 +16,7 @@ from pocker_agent.core import core_registry
 from pocker_agent.core.plans import arithmetic_plan
 
 CORE_DIR = Path(__file__).resolve().parents[1] / "src" / "pocker_agent" / "core"
+APP_PATH = Path(__file__).resolve().parents[1] / "src" / "pocker_agent" / "app.py"
 
 # Deliberate ratchets. Raising a budget is a reviewable architecture decision,
 # not a side effect of adding a feature.
@@ -53,6 +54,12 @@ def test_core_is_a_single_execution_path():
     for module in _core_modules():
         leaked = _imported_roots(module) & LEGACY_ENGINE_MODULES
         assert not leaked, f"{module.name} imports legacy execution module(s): {sorted(leaked)}"
+
+
+def test_app_serves_only_the_core_execution_path():
+    """The v0.4 app must not reach the legacy family/plugin engines."""
+    leaked = _imported_roots(APP_PATH) & LEGACY_ENGINE_MODULES
+    assert not leaked, f"app.py imports legacy execution module(s): {sorted(leaked)}"
 
 
 def test_core_has_exactly_one_interpreter():

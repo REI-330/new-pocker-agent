@@ -1,0 +1,17 @@
+.playing-card { width: 64px; height: 90px; border-radius: 6px; background: #fbfbf8; object-fit: contain; }
+.playing-card.is-small { width: 48px; height: 68px; }
+.muted { color: #7b8a83; font-size: 13px; }
+.library-row.is-static { cursor: default; }
+.expression-form { max-width: 640px; margin: 8px 0 16px; }
+.expression-form label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.expression-input { display: flex; gap: 12px; }
+.expression-input input { flex: 1; min-width: 0; padding: 12px 14px; border: 1px solid #bdcec4;
+  border-radius: 10px; font-size: 17px; background: #fcfdfb; }
+.public-zone { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.event-detail { display: flex; flex-direction: column; gap: 4px; }
+.replay-timeline { display: flex; flex-direction: column; gap: 10px; max-height: 60vh; overflow: auto; }
+.replay-event { display: grid; grid-template-columns: 52px 14px 1fr; gap: 10px; align-items: start; }
+.replay-event small { display: block; color: #7b8a83; font-size: 12px; word-break: break-all; }
+.event-dot { width: 10px; height: 10px; border-radius: 50%; background: #2e7e62; margin-top: 5px; }
+.timeline span { display: inline-flex; align-items: center; gap: 6px; }
+.timeline i { width: 18px; height: 1px; background: #cbd8d1; display: inline-block; }

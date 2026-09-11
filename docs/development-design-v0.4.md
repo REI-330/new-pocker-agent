@@ -887,10 +887,11 @@ team             █              1
 - [x] P0.2 工具契约 `requires/ensures/effects/returns/failure` + 解释器强制
 - [x] P0.3 playtest 策略（random_legal / boundary_first）+ wait 全覆盖门槛
 - [x] P0.4 serialize/restore 往返字节一致 + view 不泄漏测试
-- [ ] P0.1 `capability_check` + 能力状态机落到 API
-- [ ] `core/session.py`：Session + revision + 持久化
-- [ ] API 接线（arithmetic 走 core）；一致性护栏测试
-- [ ] 摘除 `ArithmeticEngine` 生产路径
+- [x] P0.1 `capability_check` + 能力状态机 + 语料库覆盖率报表
+- [x] `core/session.py`：Session + revision + 持久化
+- [x] v0.4 API（`app.py`）+ 真实 HTTP 端到端（`scripts/e2e_smoke.py`）
+- [x] 前端按原型改造并接通真实接口（玩法库 / 规则与能力 / 试玩工作台 / 回放）
+- [ ] 摘除旧引擎生产路径（`api.py` + `family_engines` 等）；删除积压归零
 
 **P1**
 - [ ] `core/ir.py`：`RulesIR` + `host_compile`

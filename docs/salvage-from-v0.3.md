@@ -85,11 +85,11 @@ v0.3 的问题不是"代码没用"，而是**接线的架构是错的**（双执
 | 阶段 | 项 | 状态 |
 |---|---|---|
 | 现在 | 工程问题清单归档 | ⛔ 暂不搬（旧仓库可查） |
+| S0 | `benchmarks/common_games.json` → 语料库 | ✅ 已内置 `core/data/corpus.json`（30 个玩法 + 所需 axis，覆盖率报表在线） |
+| S0 | 前端壳与素材对齐 | ✅ 已按原型设计系统重建（`library/rules/workspace/replay`），使用同一批牌面素材 |
 | S1 | 生成基准脚本改造 | 🚧 待办 |
-| S2 | `benchmarks/common_games.json` → 语料 | 🚧 待办 |
-| S2 | `pattern_lang`（matching/ranking/patterns/climbing/doudizhu） | 🚧 待办 |
-| S2 | `info_set`（zones） | 🚧 待办 |
-| S2 | 前端壳与素材对齐 | 🚧 待办 |
+| S2 | `pattern_lang`（matching/ranking/patterns/climbing/doudizhu） | 🚧 待办（当前最大缺口：20/30 玩法需要它） |
+| S2 | `info_set`（zones） | 🚧 待办（当前最大缺口：20/30） |
 | S3 | 沙箱三件套 | 🚧 待办 |
 | S3 | `betting` / `trigger` / `turn_adapter` | 🚧 待办 |
 | — | C/D 类 | 仅参照，不排期 |

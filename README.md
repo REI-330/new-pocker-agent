@@ -51,6 +51,24 @@ npm run dev -- --host 127.0.0.1
 牌面、许可证、DSL 都包含在 ZIP 内。
 离线导出目前仅覆盖旧v0.1阶段规则。新版算式、21点和接牌通过本机Web执行并支持保存恢复，界面会明确标记暂不支持离线导出。
 
+## 运行 v0.4 应用
+
+~~~powershell
+# 1) 构建前端（产物由后端单端口托管）
+npm run build --prefix frontend
+# 2) 启动 v0.4 应用
+uv run python -m uvicorn pocker_agent.app:app --host 127.0.0.1 --port 8000
+# 浏览器打开 http://127.0.0.1:8000
+~~~
+
+真实 HTTP 端到端（需要服务已启动）：
+
+~~~powershell
+uv run python scripts/e2e_smoke.py http://127.0.0.1:8000
+~~~
+
+前端开发模式：`npm run dev --prefix frontend`，并设置 `VITE_API_URL=http://127.0.0.1:8000`。
+
 ## 验证与开源复用
 
 ~~~powershell

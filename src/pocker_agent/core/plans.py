@@ -88,6 +88,7 @@ def arithmetic_plan(*, target: int = 24, max_rounds: int = 3, card_count: int = 
     }
     initial = {"finished": False, "winners": [], "scores": [0], "current_player": 0,
                "round": 1, "max_rounds": max_rounds, "target": target,
-               "phase": "solve", "reveal": False, "gave_up": False}
+               "phase": "solve", "reveal": False, "gave_up": False,
+               "instructions": "每张牌恰好使用一次；允许括号与 " + " ".join(operations) + "；结果必须精确等于目标。"}
     return GamePlan(game_kind="arithmetic", players=1, tools=tools, initial=initial,
                     entry="deal", nodes=nodes, step_limit=512)

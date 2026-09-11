@@ -13,6 +13,7 @@ from .interpreter import Interpreter
 from .invariants import card_conservation, never_finishes_without_winners_or_scores
 from .ir import (
                  ArithmeticIR,
+                 BlackjackIR,
                  PokerIR,
                  RulesIR,
                  SheddingIR,
@@ -25,7 +26,7 @@ from .ir import (
                  required_axes,
 )
 from .plan import FlowCase, FlowNode, GamePlan, ToolBinding, ToolCall
-from .plans import arithmetic_plan, crazy_eights_plan, five_card_poker_plan, war_plan, whist_plan
+from .plans import arithmetic_plan, blackjack_plan, crazy_eights_plan, five_card_poker_plan, war_plan, whist_plan
 from .playtest import PlaytestReport, boundary_first, card_first, first_legal, playtest, random_legal, resilient_first
 from .policy import bet_first, bot_action, run_bots
 from .reference import REFERENCE_GAMES, build_plan, ensure_playtested, list_reference_games
@@ -36,6 +37,7 @@ __all__ = [
                  "AXES",
                  "REFERENCE_GAMES",
                  "ArithmeticIR",
+                 "BlackjackIR",
                  "Capability",
                  "CapabilityReport",
                  "CardRef",
@@ -60,6 +62,7 @@ __all__ = [
                  "WhistIR",
                  "arithmetic_plan",
                  "bet_first",
+                 "blackjack_plan",
                  "bot_action",
                  "boundary_first",
                  "build_plan",

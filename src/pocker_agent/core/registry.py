@@ -14,6 +14,7 @@ Contract policy for the core tools:
 from __future__ import annotations
 
 from .contracts import OperationSpec, ToolRegistry, ToolSpec
+from .point_tools import PointTotalTool
 from .poker_tools import BettingTool, HandRankTool, LedgerTool
 from .tools import (
     DeckTool,
@@ -60,7 +61,9 @@ def core_registry() -> ToolRegistry:
         (OperationSpec("cards", params=(), effects=(), returns="list[CardRef]"),
          OperationSpec("shuffled", params=("seed",), effects=(), returns="list[CardRef]"),
          OperationSpec("deal", params=("seed", "hands", "cards_each", "kitty"), effects=(),
-                       returns="hands/kitty/deck"),)))
+                       returns="hands/kitty/deck"),
+         OperationSpec("draw", params=("stock", "hand", "count"),
+                       effects=("stock", "hands"), returns="drawn/hand_size"),)))
     registry.register(ToolSpec("rank_compare", lambda **_: RankCompareTool(), (
         OperationSpec("call", params=("left", "right"), effects=(),
                       returns="outcome/left/right"),)))
@@ -105,4 +108,10 @@ def core_registry() -> ToolRegistry:
     registry.register(ToolSpec("hand_rank", lambda **_: HandRankTool(), (
         OperationSpec("best", params=("cards",), effects=(), returns="category/score/cards"),
         OperationSpec("compare", params=("left", "right"), effects=(), returns="outcome"),)))
+    registry.register(ToolSpec("point_total", lambda target=21: PointTotalTool(target), (
+        OperationSpec("total", params=("cards",), effects=(), returns="total/soft/bust/cards"),
+        OperationSpec("dealer_play", params=("stock", "hand", "stand_on", "hits_soft"),
+                      effects=("stock", "hands"), returns="total/soft/bust/draws"),
+        OperationSpec("settle", params=("player", "dealer", "player_natural", "dealer_natural",
+                                         "first_bust_loses"), effects=(), returns="winner/reason"),)))
     return registry

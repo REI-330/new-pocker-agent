@@ -174,6 +174,28 @@ def test_agent_loop_fails_safely_without_a_model(tmp_path):
     assert "模型配置" in response.json()["detail"]
 
 
+def test_blackjack_over_http_hides_the_dealer(tmp_path):
+    c = client(tmp_path)
+    state = c.post("/api/sessions", json={"game_id": "blackjack", "seed": 7}).json()
+    session_id = state["session_id"]
+    assert state["private_hands"] is True
+    assert len(state["players"][0]["hand"]) == 2
+    assert state["players"][1]["hand"] == [] and state["players"][1]["hidden_count"] == 2
+
+    for _ in range(20):
+        if state["finished"]:
+            break
+        assert "stand" in state["legal_actions"]
+        response = c.post(f"/api/sessions/{session_id}/actions/stand",
+                          json={"revision": state["revision"]})
+        assert response.status_code == 200, response.text
+        state = response.json()["state"]
+
+    assert state["finished"] is True
+    assert sum(state["scores"]) <= 3
+    assert state["players"][1]["hidden_count"] == 0     # dealer revealed at the end
+
+
 def test_poker_over_http_reaches_showdown_and_conserves_chips(tmp_path):
     c = client(tmp_path)
     state = c.post("/api/sessions", json={"game_id": "five_card_poker", "seed": 7}).json()

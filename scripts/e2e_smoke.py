@@ -133,6 +133,11 @@ def main() -> None:
     check("poker_hides_the_opponent",
           poker["players"][1]["hidden_count"] == 5)  # type: ignore[index]
 
+    status, jack = request("/api/sessions", "POST", {"game_id": "blackjack", "seed": 7})
+    check("blackjack_hides_the_dealer",
+          status == 200 and jack["players"][1]["hand"] == []  # type: ignore[index]
+          and jack["players"][1]["hidden_count"] == 2, str(status))  # type: ignore[index]
+
     print(f"\n{len(PASSED)} checks passed against {BASE}")
 
 

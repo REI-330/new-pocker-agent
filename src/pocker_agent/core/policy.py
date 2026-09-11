@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from .contracts import ToolError
 from .interpreter import Interpreter
-from .playtest import card_first
+from .playtest import card_first, resilient_first
 
 HUMAN_INDEX = 0
 BOT_STEP_LIMIT = 500
 _BETTING_ACTIONS = {"check", "call", "raise", "all_in"}
+_CARD_ACTIONS = {"play", "draw"}
 
 
 def bet_first(interpreter: Interpreter):
@@ -30,14 +31,18 @@ def bot_action(interpreter: Interpreter):
     """The single policy used by the host for non-human seats.
 
     The plan decides the shape of the turn; the host only picks from what the
-    plan actually offers.
+    plan actually offers. Three shapes are covered: a betting round, a card
+    turn, and anything else (probe the actions, take the first the host
+    accepts) so a new family is never silently unplayable.
     """
     actions = interpreter.legal_actions()
     if not actions:
         return None
     if _BETTING_ACTIONS.intersection(actions):
         return bet_first(interpreter)
-    return card_first(interpreter)
+    if _CARD_ACTIONS.intersection(actions):
+        return card_first(interpreter)
+    return resilient_first(interpreter)
 
 
 def run_bots(interpreter: Interpreter, human_index: int = HUMAN_INDEX,

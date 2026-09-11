@@ -181,6 +181,20 @@ S4             覆盖度量与交付（横切，贯穿始终）
 - 验证：`114 passed`；真实 HTTP 端到端 `23/23`。
 - 未做（后置）：macro 形式化与提升规则、沙箱隔离协议。
 
+**S5 准出状态：完成（`point_total` + 生成基准）。**
+
+- `point_total` → **stable**：手牌点数与软 A 求和、庄家固定补牌策略、目标结算（爆牌 / 自然 21 / 平局）。
+- 新增可玩族 `blackjack`（无下注 21 点：庄家暗牌、要牌/停牌、每轮独立洗牌、赢一轮 1 分）。
+- `deck` 增加 `draw`；`bot_action` 现在覆盖三种回合形态（下注 / 牌局 / 兜底探测）。
+- **基准跑出一个真实缺口**：通用策略在算术族上无法出牌（只会 `submit_expression`），导致 playtest 失败；已修为“三态分派 + 兜底探测”。
+- 覆盖率：**21/31 → 23/31（74.2%）**；剩余缺口 `layout 3 · trigger 3 · hidden_draw 2`。
+- **生成基准** `scripts/benchmark_generation.py` + `benchmarks/generation_cases.json`（8 例：6 可玩 + 2 边界）：
+  - scripted 模式：`finalized 6/6`、`playtest pass 6/6`、`correctly unsupported 2/2`、`mean attempts 3.25`、缺口直方图 `{hidden_draw: 1, layout: 1}`；
+  - 真实模型模式：用已保存配置运行，报告写入 `artifacts/`（已 gitignore）。
+- 验证：`129 passed`；真实 HTTP 端到端 `24/24`。
+- 工具：**15/16**。
+- 未做（后置）：macro 形式化与提升规则、沙箱隔离协议。
+
 ## 4. 测试规范
 
 ### 4.1 测试层次（每层证明什么）

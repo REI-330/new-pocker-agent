@@ -12,7 +12,7 @@ from functools import lru_cache
 
 from .interpreter import Interpreter
 from .plan import GamePlan
-from .plans import arithmetic_plan, crazy_eights_plan, five_card_poker_plan, war_plan, whist_plan
+from .plans import arithmetic_plan, blackjack_plan, crazy_eights_plan, five_card_poker_plan, war_plan, whist_plan
 from .playtest import PlaytestReport, card_first, first_legal, playtest
 from .policy import bet_first
 from .registry import core_registry
@@ -63,6 +63,18 @@ def _five_card_poker() -> GamePlan:
     return five_card_poker_plan(stacks=100, min_raise=10)
 
 
+def _stand_at_17(interpreter: Interpreter):
+    actions = interpreter.legal_actions()
+    if not actions:
+        return None
+    rank = interpreter.tools["point_total"].total(interpreter.state["hands"][0])
+    return ("stand", {}) if rank["total"] >= 17 else ("hit", {})
+
+
+def _blackjack() -> GamePlan:
+    return blackjack_plan(max_rounds=3, dealer_hits_soft_17=False)
+
+
 REFERENCE_GAMES: dict[str, ReferenceGame] = {
     "arithmetic24": ReferenceGame("arithmetic24", "24点 / 四则算式练习", "arithmetic",
                                   _arithmetic24, _solve_or_claim_none),
@@ -72,6 +84,8 @@ REFERENCE_GAMES: dict[str, ReferenceGame] = {
     "whist": ReferenceGame("whist", "Whist（四人两队墩牌）", "whist", _whist, card_first),
     "five_card_poker": ReferenceGame("five_card_poker", "五张牌单轮下注摊牌", "poker",
                                      _five_card_poker, bet_first),
+    "blackjack": ReferenceGame("blackjack", "无下注 21 点（隐藏庄家手牌）", "blackjack",
+                               _blackjack, _stand_at_17),
 }
 
 

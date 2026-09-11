@@ -198,6 +198,20 @@ class DeckTool:
         rest = deck[hands * cards_each:]
         return {"hands": dealt, "kitty": rest[:kitty], "deck": rest[kitty:]}
 
+    def draw(self, stock: Any, hand: Any, count: int = 1) -> dict[str, Any]:
+        if not isinstance(stock, list) or not isinstance(hand, list):
+            raise ToolError("draw_requires_lists")
+        if type(count) is not int or count < 0:
+            raise ToolError("invalid_draw_count")
+        drawn: list[str] = []
+        for _ in range(count):
+            if not stock:
+                raise ToolError("deck_exhausted")
+            card = stock.pop()
+            hand.append(card)
+            drawn.append(card.id)
+        return {"drawn": drawn, "hand_size": len(hand)}
+
 
 class RankCompareTool:
     """Compare card groups by strength; never knows a game's ranking system."""

@@ -368,6 +368,113 @@ def five_card_poker_plan(*, stacks: int = 100, min_raise: int = 10, cards_each: 
                     entry="round_seed", nodes=nodes, step_limit=512)
 
 
+def blackjack_plan(*, max_rounds: int = 3, target: int = 21, dealer_stand_on: int = 17,
+                   dealer_hits_soft_17: bool = False,
+                   ranks=("A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"),
+                   suits=("S", "H", "D", "C")) -> GamePlan:
+    """No-betting 21: private player hand, hidden dealer hand, one point per win.
+
+    Contract: two cards each from a fresh deck per round; the player hits or
+    stands; a two-card 21 beats an ordinary 21; the dealer draws below
+    ``dealer_stand_on`` and hits a soft 17 only when configured; a tie scores
+    nothing; the highest total after ``max_rounds`` wins (ties are shared).
+    """
+    tools = [
+        {"name": "state"},
+        {"name": "logic"},
+        {"name": "deck", "config": {"ranks": list(ranks), "suits": list(suits)}},
+        {"name": "point_total", "config": {"target": target}},
+        {"name": "score_settle"},
+        {"name": "winner_resolve"},
+    ]
+
+    def size_is(hand: int, value: int) -> dict:
+        return {"eq": [{"count": [f"$state.hands.{hand}"]}, value]}
+
+    nodes = {
+        "round_seed": {"kind": "call", "next": "deal", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"join": ["$state.seed", ":bj:", "$state.round"]}},
+            "result_key": "round_seed"}},
+        "deal": {"kind": "call", "next": "init", "action": {
+            "tool": "deck", "operation": "deal",
+            "args": {"seed": "$state.round_seed", "hands": 2, "cards_each": 2},
+            "result_key": "deal"}},
+        "init": {"kind": "call", "next": "player_total", "action": {
+            "tool": "state", "operation": "update", "args": {"state": "$state", "values": {
+                "hands": "$state.deal.hands", "stock": "$state.deal.deck", "deal": None,
+                "phase": "player", "private_hands": True}}}},
+        "player_total": {"kind": "call", "next": "check_player", "action": {
+            "tool": "point_total", "operation": "total", "args": {"cards": "$state.hands.0"},
+            "result_key": "player_rank"}},
+        "check_player": {"kind": "call", "next": "player_branch", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"ge": ["$state.player_rank.total", target]}},
+            "result_key": "player_done"}},
+        "player_branch": {"kind": "branch", "value": "$state.player_done",
+                          "cases": [{"value": True, "target": "dealer_turn"}], "next": "wait"},
+        "wait": {"kind": "wait", "inputs": {"hit": "hit", "stand": "dealer_turn"}},
+        "hit": {"kind": "call", "next": "player_total", "action": {
+            "tool": "deck", "operation": "draw",
+            "args": {"stock": "$state.stock", "hand": "$state.hands.0", "count": 1}}},
+        "dealer_turn": {"kind": "call", "next": "player_natural", "action": {
+            "tool": "point_total", "operation": "dealer_play",
+            "args": {"stock": "$state.stock", "hand": "$state.hands.1",
+                     "stand_on": dealer_stand_on, "hits_soft": dealer_hits_soft_17},
+            "result_key": "dealer_rank"}},
+        "player_natural": {"kind": "call", "next": "dealer_natural", "action": {
+            "tool": "logic", "operation": "evaluate", "args": {"expression": {"all": [
+                size_is(0, 2), {"eq": ["$state.player_rank.total", target]}]}},
+            "result_key": "player_natural"}},
+        "dealer_natural": {"kind": "call", "next": "settle", "action": {
+            "tool": "logic", "operation": "evaluate", "args": {"expression": {"all": [
+                size_is(1, 2), {"eq": ["$state.dealer_rank.total", target]}]}},
+            "result_key": "dealer_natural"}},
+        "settle": {"kind": "call", "next": "award_branch", "action": {
+            "tool": "point_total", "operation": "settle",
+            "args": {"player": "$state.player_rank.total", "dealer": "$state.dealer_rank.total",
+                     "player_natural": "$state.player_natural",
+                     "dealer_natural": "$state.dealer_natural"},
+            "result_key": "outcome"}},
+        "award_branch": {"kind": "branch", "value": "$state.outcome.winner",
+                         "cases": [{"value": 0, "target": "award_player"},
+                                   {"value": 1, "target": "award_dealer"}], "next": "after_award"},
+        "award_player": {"kind": "call", "next": "after_award", "action": {
+            "tool": "score_settle", "operation": "call",
+            "args": {"scores": "$state.scores", "winners": [0], "points": 1},
+            "result_key": "scores"}},
+        "award_dealer": {"kind": "call", "next": "after_award", "action": {
+            "tool": "score_settle", "operation": "call",
+            "args": {"scores": "$state.scores", "winners": [1], "points": 1},
+            "result_key": "scores"}},
+        "after_award": {"kind": "call", "next": "round_branch", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"ge": ["$state.round", "$state.max_rounds"]}},
+            "result_key": "at_end"}},
+        "round_branch": {"kind": "branch", "value": "$state.at_end",
+                         "cases": [{"value": True, "target": "winners"}], "next": "bump"},
+        "bump": {"kind": "call", "next": "apply_round", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"add": ["$state.round", 1]}}, "result_key": "next_round"}},
+        "apply_round": {"kind": "call", "next": "round_seed", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {"round": "$state.next_round",
+                                                          "phase": "player"}}}},
+        "winners": {"kind": "call", "next": "finish", "action": {
+            "tool": "winner_resolve", "operation": "call",
+            "args": {"values": "$state.scores"}, "result_key": "winners_indexes"}},
+        "finish": {"kind": "call", "next": "end", "action": {
+            "tool": "state", "operation": "update", "args": {"state": "$state", "values": {
+                "finished": True, "winners": "$state.winners_indexes", "phase": "finished"}}}},
+        "end": {"kind": "end"},
+    }
+    initial = {"finished": False, "winners": [], "scores": [0, 0], "current_player": 0,
+               "round": 1, "max_rounds": max_rounds, "phase": "player", "private_hands": True,
+               "instructions": "你与庄家各两张牌；要牌或停牌；两张牌 21 点优先；平局不加分。"}
+    return GamePlan(game_kind="blackjack", players=2, tools=tools, initial=initial,
+                    entry="round_seed", nodes=nodes, step_limit=512)
+
+
 def war_plan(*, max_rounds: int = 3,
              ranks=("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"),
              suits=("S", "H", "D", "C")) -> GamePlan:

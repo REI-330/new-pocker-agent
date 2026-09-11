@@ -25,7 +25,7 @@
   {"id": "spoons", "name": "Spoons", "category": "隐藏信息/交换", "required_axes": ["info_set", "trigger"]},
   {"id": "texas_holdem", "name": "德州扑克", "category": "下注/银行", "source": "https://bicyclecards.com/how-to-play/texas-holdem-poker/", "required_axes": ["betting", "ledger", "info_set", "hand_rank"]},
   {"id": "omaha", "name": "奥马哈", "category": "下注/银行", "required_axes": ["betting", "ledger", "info_set", "hand_rank"]},
-  {"id": "blackjack", "name": "无下注 21 点", "category": "下注/银行", "required_axes": ["sequential_turn", "point_total", "score_settle"]},
+  {"id": "blackjack", "name": "无下注 21 点", "category": "下注/银行", "required_axes": ["sequential_turn", "point_total", "info_set", "score_settle"], "builtin": "blackjack"},
   {"id": "cassino", "name": "Cassino", "category": "比较/摊牌", "required_axes": ["pattern_lang", "rank_compare", "score_settle"]},
   {"id": "klondike", "name": "Klondike 接龙", "category": "布局/耐心", "required_axes": ["layout", "info_set"]},
   {"id": "freecell", "name": "FreeCell", "category": "布局/耐心", "required_axes": ["layout", "info_set"]},

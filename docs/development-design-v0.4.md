@@ -907,7 +907,9 @@ team             █              1
 - [x] `turn_adapter`（墩牌/跟牌/竞叫）+ `team`（队伍）→ stable，新增可玩族 `whist`
 - [x] 语料修正：`hearts` 去 `team`、`spades`/`bridge` 去 `betting`（竞叫归 `turn_adapter`）
 - [x] `betting` + `ledger` + `hand_rank` → stable（ADR-0002 预算 12→16），新增可玩族 `five_card_poker`
-- [ ] `trigger` / `layout` / `hidden_draw` / `point_total`
+- [x] `point_total` → stable，新增可玩族 `blackjack`
+- [x] 生成基准（`scripts/benchmark_generation.py` + 语料用例 + 缺口直方图）
+- [ ] `trigger` / `layout` / `hidden_draw`（工具预算 15/16，下一条需 ADR-0003）
 - [ ] macro 形式化 + 提升规则；沙箱隔离协议
 
 ---

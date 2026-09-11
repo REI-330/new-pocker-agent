@@ -15,7 +15,8 @@ from ..core.contracts import ToolError, ToolRegistry
 from ..core.interpreter import Interpreter
 from ..core.ir import ArithmeticIR, WarIR, check_ir, host_compile, is_host_compiled, parse_ir, required_axes
 from ..core.plan import GamePlan
-from ..core.playtest import playtest, resilient_first
+from ..core.playtest import playtest
+from ..core.policy import bot_action
 from ..core.registry import core_registry
 
 
@@ -153,7 +154,7 @@ def dispatch(tool: str, args: dict[str, Any], state: LoopState,
             for _ in range(256):
                 if interpreter.state.get("finished"):
                     break
-                action, payload = resilient_first(interpreter)
+                action, payload = bot_action(interpreter)
                 interpreter.step(action, **payload)
                 steps += 1
             if not interpreter.state.get("finished"):
@@ -167,7 +168,7 @@ def dispatch(tool: str, args: dict[str, Any], state: LoopState,
             plan = _plan_from(state)
             seeds_arg = args.get("seeds")
             chosen = tuple(int(seed) for seed in seeds_arg) if seeds_arg else seeds
-            report = playtest(plan, registry, resilient_first, seeds=chosen)
+            report = playtest(plan, registry, bot_action, seeds=chosen)
         except ToolError as error:
             return _fail(tool, str(error))
         state.report = report.as_dict()

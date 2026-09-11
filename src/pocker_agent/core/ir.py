@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from .capability import CapabilityReport, capability_check
 from .plan import GamePlan
-from .plans import arithmetic_plan, crazy_eights_plan, five_card_poker_plan, war_plan, whist_plan
+from .plans import arithmetic_plan, blackjack_plan, crazy_eights_plan, five_card_poker_plan, war_plan, whist_plan
 
 DEFAULT_RANK_VALUES = {"A": 1, **{str(n): n for n in range(2, 11)}, "J": 11, "Q": 12, "K": 13}
 DEFAULT_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
@@ -145,17 +145,41 @@ class PokerIR(_Strict):
         return self
 
 
-RulesIR = Annotated[ArithmeticIR | WarIR | SheddingIR | WhistIR | PokerIR,
+class BlackjackIR(_Strict):
+    """No-betting 21: you against a dealer, one point per win."""
+
+    schema_version: Literal["0.4"] = "0.4"
+    kind: Literal["blackjack"]
+    game_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=2000)
+    players: Literal[2] = 2
+    max_rounds: int = Field(default=3, ge=1, le=20)
+    target: Literal[21] = 21
+    dealer_stand_on: Literal[17] = 17
+    dealer_hits_soft_17: bool = False
+    ranks: list[str] = Field(default_factory=lambda: list(DEFAULT_RANKS), min_length=13)
+    suits: list[str] = Field(default_factory=lambda: list(DEFAULT_SUITS), min_length=1)
+
+    @model_validator(mode="after")
+    def executable(self) -> BlackjackIR:
+        if len(self.ranks) * len(self.suits) < 4:
+            raise ValueError("牌组至少需要 4 张牌")
+        return self
+
+
+RulesIR = Annotated[ArithmeticIR | WarIR | SheddingIR | WhistIR | PokerIR | BlackjackIR,
                     Field(discriminator="kind")]
 IR_ADAPTER = TypeAdapter(RulesIR)
 
-HOST_COMPILED = ("arithmetic", "war", "shedding", "whist", "poker")
+HOST_COMPILED = ("arithmetic", "war", "shedding", "whist", "poker", "blackjack")
 REQUIRED_AXES: dict[str, tuple[str, ...]] = {
     "arithmetic": ("sequential_turn", "exact_expression", "score_settle"),
     "war": ("sequential_turn", "rank_compare", "score_settle"),
     "shedding": ("sequential_turn", "pattern_lang", "info_set"),
     "whist": ("sequential_turn", "turn_adapter", "team", "pattern_lang"),
     "poker": ("sequential_turn", "betting", "ledger", "hand_rank", "info_set"),
+    "blackjack": ("sequential_turn", "point_total", "info_set", "score_settle"),
 }
 
 
@@ -193,4 +217,9 @@ def host_compile(ir: ArithmeticIR | WarIR) -> GamePlan:
     if isinstance(ir, PokerIR):
         return five_card_poker_plan(stacks=ir.stacks, min_raise=ir.min_raise,
                                     cards_each=ir.cards_each, ranks=ir.ranks, suits=ir.suits)
+    if isinstance(ir, BlackjackIR):
+        return blackjack_plan(max_rounds=ir.max_rounds, target=ir.target,
+                              dealer_stand_on=ir.dealer_stand_on,
+                              dealer_hits_soft_17=ir.dealer_hits_soft_17,
+                              ranks=ir.ranks, suits=ir.suits)
     raise ValueError(f"no_host_compiler:{getattr(ir, 'kind', 'unknown')}")

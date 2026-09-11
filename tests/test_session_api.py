@@ -1,6 +1,10 @@
 """End-to-end: real HTTP through the v0.4 app, real playtest gate, real sessions."""
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
 from pocker_agent.app import create_app
@@ -13,6 +17,20 @@ def client(tmp_path) -> TestClient:
 
 def action_path(session_id: str, action: str) -> str:
     return f"/api/sessions/{session_id}/actions/{action}"
+
+
+def test_served_page_references_resolve(tmp_path):
+    """The single-port page must load its bundle: /assets is the card mount."""
+    built = Path(__file__).resolve().parents[1] / "frontend" / "dist" / "index.html"
+    if not built.is_file():
+        pytest.skip("frontend/dist is not built; run: npm run build --prefix frontend")
+    c = client(tmp_path)
+    page = c.get("/")
+    assert page.status_code == 200
+    urls = re.findall(r'(?:src|href)="(/(?:static|assets)[^"]*)"', page.text)
+    assert urls, "the built page should reference its bundle and stylesheet"
+    for url in urls:
+        assert c.get(url).status_code == 200, f"{url} is not reachable from the app"
 
 
 def test_capabilities_and_games_report_the_playtest_gate(tmp_path):

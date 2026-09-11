@@ -82,6 +82,12 @@ uv run python -m uvicorn pocker_agent.app:app --host 127.0.0.1 --port 8000
 uv run python scripts/e2e_smoke.py http://127.0.0.1:8000
 ~~~
 
+启动不成功时的诊断（会逐项检查并自测 HTTP）：
+
+~~~powershell
+uv run python scripts\doctor.py --serve
+~~~
+
 前端开发模式：`npm run dev --prefix frontend`，并设置 `VITE_API_URL=http://127.0.0.1:8000`。
 
 ## 验证与开源复用

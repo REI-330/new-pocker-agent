@@ -163,7 +163,7 @@ def crazy_eights_plan(*, hand_size: int = 5, wild_rank: str | None = "8",
         "init": {"kind": "call", "next": "top_card", "action": {
             "tool": "state", "operation": "update", "args": {"state": "$state", "values": {
                 "hands": "$state.deal.hands", "stock": "$state.deal.deck",
-                "table": "$state.deal.kitty", "deal": None,
+                "table": "$state.deal.kitty", "discard": "$state.deal.kitty", "deal": None,
                 "suits": list(suits),
                 "current_player": 0, "phase": "play", "finished": False, "winners": [],
                 "private_hands": True, "wild_ranks": wild}}}},
@@ -555,6 +555,127 @@ def go_fish_plan(*, cards_each: int = 5, players: int = 2,
     initial = {"finished": False, "winners": [], "pairs": [0] * players, "current_player": 0,
                "round": 1, "max_rounds": 1, "phase": "ask", "private_hands": True}
     return GamePlan(game_kind="go_fish", players=players, tools=tools, initial=initial,
+                    entry="round_seed", nodes=nodes, step_limit=1024)
+
+
+def uno_plan(*, hand_size: int = 5, wild_rank: str | None = "8",
+             draw_two_rank: str | None = "2", skip_rank: str | None = "K",
+             players: int = 2,
+             ranks=("A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"),
+             suits=("S", "H", "D", "C")) -> GamePlan:
+    """Matching game with declarative special-card effects (UNO family).
+
+    Contract: match suit or rank; the wild rank declares a suit; playing
+    ``draw_two_rank`` makes the next seat draw two and lose a turn; playing
+    ``skip_rank`` skips the next seat; the first empty hand wins. Effects are
+    data applied by ``trigger``; direction and skip live in state.
+    """
+    wild = [wild_rank] if wild_rank else []
+    tools = [
+        {"name": "state"},
+        {"name": "logic"},
+        {"name": "deck", "config": {"ranks": list(ranks), "suits": list(suits)}},
+        {"name": "pattern"},
+        {"name": "matching"},
+        {"name": "trigger"},
+    ]
+    match = {"wild_ranks": wild}
+
+    def seat_nodes(seat: int) -> dict:
+        return {
+            f"turn{seat}": {"kind": "call", "next": f"has{seat}", "action": {
+                "tool": "pattern", "operation": "choices",
+                "args": {"cards": f"$state.hands.{seat}", "top": "$state.table",
+                         "active_suit": "$state.active_suit", **match},
+                "result_key": "legal_card_indices"}},
+            f"has{seat}": {"kind": "call", "next": f"gate{seat}", "action": {
+                "tool": "logic", "operation": "evaluate",
+                "args": {"expression": {"gt": [{"count": ["$state.legal_card_indices"]}, 0]}},
+                "result_key": "has_choice"}},
+            f"gate{seat}": {"kind": "branch", "value": "$state.has_choice",
+                            "cases": [{"value": True, "target": f"wait{seat}"}],
+                            "next": f"drawwait{seat}"},
+            f"wait{seat}": {"kind": "wait", "inputs": {"play": f"play{seat}"}},
+            f"drawwait{seat}": {"kind": "wait", "inputs": {"draw": f"draw{seat}"}},
+            f"play{seat}": {"kind": "call", "next": "check_win", "action": {
+                "tool": "matching", "operation": "play",
+                "args": {"state": "$state", "hand_index": seat,
+                         "card_index": "$state.input.card_index",
+                         "declared_suit": "$state.input.declared_suit",
+                         "suits": list(suits), **match},
+                "result_key": "played"}},
+            f"draw{seat}": {"kind": "call", "next": "turn", "action": {
+                "tool": "matching", "operation": "draw",
+                "args": {"state": "$state", "hand_index": seat,
+                         "seed": "$state.round_seed"}}},
+        }
+
+    effect_cases = []
+    if draw_two_rank:
+        effect_cases.append({"value": draw_two_rank, "target": "effect_draw_two"})
+    if skip_rank:
+        effect_cases.append({"value": skip_rank, "target": "effect_skip"})
+
+    nodes = {
+        "round_seed": {"kind": "call", "next": "deal", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"join": ["$state.seed", ":uno"]}},
+            "result_key": "round_seed"}},
+        "deal": {"kind": "call", "next": "init", "action": {
+            "tool": "deck", "operation": "deal",
+            "args": {"seed": "$state.round_seed", "hands": players,
+                     "cards_each": hand_size, "kitty": 1},
+            "result_key": "deal"}},
+        "init": {"kind": "call", "next": "top_card", "action": {
+            "tool": "state", "operation": "update", "args": {"state": "$state", "values": {
+                "hands": "$state.deal.hands", "stock": "$state.deal.deck",
+                "table": "$state.deal.kitty", "discard": "$state.deal.kitty", "deal": None,
+                "suits": list(suits),
+                "players": players, "direction": 1, "skip": 0, "current_player": 0,
+                "phase": "play", "finished": False, "winners": [],
+                "private_hands": True, "wild_ranks": wild,
+                "instructions": "接同花色或同点数；万能牌指定花色；特殊情况自动摸牌/跳过。"}}}},
+        "top_card": {"kind": "call", "next": "set_suit", "action": {
+            "tool": "pattern", "operation": "describe",
+            "args": {"cards": "$state.table"}, "result_key": "top_desc"}},
+        "set_suit": {"kind": "call", "next": "turn", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {"active_suit": "$state.top_desc.suit"}}}},
+        "turn": {"kind": "branch", "value": "$state.current_player",
+                 "cases": [{"value": seat, "target": f"turn{seat}"} for seat in range(players)],
+                 "next": "turn0"},
+        **{key: value for seat in range(players) for key, value in seat_nodes(seat).items()},
+        "check_win": {"kind": "branch", "value": "$state.finished",
+                      "cases": [{"value": True, "target": "finish"}], "next": "effect_branch"},
+        "effect_branch": {"kind": "branch", "value": "$state.played.rank",
+                          "cases": effect_cases, "next": "advance"},
+        "effect_draw_two": {"kind": "call", "next": "advance", "action": {
+            "tool": "trigger", "operation": "apply", "args": {"state": "$state", "effects": [
+                {"do": "draw", "target": "next", "count": 2},
+                {"do": "skip", "count": 1}]}}},
+        "effect_skip": {"kind": "call", "next": "advance", "action": {
+            "tool": "trigger", "operation": "apply", "args": {"state": "$state", "effects": [
+                {"do": "skip", "count": 1}]}}},
+        "advance": {"kind": "call", "next": "reset_skip", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"mod": [
+                {"add": ["$state.current_player",
+                          {"mul": ["$state.direction", {"add": [1, "$state.skip"]}]}]},
+                "$state.players"]}},
+            "result_key": "next_player"}},
+        "reset_skip": {"kind": "call", "next": "turn", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {"current_player": "$state.next_player",
+                                                          "skip": 0}}}},
+        "finish": {"kind": "call", "next": "end", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {"phase": "finished"}}}},
+        "end": {"kind": "end"},
+    }
+    initial = {"finished": False, "winners": [], "current_player": 0, "round": 1,
+               "max_rounds": 1, "phase": "play", "private_hands": True,
+               "direction": 1, "skip": 0, "wild_ranks": wild}
+    return GamePlan(game_kind="uno", players=players, tools=tools, initial=initial,
                     entry="round_seed", nodes=nodes, step_limit=1024)
 
 

@@ -174,6 +174,31 @@ def test_agent_loop_fails_safely_without_a_model(tmp_path):
     assert "模型配置" in response.json()["detail"]
 
 
+def test_uno_over_http_applies_special_cards_and_hides_hands(tmp_path):
+    c = client(tmp_path)
+    state = c.post("/api/sessions", json={"game_id": "uno", "seed": 7}).json()
+    session_id = state["session_id"]
+    assert state["private_hands"] is True
+    assert state["players"][1]["hand"] == [] and state["players"][1]["hidden_count"] == 5
+
+    for _ in range(300):
+        if state["finished"]:
+            break
+        if "play" in state["legal_actions"]:
+            response = c.post(f"/api/sessions/{session_id}/actions/play",
+                              json={"revision": state["revision"],
+                                    "card_index": state["legal_card_indices"][0],
+                                    "declared_suit": "S"})
+        else:
+            response = c.post(f"/api/sessions/{session_id}/actions/draw",
+                              json={"revision": state["revision"]})
+        assert response.status_code == 200, response.text
+        state = response.json()["state"]
+
+    assert state["finished"] is True
+    assert state["players"][1]["hidden_count"] == 0
+
+
 def test_go_fish_over_http_asks_concrete_ranks(tmp_path):
     c = client(tmp_path)
     state = c.post("/api/sessions", json={"game_id": "go_fish", "seed": 7}).json()

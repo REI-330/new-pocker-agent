@@ -19,7 +19,7 @@ APP_PATH = Path(__file__).resolve().parents[1] / "src" / "pocker_agent" / "app.p
 
 # Deliberate ratchets. Raising a budget is a reviewable architecture decision,
 # not a side effect of adding a feature.
-CORE_TOOL_BUDGET = 17
+CORE_TOOL_BUDGET = 18
 
 # Names that signal "this is a whole game's grammar", not an orthogonal atom.
 # Explicit game titles only: generic mechanisms (score_settle, exact_expression)

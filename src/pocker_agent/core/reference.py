@@ -18,6 +18,7 @@ from .plans import (
     crazy_eights_plan,
     five_card_poker_plan,
     go_fish_plan,
+    uno_plan,
     war_plan,
     whist_plan,
 )
@@ -87,6 +88,10 @@ def _go_fish() -> GamePlan:
     return go_fish_plan(cards_each=5)
 
 
+def _uno() -> GamePlan:
+    return uno_plan(hand_size=5, wild_rank="8", draw_two_rank="2", skip_rank="K")
+
+
 REFERENCE_GAMES: dict[str, ReferenceGame] = {
     "arithmetic24": ReferenceGame("arithmetic24", "24点 / 四则算式练习", "arithmetic",
                                   _arithmetic24, _solve_or_claim_none),
@@ -100,6 +105,7 @@ REFERENCE_GAMES: dict[str, ReferenceGame] = {
                                _blackjack, _stand_at_17),
     "go_fish": ReferenceGame("go_fish", "Go Fish（向对手要牌）", "go_fish",
                              _go_fish, resilient_first),
+    "uno": ReferenceGame("uno", "UNO 类（特殊牌效果）", "uno", _uno, card_first),
 }
 
 

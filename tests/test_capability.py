@@ -13,9 +13,9 @@ def test_matrix_exposes_the_status_machine():
 
 
 def test_planned_axis_is_not_covered():
-    report = capability_check(["trigger"])
+    report = capability_check(["layout"])
     assert report.expressible is False
-    assert report.missing == [{"axis": "trigger", "status": "planned",
+    assert report.missing == [{"axis": "layout", "status": "planned",
                                "reason": "axis_status_is_planned"}]
 
 

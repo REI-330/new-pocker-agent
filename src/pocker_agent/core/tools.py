@@ -40,7 +40,8 @@ class LogicTool:
 _BINARY = {"eq": lambda a, b: a == b, "lt": lambda a, b: a < b,
            "le": lambda a, b: a <= b, "gt": lambda a, b: a > b,
            "ge": lambda a, b: a >= b, "add": lambda a, b: a + b,
-           "sub": lambda a, b: a - b}
+           "sub": lambda a, b: a - b, "mul": lambda a, b: a * b,
+           "mod": lambda a, b: a % b}
 
 
 def evaluate_expression(expression: Any, _depth: int = 0) -> Any:
@@ -433,11 +434,13 @@ class MatchingTool:
         if wild and declared_suit not in list(suits):
             raise ToolError("wild_requires_declared_suit")
         hand.pop(card_index)
+        state["discard"] = [*list(state.get("discard") or []), card]
         state["table"] = [card]
         state["active_suit"] = declared_suit if wild else card.suit
         if not hand:
             state.update(finished=True, winners=[hand_index], phase="finished")
-        return {"played": card.id, "active_suit": state["active_suit"], "hand_size": len(hand)}
+        return {"played": card.id, "rank": card.rank, "active_suit": state["active_suit"],
+                "hand_size": len(hand)}
 
     def draw(self, state: dict[str, Any], hand_index: int, seed: Any = 0,
              recycle: bool = True) -> dict[str, Any]:
@@ -446,10 +449,10 @@ class MatchingTool:
             raise ToolError("invalid_hand_index")
         stock = state.get("stock") or []
         if not stock and recycle:
-            table = state.get("table") or []
-            if len(table) > 1:
-                stock = list(table[1:])
-                state["table"] = table[:1]
+            pile = list(state.get("discard") or state.get("table") or [])
+            if len(pile) > 1:
+                stock = pile[:-1]
+                state["discard"] = pile[-1:]
                 random.Random(str(seed)).shuffle(stock)
         if not stock:
             raise ToolError("deck_exhausted")

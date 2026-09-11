@@ -146,6 +146,11 @@ def main() -> None:
     check("go_fish_hides_the_opponent",
           fish["players"][1]["hidden_count"] == 5)  # type: ignore[index]
 
+    status, uno = request("/api/sessions", "POST", {"game_id": "uno", "seed": 7})
+    check("uno_is_playable_with_hidden_hands",
+          status == 200 and uno["private_hands"] is True  # type: ignore[index]
+          and uno["players"][1]["hidden_count"] == 5, str(status))  # type: ignore[index]
+
     print(f"\n{len(PASSED)} checks passed against {BASE}")
 
 

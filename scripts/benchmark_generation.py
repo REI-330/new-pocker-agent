@@ -38,6 +38,8 @@ IR_TEMPLATES: dict[str, dict] = {
                   "max_rounds": 3},
     "go_fish": {"kind": "go_fish", "game_id": "bench-go-fish", "title": "钓鱼",
                 "cards_each": 5},
+    "uno": {"kind": "uno", "game_id": "bench-uno", "title": "UNO类",
+            "hand_size": 5, "wild_rank": "8", "draw_two_rank": "2", "skip_rank": "K"},
 }
 
 

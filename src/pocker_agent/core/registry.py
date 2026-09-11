@@ -30,6 +30,7 @@ from .tools import (
     TrickTool,
     WinnerResolveTool,
 )
+from .trigger_tools import TriggerTool
 
 # The solver operations read the current table; an empty or missing table is a
 # contract violation rather than a silent empty-puzzle answer.
@@ -82,10 +83,10 @@ def core_registry() -> ToolRegistry:
                       returns="bool"))))
     registry.register(ToolSpec("matching", lambda **_: MatchingTool(), (
         OperationSpec("play", params=("state", "hand_index", "card_index", "declared_suit", "wild_ranks", "suits"),
-                      effects=("hands", "table", "active_suit", "finished", "winners", "phase"),
-                      returns="played/active_suit/hand_size"),
+                      effects=("hands", "table", "discard", "active_suit", "finished", "winners", "phase"),
+                      returns="played/rank/active_suit/hand_size"),
         OperationSpec("draw", params=("state", "hand_index", "seed", "recycle"),
-                      effects=("hands", "stock", "table"), returns="hand_size"),)))
+                      effects=("hands", "stock", "table", "discard"), returns="hand_size"),)))
     registry.register(ToolSpec("trick", lambda teams=None: TrickTool(teams), (
         OperationSpec("legal", params=("state", "hand_index"), effects=(), returns="list[int]"),
         OperationSpec("play", params=("state", "hand_index", "card_index", "trump"),
@@ -124,4 +125,8 @@ def core_registry() -> ToolRegistry:
         OperationSpec("refill", params=("state", "seat"), effects=("hands", "stock"),
                       returns="drew"),
         OperationSpec("is_finished", params=("state",), effects=(), returns="bool"),)))
+    registry.register(ToolSpec("trigger", lambda **_: TriggerTool(), (
+        OperationSpec("apply", params=("state", "effects"),
+                      effects=("hands", "stock", "table", "skip", "direction", "active_suit"),
+                      returns="applied/count"),)))
     return registry

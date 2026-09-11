@@ -18,6 +18,7 @@ from .ir import (
                  PokerIR,
                  RulesIR,
                  SheddingIR,
+                 UnoIR,
                  WarIR,
                  WhistIR,
                  check_ir,
@@ -33,6 +34,7 @@ from .plans import (
                  crazy_eights_plan,
                  five_card_poker_plan,
                  go_fish_plan,
+                 uno_plan,
                  war_plan,
                  whist_plan,
 )
@@ -68,6 +70,7 @@ __all__ = [
                  "ToolError",
                  "ToolRegistry",
                  "ToolSpec",
+                 "UnoIR",
                  "WarIR",
                  "WhistIR",
                  "arithmetic_plan",
@@ -101,6 +104,7 @@ __all__ = [
                  "required_axes",
                  "resilient_first",
                  "run_bots",
+                 "uno_plan",
                  "war_plan",
                  "whist_plan",
 ]

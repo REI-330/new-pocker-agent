@@ -206,6 +206,19 @@ S4             覆盖度量与交付（横切，贯穿始终）
 - 验证：`141 passed`；真实 HTTP 端到端 `26/26`。
 - 未做：macro 形式化 + 提升规则、沙箱隔离协议。
 
+**S7 准出状态：完成（`trigger` + UNO 类 + ADR-0004）。**
+
+- `trigger` → **stable**：声明式特殊牌效果（摸 N 张给某座位、跳过、反向、指定花色）；效果表是纯数据，可跨玩法复用。
+- `logic` 增加 `mul` / `mod`：多座位的方向与跳过用 `(current + direction*(1+skip)) mod players` 在计划里算，而不是写进 Python。
+- 新增可玩族 `uno`（同花/同点接牌 + 万能牌指定花色 + 2 摸两张并跳过 + K 跳过）。
+- **修掉一个真实缺陷**：`matching` 之前把桌面当作“只有顶牌”，弃牌无法回收 → 牌堆耗尽；现在维护独立弃牌堆，桌面只暴露顶牌。
+- **诚实性修正**：`trigger` 落地后发现 `spoons` 真正缺的是**同时行动**，不是触发器；新增 planned 轴 `simultaneous`，覆盖率因此从 90.3% 回落到 **87.1%**。
+- 覆盖率：**25/31 → 27/31（87.1%）**；剩余缺口 `layout 3 · simultaneous 1`。
+- 预算：**ADR-0004** 把上限 17 → 18；当前 **17/18**。
+- 生成基准：10 例（8 可玩 + 2 边界）；scripted 模式 `finalized 8/8`、`playtest pass 8/8`、`correctly unsupported 2/2`、`mean attempts 3.4`、缺口 `{layout:1, simultaneous:1}`。
+- 验证：`152 passed`；真实 HTTP 端到端 `27/27`。
+- 未做：macro 形式化 + 提升规则、沙箱隔离协议。
+
 ## 4. 测试规范
 
 ### 4.1 测试层次（每层证明什么）

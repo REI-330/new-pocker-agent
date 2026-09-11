@@ -18,6 +18,7 @@ from .plans import (
     crazy_eights_plan,
     five_card_poker_plan,
     go_fish_plan,
+    uno_plan,
     war_plan,
     whist_plan,
 )
@@ -197,11 +198,40 @@ class GoFishIR(_Strict):
         return self
 
 
-RulesIR = Annotated[ArithmeticIR | WarIR | SheddingIR | WhistIR | PokerIR | BlackjackIR | GoFishIR,
-                    Field(discriminator="kind")]
+class UnoIR(_Strict):
+    """Matching game with declarative special-card effects (UNO family)."""
+
+    schema_version: Literal["0.4"] = "0.4"
+    kind: Literal["uno"]
+    game_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=2000)
+    players: Literal[2] = 2
+    hand_size: int = Field(default=5, ge=1, le=10)
+    wild_rank: str | None = "8"
+    draw_two_rank: str | None = "2"
+    skip_rank: str | None = "K"
+    max_rounds: Literal[1] = 1
+    ranks: list[str] = Field(default_factory=lambda: list(DEFAULT_RANKS), min_length=2)
+    suits: list[str] = Field(default_factory=lambda: list(DEFAULT_SUITS), min_length=1)
+
+    @model_validator(mode="after")
+    def executable(self) -> UnoIR:
+        for rank in (self.wild_rank, self.draw_two_rank, self.skip_rank):
+            if rank is not None and rank not in self.ranks:
+                raise ValueError("特殊牌点数必须在 ranks 中")
+        if len(self.ranks) * len(self.suits) <= self.players * self.hand_size + 1:
+            raise ValueError("牌组不足以发牌并留下起始牌")
+        return self
+
+
+RulesIR = Annotated[
+    ArithmeticIR | WarIR | SheddingIR | WhistIR | PokerIR | BlackjackIR | GoFishIR | UnoIR,
+    Field(discriminator="kind")]
 IR_ADAPTER = TypeAdapter(RulesIR)
 
-HOST_COMPILED = ("arithmetic", "war", "shedding", "whist", "poker", "blackjack", "go_fish")
+HOST_COMPILED = ("arithmetic", "war", "shedding", "whist", "poker", "blackjack", "go_fish",
+                 "uno")
 REQUIRED_AXES: dict[str, tuple[str, ...]] = {
     "arithmetic": ("sequential_turn", "exact_expression", "score_settle"),
     "war": ("sequential_turn", "rank_compare", "score_settle"),
@@ -210,6 +240,7 @@ REQUIRED_AXES: dict[str, tuple[str, ...]] = {
     "poker": ("sequential_turn", "betting", "ledger", "hand_rank", "info_set"),
     "blackjack": ("sequential_turn", "point_total", "info_set", "score_settle"),
     "go_fish": ("sequential_turn", "hidden_draw", "info_set"),
+    "uno": ("sequential_turn", "pattern_lang", "info_set", "trigger"),
 }
 
 
@@ -254,4 +285,8 @@ def host_compile(ir: ArithmeticIR | WarIR) -> GamePlan:
                               ranks=ir.ranks, suits=ir.suits)
     if isinstance(ir, GoFishIR):
         return go_fish_plan(cards_each=ir.cards_each, ranks=ir.ranks, suits=ir.suits)
+    if isinstance(ir, UnoIR):
+        return uno_plan(hand_size=ir.hand_size, wild_rank=ir.wild_rank,
+                        draw_two_rank=ir.draw_two_rank, skip_rank=ir.skip_rank,
+                        ranks=ir.ranks, suits=ir.suits)
     raise ValueError(f"no_host_compiler:{getattr(ir, 'kind', 'unknown')}")

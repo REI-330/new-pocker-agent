@@ -53,6 +53,7 @@ def test_unsupported_goals_name_the_missing_axis():
     report = bench.benchmark(bench.load_cases(), bench.ScriptedModel)
     by_id = {record["id"]: record for record in report["cases"]}
     assert by_id["go_fish"]["kind"] == "proposal"       # now playable
+    assert by_id["uno"]["kind"] == "proposal"           # now playable
     assert by_id["spoons"]["kind"] == "unsupported"
-    assert by_id["spoons"]["missing"] == ["trigger"]
+    assert by_id["spoons"]["missing"] == ["simultaneous"]
     assert by_id["klondike"]["missing"] == ["layout"]

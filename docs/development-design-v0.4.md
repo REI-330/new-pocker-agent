@@ -904,8 +904,10 @@ team             █              1
 - [x] `capability_check` + 语料库 + 覆盖率报表
 - [x] `pattern_lang`（参数化牌型/合法性）+ `info_set`（按视角可见性）→ stable，新增可玩族 `crazy_eights`
 - [x] `agent_compose` 真实路径（模型提供 plan → playtest → finalize → 可玩）
-- [ ] `turn_adapter` + `team`（7/30 → 约 15/30 的最大杠杆）
+- [x] `turn_adapter`（墩牌/跟牌/竞叫）+ `team`（队伍）→ stable，新增可玩族 `whist`
+- [x] 语料修正：`hearts` 去 `team`、`spades`/`bridge` 去 `betting`（竞叫归 `turn_adapter`）
 - [ ] `trigger` / `betting` / `ledger` / `layout` / `hidden_draw` / `point_total`
+- [ ] macro 形式化 + 提升规则；沙箱隔离协议（S4）
 
 ---
 

@@ -144,6 +144,17 @@ S4             覆盖度量与交付（横切，贯穿始终）
 | 准出证据 | ① 至少 1 个 macro 被 ≥2 玩法复用（触发提升评估）；② 沙箱失败时有明确错误与回退；③ 执行面互斥有测试 |
 | 预算 | macro 数量、沙箱超时/内存/输出上限必须显式配置并有测试 |
 
+**S3 准出状态：部分完成（`turn_adapter` + `team` 已落地；macro / 沙箱后置）。**
+
+- `turn_adapter` → **stable**：`trick` 工具（`legal` 跟花色合法性 / `play` 墩牌结算），支持将牌、领出花色、墩胜者领出。
+- `team` → **stable**：`trick` 的 `teams` 配置 + `team_winners`，队伍共享胜负，并列共享（输出有序）。
+- 新增可玩族 `whist`（4 人 2 队、跟牌、将牌、墩牌计分），已过 playtest；`SessionStore` 的声明式 bot 策略驱动 3 个非人类座位。
+- 语料修正（诚实性）：`hearts` 去掉 `team`（红心大战不是组队游戏）、`spades`/`bridge` 去掉 `betting`（竞叫属于 `turn_adapter`）；`whist` 标注 `builtin`。
+- 覆盖：**7/30 → 16/30（53.3%）**；剩余缺口 `betting 4 · layout 3 · ledger 3 · trigger 3 · hidden_draw 2 · point_total 1`。
+- 验证：`100 passed`；真实 HTTP 端到端 `21/21`。
+- 预算提示：core 工具 **11 / 12**；下一次新增机制工具前需先做一次“提升为 axis 或提高预算”的 ADR 决定。
+- 未做：macro 形式化与提升规则、沙箱隔离协议（移到 S4）。
+
 ### S4 · 覆盖度量与交付（横切）
 
 **目标**：让"适配大部分游戏"变成可验收的数字。

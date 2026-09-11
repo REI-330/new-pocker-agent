@@ -199,6 +199,77 @@ def crazy_eights_plan(*, hand_size: int = 5, wild_rank: str | None = "8",
                     entry="round_seed", nodes=nodes, step_limit=512)
 
 
+def whist_plan(*, players: int = 4, cards_each: int = 5, teams=((0, 2), (1, 3)),
+               ranks=("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"),
+               suits=("S", "H", "D", "C")) -> GamePlan:
+    """Partnership trick-taking: follow suit, trump decides, most tricks per team wins.
+
+    Contract: ``cards_each`` tricks; the turn-up kitty card fixes the trump; a
+    player must follow the led suit when able; a trick goes to the highest trump
+    else the highest card of the led suit; the winning team is the one with the
+    most tricks (a tie shares).
+    """
+    teams = [list(team) for team in teams]
+    tools = [
+        {"name": "state"},
+        {"name": "logic"},
+        {"name": "deck", "config": {"ranks": list(ranks), "suits": list(suits)}},
+        {"name": "pattern"},
+        {"name": "trick", "config": {"teams": teams}},
+    ]
+
+    def seat_nodes(seat: int) -> dict:
+        return {
+            f"turn{seat}": {"kind": "call", "next": f"wait{seat}", "action": {
+                "tool": "trick", "operation": "legal",
+                "args": {"state": "$state", "hand_index": seat},
+                "result_key": "legal_card_indices"}},
+            f"wait{seat}": {"kind": "wait", "inputs": {"play": f"play{seat}"}},
+            f"play{seat}": {"kind": "call", "next": "check_end", "action": {
+                "tool": "trick", "operation": "play",
+                "args": {"state": "$state", "hand_index": seat,
+                         "card_index": "$state.input.card_index", "trump": "$state.trump"}}},
+        }
+
+    nodes = {
+        "round_seed": {"kind": "call", "next": "deal", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"join": ["$state.seed", ":whist"]}},
+            "result_key": "round_seed"}},
+        "deal": {"kind": "call", "next": "turn_up", "action": {
+            "tool": "deck", "operation": "deal",
+            "args": {"seed": "$state.round_seed", "hands": players,
+                     "cards_each": cards_each, "kitty": 1},
+            "result_key": "deal"}},
+        "turn_up": {"kind": "call", "next": "init", "action": {
+            "tool": "pattern", "operation": "describe",
+            "args": {"cards": "$state.deal.kitty"}, "result_key": "top_desc"}},
+        "init": {"kind": "call", "next": "turn", "action": {
+            "tool": "state", "operation": "update", "args": {"state": "$state", "values": {
+                "hands": "$state.deal.hands", "deal": None,
+                "trump": "$state.top_desc.suit", "led_suit": "", "trick": [],
+                "trick_seats": [], "table": [], "tricks_won": [0] * players,
+                "tricks_total": cards_each, "trick_index": 0,
+                "teams": teams, "current_player": 0, "phase": "play",
+                "finished": False, "winners": [], "private_hands": True}}}},
+        "turn": {"kind": "branch", "value": "$state.current_player",
+                 "cases": [{"value": seat, "target": f"turn{seat}"} for seat in range(players)],
+                 "next": "turn0"},
+        **{key: value for seat in range(players) for key, value in seat_nodes(seat).items()},
+        "check_end": {"kind": "branch", "value": "$state.finished",
+                      "cases": [{"value": True, "target": "finish"}], "next": "turn"},
+        "finish": {"kind": "call", "next": "end", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {"phase": "finished"}}}},
+        "end": {"kind": "end"},
+    }
+    initial = {"finished": False, "winners": [], "current_player": 0, "round": 1, "max_rounds": 1,
+               "phase": "play", "private_hands": True, "teams": teams,
+               "instructions": "跟牌时必须先跟同花色；将牌最大；每墩胜者领出；吃到最多墩的队伍获胜。"}
+    return GamePlan(game_kind="whist", players=players, tools=tools, initial=initial,
+                    entry="round_seed", nodes=nodes, step_limit=1024)
+
+
 def war_plan(*, max_rounds: int = 3,
              ranks=("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"),
              suits=("S", "H", "D", "C")) -> GamePlan:

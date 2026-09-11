@@ -174,6 +174,29 @@ def test_agent_loop_fails_safely_without_a_model(tmp_path):
     assert "模型配置" in response.json()["detail"]
 
 
+def test_whist_over_http_is_a_team_trick_game(tmp_path):
+    c = client(tmp_path)
+    state = c.post("/api/sessions", json={"game_id": "whist", "seed": 7}).json()
+    session_id = state["session_id"]
+    assert len(state["players"]) == 4
+    assert state["private_hands"] is True
+    assert sum(player["hidden_count"] for player in state["players"][1:]) == 15
+
+    for _ in range(300):
+        if state["finished"]:
+            break
+        assert state["legal_card_indices"], "a trick seat always has a legal card"
+        response = c.post(f"/api/sessions/{session_id}/actions/play",
+                          json={"revision": state["revision"],
+                                "card_index": state["legal_card_indices"][0]})
+        assert response.status_code == 200, response.text
+        state = response.json()["state"]
+
+    assert state["finished"] is True
+    assert set(state["winners"]) in ({"player-1", "player-3"}, {"player-2", "player-4"},
+                                      {"player-1", "player-2", "player-3", "player-4"})
+
+
 def test_crazy_eights_over_http_hides_the_opponent_and_is_playable(tmp_path):
     c = client(tmp_path)
     state = c.post("/api/sessions", json={"game_id": "crazy_eights", "seed": 7}).json()

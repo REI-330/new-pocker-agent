@@ -24,6 +24,7 @@ from .tools import (
     ScoreSettleTool,
     SolvableDealTool,
     StateTool,
+    TrickTool,
     WinnerResolveTool,
 )
 
@@ -80,4 +81,11 @@ def core_registry() -> ToolRegistry:
                       returns="played/active_suit/hand_size"),
         OperationSpec("draw", params=("state", "hand_index", "seed", "recycle"),
                       effects=("hands", "stock", "table"), returns="hand_size"),)))
+    registry.register(ToolSpec("trick", lambda teams=None: TrickTool(teams), (
+        OperationSpec("legal", params=("state", "hand_index"), effects=(), returns="list[int]"),
+        OperationSpec("play", params=("state", "hand_index", "card_index", "trump"),
+                      effects=("hands", "trick", "trick_seats", "led_suit", "table",
+                               "current_player", "tricks_won", "trick_index", "finished",
+                               "winners", "phase"),
+                      returns="complete/winner/tricks_won"),)))
     return registry

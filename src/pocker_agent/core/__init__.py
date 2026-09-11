@@ -16,6 +16,7 @@ from .ir import (
                  RulesIR,
                  SheddingIR,
                  WarIR,
+                 WhistIR,
                  check_ir,
                  host_compile,
                  is_host_compiled,
@@ -23,7 +24,7 @@ from .ir import (
                  required_axes,
 )
 from .plan import FlowCase, FlowNode, GamePlan, ToolBinding, ToolCall
-from .plans import arithmetic_plan, crazy_eights_plan, war_plan
+from .plans import arithmetic_plan, crazy_eights_plan, war_plan, whist_plan
 from .playtest import PlaytestReport, boundary_first, card_first, first_legal, playtest, random_legal, resilient_first
 from .policy import bot_action, run_bots
 from .reference import REFERENCE_GAMES, build_plan, ensure_playtested, list_reference_games
@@ -54,6 +55,7 @@ __all__ = [
                  "ToolRegistry",
                  "ToolSpec",
                  "WarIR",
+                 "WhistIR",
                  "arithmetic_plan",
                  "bot_action",
                  "boundary_first",
@@ -82,4 +84,5 @@ __all__ = [
                  "resilient_first",
                  "run_bots",
                  "war_plan",
+                 "whist_plan",
 ]

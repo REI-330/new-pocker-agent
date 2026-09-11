@@ -13,18 +13,20 @@ def test_matrix_exposes_the_status_machine():
 
 
 def test_planned_axis_is_not_covered():
-    report = capability_check(["turn_adapter"])
+    report = capability_check(["trigger"])
     assert report.expressible is False
-    assert report.missing == [{"axis": "turn_adapter", "status": "planned",
+    assert report.missing == [{"axis": "trigger", "status": "planned",
                                "reason": "axis_status_is_planned"}]
 
 
-def test_s2_axes_are_stable_and_gaps_are_ranked():
+def test_s2_and_s3_axes_are_stable_and_gaps_are_ranked():
     assert capability_check(["pattern_lang", "info_set"]).expressible is True
+    assert capability_check(["turn_adapter", "team", "pattern_lang"]).expressible is True
     report = coverage_report()
-    assert "turn_adapter" in report["missing_histogram"]
-    assert "pattern_lang" not in report["missing_histogram"]
-    assert report["covered"] >= 7
+    assert "turn_adapter" not in report["missing_histogram"]
+    assert "team" not in report["missing_histogram"]
+    assert "betting" in report["missing_histogram"]
+    assert report["covered"] >= 16
 
 
 def test_stable_axes_are_covered():
@@ -47,8 +49,8 @@ def test_coverage_report_shape_and_histogram():
     assert 0.0 < report["coverage"] < 1.0
     assert report["covered"] >= 1
     # The remaining gaps must be visible, ranked by impact.
-    assert "turn_adapter" in report["missing_histogram"]
-    assert report["missing_histogram"]["turn_adapter"] >= 5
+    assert "betting" in report["missing_histogram"]
+    assert report["missing_histogram"]["betting"] >= 3
     arithmetic = next(game for game in report["games"] if game["id"] == "arithmetic24")
     assert arithmetic["expressible"] is True
     assert arithmetic["builtin"] == "arithmetic24"

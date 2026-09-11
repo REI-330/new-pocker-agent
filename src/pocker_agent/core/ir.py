@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from .capability import CapabilityReport, capability_check
 from .plan import GamePlan
-from .plans import arithmetic_plan, crazy_eights_plan, war_plan
+from .plans import arithmetic_plan, crazy_eights_plan, war_plan, whist_plan
 
 DEFAULT_RANK_VALUES = {"A": 1, **{str(n): n for n in range(2, 11)}, "J": 11, "Q": 12, "K": 13}
 DEFAULT_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
@@ -95,14 +95,40 @@ class SheddingIR(_Strict):
         return self
 
 
-RulesIR = Annotated[ArithmeticIR | WarIR | SheddingIR, Field(discriminator="kind")]
+class WhistIR(_Strict):
+    """Partnership trick-taking with a turn-up trump (Whist family)."""
+
+    schema_version: Literal["0.4"] = "0.4"
+    kind: Literal["whist"]
+    game_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=2000)
+    players: Literal[4] = 4
+    cards_each: int = Field(default=5, ge=1, le=13)
+    max_rounds: Literal[1] = 1
+    teams: list[list[int]] = Field(default_factory=lambda: [[0, 2], [1, 3]])
+    ranks: list[str] = Field(default_factory=lambda: list(DEFAULT_RANKS), min_length=2)
+    suits: list[str] = Field(default_factory=lambda: list(DEFAULT_SUITS), min_length=1)
+
+    @model_validator(mode="after")
+    def executable(self) -> WhistIR:
+        flat = [seat for team in self.teams for seat in team]
+        if sorted(flat) != list(range(self.players)):
+            raise ValueError("teams 必须正好覆盖全部座位且不重复")
+        if len(self.ranks) * len(self.suits) < self.players * self.cards_each + 1:
+            raise ValueError("牌组不足以发牌并留下起始牌")
+        return self
+
+
+RulesIR = Annotated[ArithmeticIR | WarIR | SheddingIR | WhistIR, Field(discriminator="kind")]
 IR_ADAPTER = TypeAdapter(RulesIR)
 
-HOST_COMPILED = ("arithmetic", "war", "shedding")
+HOST_COMPILED = ("arithmetic", "war", "shedding", "whist")
 REQUIRED_AXES: dict[str, tuple[str, ...]] = {
     "arithmetic": ("sequential_turn", "exact_expression", "score_settle"),
     "war": ("sequential_turn", "rank_compare", "score_settle"),
     "shedding": ("sequential_turn", "pattern_lang", "info_set"),
+    "whist": ("sequential_turn", "turn_adapter", "team", "pattern_lang"),
 }
 
 
@@ -134,4 +160,7 @@ def host_compile(ir: ArithmeticIR | WarIR) -> GamePlan:
     if isinstance(ir, SheddingIR):
         return crazy_eights_plan(hand_size=ir.hand_size, wild_rank=ir.wild_rank,
                                  ranks=ir.ranks, suits=ir.suits)
+    if isinstance(ir, WhistIR):
+        return whist_plan(cards_each=ir.cards_each, teams=ir.teams,
+                          ranks=ir.ranks, suits=ir.suits)
     raise ValueError(f"no_host_compiler:{getattr(ir, 'kind', 'unknown')}")

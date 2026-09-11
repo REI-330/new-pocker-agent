@@ -12,7 +12,7 @@ from functools import lru_cache
 
 from .interpreter import Interpreter
 from .plan import GamePlan
-from .plans import arithmetic_plan, crazy_eights_plan, war_plan
+from .plans import arithmetic_plan, crazy_eights_plan, war_plan, whist_plan
 from .playtest import PlaytestReport, card_first, first_legal, playtest
 from .registry import core_registry
 
@@ -54,12 +54,17 @@ def _crazy_eights() -> GamePlan:
     return crazy_eights_plan(hand_size=5, wild_rank="8")
 
 
+def _whist() -> GamePlan:
+    return whist_plan(cards_each=5)
+
+
 REFERENCE_GAMES: dict[str, ReferenceGame] = {
     "arithmetic24": ReferenceGame("arithmetic24", "24点 / 四则算式练习", "arithmetic",
                                   _arithmetic24, _solve_or_claim_none),
     "war": ReferenceGame("war", "War 比大小", "war", _war, first_legal),
     "crazy_eights": ReferenceGame("crazy_eights", "疯狂八（隐藏手牌）", "shedding",
                                   _crazy_eights, card_first),
+    "whist": ReferenceGame("whist", "Whist（四人两队墩牌）", "whist", _whist, card_first),
 }
 
 

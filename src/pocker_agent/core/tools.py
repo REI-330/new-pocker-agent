@@ -317,6 +317,88 @@ class PatternTool:
                 and candidate.get("rank", 0) > previous.get("rank", 0))
 
 
+class TrickTool:
+    """Trick-taking adapter: follow-suit legality, trump resolution and team scoring.
+
+    One parameterized mechanism for Whist/Hearts/Spades/Euchre/Bridge-like
+    games; the number of seats, the teams and the trump suit are configuration.
+    """
+
+    def __init__(self, teams: Any = None) -> None:
+        self.teams = [list(team) for team in teams] if teams else None
+
+    def legal(self, state: dict[str, Any], hand_index: int) -> list[int]:
+        hands = state.get("hands")
+        if not isinstance(hands, list) or not 0 <= hand_index < len(hands):
+            raise ToolError("invalid_hand_index")
+        hand = hands[hand_index]
+        led = state.get("led_suit") or ""
+        if not led:
+            return list(range(len(hand)))
+        following = [index for index, card in enumerate(hand) if card.suit == led]
+        return following if following else list(range(len(hand)))
+
+    def play(self, state: dict[str, Any], hand_index: int, card_index: int,
+             trump: str = "") -> dict[str, Any]:
+        hands = state.get("hands")
+        if not isinstance(hands, list) or not 0 <= hand_index < len(hands):
+            raise ToolError("invalid_hand_index")
+        if card_index not in self.legal(state, hand_index):
+            raise ToolError("must_follow_suit")
+        hand = hands[hand_index]
+        card = hand.pop(card_index)
+        trick = list(state.get("trick") or [])
+        seats = list(state.get("trick_seats") or [])
+        if not trick:
+            state["led_suit"] = card.suit
+        trick.append(card)
+        seats.append(hand_index)
+        state["trick"], state["trick_seats"] = trick, seats
+        state["table"] = list(trick)
+        players = len(hands)
+        if len(trick) < players:
+            state["current_player"] = (hand_index + 1) % players
+            return {"complete": False, "player": hand_index}
+
+        winner = self._winner(trick, seats, state.get("led_suit", ""), trump)
+        won = list(state.get("tricks_won") or [0] * players)
+        won[winner] += 1
+        state.update(trick=[], trick_seats=[], table=[], led_suit="",
+                     current_player=winner, tricks_won=won,
+                     trick_index=int(state.get("trick_index", 0)) + 1)
+        if state["trick_index"] >= int(state.get("tricks_total", 0)):
+            state.update(finished=True, phase="finished",
+                         winners=self.team_winners(won, players))
+        return {"complete": True, "winner": winner, "tricks_won": won}
+
+    @staticmethod
+    def _winner(trick: list[Any], seats: list[int], led: str, trump: str) -> int:
+        best = 0
+        for index in range(1, len(trick)):
+            card, holder = trick[index], trick[best]
+            if trump:
+                if card.suit == trump and holder.suit != trump:
+                    best = index
+                    continue
+                if holder.suit == trump and card.suit != trump:
+                    continue
+            if card.suit == holder.suit and card.value > holder.value:
+                best = index
+            elif card.suit == led and holder.suit != led and holder.suit != trump:
+                best = index
+        return seats[best]
+
+    def team_winners(self, won: list[int], players: int) -> list[int]:
+        teams = self.teams or [[seat] for seat in range(players)]
+        totals = [sum(won[seat] for seat in team) for team in teams]
+        best = max(totals)
+        winners: list[int] = []
+        for team, total in zip(teams, totals):
+            if total == best:
+                winners.extend(team)
+        return sorted(winners)
+
+
 class MatchingTool:
     """Play/draw mechanics for matching games; operates on the shared state."""
 

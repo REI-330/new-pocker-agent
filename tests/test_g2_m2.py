@@ -413,6 +413,37 @@ def test_zones_count_operations_declare_their_real_shapes():
     assert one.output_schema["required"] == ["zone", "count"]
 
 
+def preloaded_compare_ir() -> dict:
+    """A compare zone filled at setup: the action plays elsewhere, compare reads it."""
+    payload = scenario_a_ir()
+    payload["setup"] = {"deals": [{"zone": "hand", "count": 3, "per_seat": True},
+                                   {"zone": "pot", "count": 2, "per_seat": False}],
+                        "stock_zone": "stock"}
+    payload["actions"][0]["effects"] = [
+        {"kind": "select", "input": "card", "result": "picked"},
+        {"kind": "move", "from_zone": "hand", "to_zone": "discard", "selection": "picked"},
+    ]
+    payload["flow"]["resolve"] = [
+        {"kind": "compare", "zone": "pot", "left": 0, "right": 1,
+         "rules": ["award_left", "award_right"]}]
+    return payload
+
+
+def test_a_compare_zone_prefilled_at_setup_is_accepted():
+    """P2 regression: the setup stock into the compare zone must count."""
+    compiled = compile_composed(parse_design_ir(preloaded_compare_ir()), core_registry())
+    report = playtest(compiled.plan, core_registry(), smallest_card_strategy, seeds=(0, 1))
+    assert report.ok, report.failures
+
+
+def test_a_compare_zone_drained_before_the_compare_is_still_rejected():
+    payload = preloaded_compare_ir()
+    payload["flow"]["resolve"].insert(
+        0, {"kind": "move_top", "from_zone": "pot", "to_zone": "discard", "count": 2})
+    with pytest.raises(ValidationError, match="compare_zone_too_small"):
+        parse_design_ir(payload)
+
+
 def test_scenario_a_compiles_and_simulates_a_full_game():
     compiled = compile_composed(parse_design_ir(scenario_a_ir()), core_registry())
     report = playtest(compiled.plan, core_registry(), smallest_card_strategy,

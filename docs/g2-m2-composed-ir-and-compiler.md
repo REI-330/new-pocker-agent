@@ -99,7 +99,7 @@ parse_design_ir(payload)     # 接受 composed
 
 分析器在**没有**计数器知识时返回 `inconclusive=True`，即「不能证明终止」而不是「已证明终止」；编译器自身只生成上述两种有界环。
 
-**compare 位置容量检查**：`CompareEffect` 的 `left/right` 不仅要≤上限，还必须在解析期证明该区域会被填满到对应位置——保证量 = `players × Σ(回合动作中移入该区的选择 min_count)` + 该 compare 之前 `move_top` 的移入数；不足则报 `compare_zone_too_small`，不依赖运行时索引错误。
+**compare 位置容量检查**：`CompareEffect` 的 `left/right` 不仅要≤上限，还必须在解析期证明该区域**每一轮**都会填到对应位置。模型按轮次推演牌数：`initial`（setup 向该区的共享发牌）+ 回合内移入的**最小**牌数 − 移出的**最大**牌数 + `move_top` 的精确移入/移出；对比对位置所需 `max(left,right)+1`，取各轮最小值（净流量≥0 取第 1 轮，否则取末轮）。不足报 `compare_zone_too_small`，不依赖运行时索引错误；预置入虽多但被提前清空仍会被拒。
 
 ### 4.1 source map
 
@@ -153,11 +153,12 @@ uv run python scripts/e2e_smoke.py http://127.0.0.1:8012
 | P1 | `MoveSelectionEffect` 的 shared `from_zone` 被按 actor zone 生成 `$state.zone_x` | 改为按声明 scope 生成：player→actor 实例，shared→字面量 id；新增 shared→shared 可运行回归与 player→shared 断言 |
 | P2 | 变量赋值无表达式结果类型检查 | 新增 `infer_type`/`check_assignable`；`assign`/`guard` 静态类型校验 |
 | P2 | `CompareEffect.left/right` 未验证区域实际够大 | 新增 `_check_compare_capacity` 静态下界（`compare_zone_too_small`） |
+| P2 | 二轮复核：容量检查未计入 setup 预置入 compare zone 的牌（过度拒绝） | 改为按轮次推演：setup 起始量 + 回合移入下限 − 移除上限 + `move_top` 精确量，取各轮最小值；预置入可被接受，但若在 compare 前被清空仍拒绝 |
 | — | 复核称 `zones.count` 仍带必需 `zone` 与二选一输出 | **复核有误**：`registry.py:369-373` 的 `count` 已是 `required=["state"]`、`outputs={counts}`；带 `zone` 的是 `count_zone`。由 `test_zones_count_operations_declare_their_real_shapes` 固定（M1 已修） |
 
 ## 8. 本包测试与运行结果
 
-- `uv run --frozen pytest -q` → **251 passed**（M1 基线 227；M2 新增 `tests/test_g2_m2.py` 24 项）。
+- `uv run --frozen pytest -q` → **253 passed**（M1 基线 227；M2 新增 `tests/test_g2_m2.py` 26 项）。
 - 架构不变量（含递归扫描新子包）→ 全部通过。
 - `uvx --offline ruff check <CI 列表 + tests/test_g2_m2.py>` → All checks passed。
 - 专用目录 `artifacts/g2-runtime`、端口 **8012** 启动当前 checkout：

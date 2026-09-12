@@ -386,35 +386,59 @@ class ComposedRulesIR(_Strict):
             raise ValueError("flow_resolve_required")
 
     def _check_compare_capacity(self, effect: CompareEffect) -> None:
-        """Guarantee the compared positions will actually be filled at resolve time.
+        """Guarantee the compared positions are filled at *every* resolve.
 
-        Cards enter the zone from the round action every turn; the guaranteed
-        count is ``players * sum(min_count of moves into the zone)`` plus any
-        ``move_top`` that runs before this compare. This is a static lower bound,
-        so a rule that could index an empty slot is rejected at parse time rather
-        than failing mid-game with ``state_reference_not_found``.
+        Models the compare zone's card count across rounds with sound bounds:
+        additions use the selection ``min_count`` (a lower bound), removals use
+        ``max_count`` (an upper bound), plus the exact ``move_top`` amounts. The
+        setup's shared deal into the zone counts as the round-0 starting stock.
+        The minimum over all rounds must reach ``max(left, right) + 1``.
         """
-        select_by_result = {e.result: e for e in self.action(self.flow.round_action).effects
-                            if isinstance(e, SelectEffect)}
-        input_min = {item.id: item.min_count
-                     for item in self.action(self.flow.round_action).inputs}
-        per_turn = 0
-        for item in self.action(self.flow.round_action).effects:
-            if not isinstance(item, MoveSelectionEffect) or item.to_zone != effect.zone:
+        action = self.action(self.flow.round_action)
+        select_by_result = {item.result: item for item in action.effects
+                            if isinstance(item, SelectEffect)}
+        bounds = {item.id: (item.min_count, item.max_count) for item in action.inputs}
+        per_action_in = per_action_out = 0
+        for item in action.effects:
+            if not isinstance(item, MoveSelectionEffect):
                 continue
             select = select_by_result.get(item.selection)
-            if select is not None:
-                per_turn += input_min.get(select.input, 0)
-        guaranteed = per_turn * self.players.count
+            if select is None:
+                continue
+            low, high = bounds.get(select.input, (0, 0))
+            if item.to_zone == effect.zone:
+                per_action_in += low
+            if item.from_zone == effect.zone:
+                per_action_out += high
+        turn_in = per_action_in * self.players.count
+        turn_out = per_action_out * self.players.count
+
+        initial = sum(deal.count for deal in self.setup.deals
+                      if not deal.per_seat and deal.zone == effect.zone)
+        resolve_in = sum(item.count for item in self.flow.resolve
+                         if isinstance(item, MoveTopEffect) and item.to_zone == effect.zone)
+        resolve_out = sum(item.count for item in self.flow.resolve
+                          if isinstance(item, MoveTopEffect) and item.from_zone == effect.zone)
+        pre_in = pre_out = 0
         for item in self.flow.resolve:
             if item is effect:
                 break
-            if isinstance(item, MoveTopEffect) and item.to_zone == effect.zone:
-                guaranteed += item.count
+            if isinstance(item, MoveTopEffect):
+                if item.to_zone == effect.zone:
+                    pre_in += item.count
+                if item.from_zone == effect.zone:
+                    pre_out += item.count
+
+        first_round = initial + turn_in - turn_out + pre_in - pre_out
+        round_net = (turn_in - turn_out) + (resolve_in - resolve_out)
+        if round_net >= 0:
+            minimum = first_round
+        else:
+            minimum = first_round + (self.terminal.max_rounds - 1) * round_net
         needed = max(effect.left, effect.right) + 1
-        if guaranteed < needed:
+        if minimum < needed:
             raise ValueError(
-                f"compare_zone_too_small:{effect.zone}:{guaranteed}<{needed}")
+                f"compare_zone_too_small:{effect.zone}:{minimum}<{needed}")
 
     def _check_macros(self) -> None:
         if self.macros:

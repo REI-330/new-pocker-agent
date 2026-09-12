@@ -112,7 +112,8 @@ class _Compiler:
     def __init__(self, ir: ComposedRulesIR) -> None:
         self.ir = ir
         self.players = ir.players.count
-        self.action = ir.action(ir.flow.round_action)
+        self.actions = [ir.action(action_id) for action_id in ir.flow.action_sequence]
+        self.action = self.actions[0]
         self.nodes: dict[str, dict[str, Any]] = {}
         self.entries: list[dict[str, str]] = []
         self._has_compare = any(isinstance(effect, CompareEffect)
@@ -120,6 +121,7 @@ class _Compiler:
         self._hand_zone = next(deal.zone for deal in ir.setup.deals if deal.per_seat)
         self._shared_deals = [deal for deal in ir.setup.deals if not deal.per_seat]
         self._zone_entry: str | None = None
+        self._turn_entry: str | None = None
 
     # --------------------------------------------------------------- plumbing
     def _add(self, node_id: str, node: dict[str, Any], path: str) -> None:
@@ -168,9 +170,6 @@ class _Compiler:
             return f"$state.zone_{_safe(zone_id)}"
         return zone_id
 
-    def _pre_turn_entry(self) -> str:
-        return "pre_turn" if self.action.guard is not None else "turn"
-
     # ------------------------------------------------------------------ build
     def compile(self) -> tuple[dict[str, dict[str, Any]], list[dict[str, str]]]:
         self._setup_nodes()
@@ -179,12 +178,13 @@ class _Compiler:
 
     def _actor_zone_ids(self) -> list[str]:
         found: set[str] = set()
-        for item in self.action.inputs:
-            found.add(item.zone)
-        for effect in self.action.effects:
-            if isinstance(effect, (MoveSelectionEffect, RemovePairsEffect, RefillEffect)):
-                found.add(effect.from_zone)
-                found.add(effect.to_zone)
+        for action in self.actions:
+            for item in action.inputs:
+                found.add(item.zone)
+            for effect in action.effects:
+                if isinstance(effect, (MoveSelectionEffect, RemovePairsEffect, RefillEffect)):
+                    found.add(effect.from_zone)
+                    found.add(effect.to_zone)
         return sorted(zone_id for zone_id in found
                       if (zone := self.ir.zone(zone_id)) is not None and zone.scope == "player")
 
@@ -197,7 +197,7 @@ class _Compiler:
             if previous is not None:
                 self.nodes[previous]["next"] = node_id
             self._eval(node_id, {"join": [f"{zone_id}-", "$state.current_player"]},
-                       f"zone_{_safe(zone_id)}", self._pre_turn_entry(),
+                       f"zone_{_safe(zone_id)}", self._turn_entry or "turn",
                        f"zones.{zone_id}")
             previous = node_id
 
@@ -259,27 +259,57 @@ class _Compiler:
             self._eval("second_seat", {"sub": [self.players - 1, "$state.first_seat"]},
                        "second_seat", "turn_setup", "flow.resolve.0")
 
+        # Build the turn's wait/guard chain first so the zone-instance nodes know
+        # where to hand off (ADR-0012).
+        self._turn_entry = self._build_turn_waits()
         self._build_zone_nodes()
-        pre_turn = self._zone_entry or self._pre_turn_entry()
         self._update("turn_setup", {"turn_index": 0, "current_player": "$state.first_seat"},
-                     pre_turn, "flow.round_action")
-
-        effect_entry = self._compile_action()
-        self._add("turn", {"kind": "wait", "inputs": {self.action.id: effect_entry}},
-                  f"actions.{self.action.id}")
-        if self.action.guard is not None:
-            self._eval("pre_turn", compile_expression(self.action.guard), "guard_ok",
-                       "guard_branch", f"actions.{self.action.id}.guard")
-            self._branch("guard_branch", "$state.guard_ok",
-                         [{"value": True, "target": "turn"}], "bump_turn",
-                         f"actions.{self.action.id}.guard")
+                     self._zone_entry or self._turn_entry, "flow.round_action")
         self._after_turn_nodes()
 
-    def _compile_action(self) -> str:
-        if not self.action.effects:
+    def _build_turn_waits(self) -> str:
+        """Emit the wait/guard chain for the turn's ordered actions (ADR-0012).
+
+        The first action whose guard passes is offered; a failing guard falls
+        through to the next candidate, and a final failing guard advances the
+        turn with no action. Single-action rules keep the M2 node names, so their
+        plan fingerprints do not change.
+        """
+        entries = {action.id: self._compile_action(action) for action in self.actions}
+        if len(self.actions) == 1:
+            action = self.actions[0]
+            self._add("turn", {"kind": "wait", "inputs": {action.id: entries[action.id]}},
+                      f"actions.{action.id}")
+            if action.guard is None:
+                return "turn"
+            self._eval("pre_turn", compile_expression(action.guard), "guard_ok",
+                       "guard_branch", f"actions.{action.id}.guard")
+            self._branch("guard_branch", "$state.guard_ok",
+                         [{"value": True, "target": "turn"}], "bump_turn",
+                         f"actions.{action.id}.guard")
+            return "pre_turn"
+        entry: str | None = None
+        for action in reversed(self.actions):
+            wait_id = f"turn_{action.id}"
+            self._add(wait_id, {"kind": "wait", "inputs": {action.id: entries[action.id]}},
+                      f"actions.{action.id}")
+            if action.guard is None:
+                entry = wait_id
+                continue
+            guard_id, branch_id = f"guard_{action.id}", f"guard_{action.id}_branch"
+            self._eval(guard_id, compile_expression(action.guard), f"guard_ok_{action.id}",
+                       branch_id, f"actions.{action.id}.guard")
+            self._branch(branch_id, f"$state.guard_ok_{action.id}",
+                         [{"value": True, "target": wait_id}], entry or "bump_turn",
+                         f"actions.{action.id}.guard")
+            entry = guard_id
+        return entry or "bump_turn"
+
+    def _compile_action(self, action: Any) -> str:
+        if not action.effects:
             return "advance_turn"
-        bounds = {effect.result: self._input_bounds(effect.input)
-                  for effect in self.action.effects if isinstance(effect, SelectEffect)}
+        bounds = {effect.result: self._input_bounds(action, effect.input)
+                  for effect in action.effects if isinstance(effect, SelectEffect)}
         entry: str | None = None
         previous: str | None = None
 
@@ -291,20 +321,20 @@ class _Compiler:
                 self.nodes[previous]["next"] = node_id
             previous = node_id
 
-        for index, effect in enumerate(self.action.effects):
-            path = f"actions.{self.action.id}.effects.{index}"
+        for index, effect in enumerate(action.effects):
+            path = f"actions.{action.id}.effects.{index}"
             if isinstance(effect, SelectEffect):
-                node_id = f"act_{self.action.id}_{index}_select"
+                node_id = f"act_{action.id}_{index}_select"
                 low, high = bounds[effect.result]
                 self._call(node_id, "zones", "select",
-                           {"state": "$state", "zone": self._input_zone_arg(effect.input),
+                           {"state": "$state", "zone": self._input_zone_arg(action, effect.input),
                             "card_ids": f"$state.input.{effect.input}",
                             "min_count": low, "max_count": high},
                            "PENDING", path, result_key=f"sel_{effect.result}")
                 link(node_id)
             elif isinstance(effect, MoveSelectionEffect):
-                node_id = f"act_{self.action.id}_{index}_move"
-                low, high = self._selection_bounds(effect.selection)
+                node_id = f"act_{action.id}_{index}_move"
+                low, high = self._selection_bounds(action, effect.selection)
                 self._call(node_id, "zones", "move",
                            {"state": "$state", "moves": [{
                                "from": self._zone_arg(effect.from_zone),
@@ -314,7 +344,7 @@ class _Compiler:
                            "PENDING", path)
                 link(node_id)
             elif isinstance(effect, AssignEffect):
-                eval_id, set_id = f"act_{self.action.id}_{index}_eval", f"act_{self.action.id}_{index}_set"
+                eval_id, set_id = f"act_{action.id}_{index}_eval", f"act_{action.id}_{index}_set"
                 self._eval(eval_id, compile_expression(effect.value), f"t_assign_{index}",
                            set_id, path)
                 self._update(set_id, {f"v_{effect.variable}": f"$state.t_assign_{index}"},
@@ -322,11 +352,11 @@ class _Compiler:
                 link(eval_id)
                 previous = set_id
             elif isinstance(effect, RemovePairsEffect):
-                first, last = self._remove_pairs_nodes(effect, index, path)
+                first, last = self._remove_pairs_nodes(action, effect, index, path)
                 link(first)
                 previous = last
             elif isinstance(effect, RefillEffect):
-                first, last = self._refill_nodes(effect, index, path)
+                first, last = self._refill_nodes(action, effect, index, path)
                 link(first)
                 previous = last
             else:
@@ -335,7 +365,7 @@ class _Compiler:
             self.nodes[previous]["next"] = "advance_turn"
         return entry or "advance_turn"
 
-    def _remove_pairs_nodes(self, effect: RemovePairsEffect, index: int,
+    def _remove_pairs_nodes(self, action: Any, effect: RemovePairsEffect, index: int,
                             path: str) -> tuple[str, str]:
         """Lower ``remove_pairs`` to select_duplicates + move + declared score.
 
@@ -344,7 +374,7 @@ class _Compiler:
         bound, a static upper limit, and the score uses the group count so a
         group of any declared size works.
         """
-        action_id = self.action.id
+        action_id = action.id
         source = self._zone_arg(effect.from_zone)
         target = self._zone_arg(effect.to_zone)
         select_id = f"act_{action_id}_{index}_pairs"
@@ -373,7 +403,7 @@ class _Compiler:
                    "PENDING", path, result_key="scores")
         return select_id, score_id
 
-    def _refill_nodes(self, effect: RefillEffect, index: int,
+    def _refill_nodes(self, action: Any, effect: RefillEffect, index: int,
                       path: str) -> tuple[str, str]:
         """Lower ``refill`` to a bounded, unrolled sequence of stock draws.
 
@@ -381,7 +411,7 @@ class _Compiler:
         is a finite straight line with an exit; a card is only ever moved out of
         the stock, so total card conservation holds.
         """
-        action_id = self.action.id
+        action_id = action.id
         source, target = effect.from_zone, self._zone_arg(effect.to_zone)
         done_id = f"act_{action_id}_{index}_refill_done"
         first: str | None = None
@@ -414,20 +444,20 @@ class _Compiler:
         self._update(done_id, {}, "PENDING", path)
         return first or done_id, done_id
 
-    def _input_bounds(self, input_id: str) -> tuple[int, int]:
-        item = next((item for item in self.action.inputs if item.id == input_id), None)
+    def _input_bounds(self, action: Any, input_id: str) -> tuple[int, int]:
+        item = next((item for item in action.inputs if item.id == input_id), None)
         if item is None:
-            self._fail("unknown_input", input_id, f"actions.{self.action.id}")
+            self._fail("unknown_input", input_id, f"actions.{action.id}")
         return item.min_count, item.max_count
 
-    def _selection_bounds(self, selection: str) -> tuple[int, int]:
-        for effect in self.action.effects:
+    def _selection_bounds(self, action: Any, selection: str) -> tuple[int, int]:
+        for effect in action.effects:
             if isinstance(effect, SelectEffect) and effect.result == selection:
-                return self._input_bounds(effect.input)
+                return self._input_bounds(action, effect.input)
         return 1, 5
 
-    def _input_zone_arg(self, input_id: str) -> str:
-        item = next(item for item in self.action.inputs if item.id == input_id)
+    def _input_zone_arg(self, action: Any, input_id: str) -> str:
+        item = next(item for item in action.inputs if item.id == input_id)
         return self._zone_arg(item.zone)
 
     def _after_turn_nodes(self) -> None:
@@ -458,7 +488,7 @@ class _Compiler:
                    {"mod": [{"add": ["$state.first_seat", "$state.turn_index"]}, self.players]},
                    "next_seat", "set_next_seat", "flow.round_action")
         self._update("set_next_seat", {"current_player": "$state.next_seat"},
-                     self._zone_entry or self._pre_turn_entry(), "flow.round_action")
+                     self._zone_entry or self._turn_entry, "flow.round_action")
         self._end_round_nodes()
 
     # ---------------------------------------------------------------- resolve

@@ -204,8 +204,15 @@ class ScoreRule(_Strict):
 
 class FlowSpec(_Strict):
     round_action: str = Field(min_length=1, max_length=32)
+    # ADR-0012: an ordered list of candidate actions for a turn; empty means the
+    # single ``round_action``. The first candidate whose guard passes is offered.
+    turn_actions: list[str] = Field(default_factory=list, max_length=MAX_ACTIONS)
     start_seat: Literal["seat0", "round_parity"] = "seat0"
     resolve: list[Effect] = Field(default_factory=list, max_length=64)
+
+    @property
+    def action_sequence(self) -> list[str]:
+        return list(self.turn_actions) if self.turn_actions else [self.round_action]
 
 
 class TerminalSpec(_Strict):
@@ -433,6 +440,14 @@ class ComposedRulesIR(_Strict):
             raise ValueError("scoring_rule_ids_must_be_unique")
         if self.action(self.flow.round_action) is None:
             raise ValueError(f"flow_round_action_not_declared:{self.flow.round_action}")
+        sequence = self.flow.action_sequence
+        if len(set(sequence)) != len(sequence):
+            raise ValueError("turn_action_duplicate")
+        for action_id in sequence:
+            if self.action(action_id) is None:
+                raise ValueError(f"turn_action_unknown:{action_id}")
+        if self.flow.turn_actions and self.flow.round_action not in self.flow.turn_actions:
+            raise ValueError("round_action_not_in_sequence")
         for effect in self.flow.resolve:
             if isinstance(effect, CompareEffect):
                 if self.zone(effect.zone) is None:

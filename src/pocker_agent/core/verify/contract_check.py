@@ -321,10 +321,10 @@ def _terminal(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
 
     terminal = ir.terminal
     actions = int(final.get("action_count", 0))
-    # Completed rounds in the current model: one action per seat per round. The
-    # compiled ``round`` counter can lag when a gate fires before ``end_round``,
-    # so it is not reliable as the count of *played* rounds.
-    rounds = actions // ir.players.count
+    # Completed rounds: the compiled round counter is authoritative when the
+    # round loop ran, but can lag when a gate fires before ``end_round``; a fully
+    # skipped game has zero actions yet still played full rounds. Take the max.
+    rounds = max(int(final.get("round", 1)) - 1, actions // ir.players.count)
     if terminal.max_actor_actions is not None and actions > terminal.max_actor_actions:
         return ClauseCheck("terminal", False,
                            f"actions={actions}>{terminal.max_actor_actions}")

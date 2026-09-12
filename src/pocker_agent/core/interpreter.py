@@ -43,6 +43,10 @@ class Interpreter:
         self.events: list[dict[str, Any]] = []
         self.pc = plan.entry
         self.started = False
+        # Optional host observer, called after every accepted tool operation.
+        # It is a no-op by default and exists so a verifier can record the state
+        # after each operation independently of the plan's own control flow.
+        self.observer: Any = None
 
     # ---------------------------------------------------------------- events
     def emit(self, event: str, **payload: Any) -> dict[str, Any]:
@@ -125,6 +129,8 @@ class Interpreter:
         self._check_predicates(operation.ensures, "postcondition", action)
         self.emit("tool_called", tool=action.tool, operation=action.operation,
                   result_key=action.result_key)
+        if self.observer is not None:
+            self.observer(self, action, args)
         return result
 
     # ----------------------------------------------------------------- flow

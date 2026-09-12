@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .plan import GamePlan, plan_fingerprint
@@ -58,13 +58,17 @@ class VerificationResult:
     covered_wait_nodes: tuple[str, ...] = ()
     failures: tuple[str, ...] = ()
     checks: tuple[str, ...] = ()
+    # The independent contract-check report (not part of ``verification_id``: the
+    # id binds plan/IR/mechanism/policies, while this records what was checked).
+    contract: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def issue(cls, *, plan_hash: str, registry_contract_hash: str, ok: bool,
               strategies: tuple[str, ...], seeds: tuple[int, ...],
               ir_hash: str | None = None, compiler_version: str | None = None,
               covered_wait_nodes: tuple[str, ...] = (), failures: tuple[str, ...] = (),
-              checks: tuple[str, ...] = ()) -> VerificationResult:
+              checks: tuple[str, ...] = (),
+              contract: dict[str, Any] | None = None) -> VerificationResult:
         strategies, seeds = tuple(strategies), tuple(int(seed) for seed in seeds)
         return cls(
             verification_id=verification_id(plan_hash, ir_hash, compiler_version,
@@ -73,7 +77,7 @@ class VerificationResult:
             strategies=strategies, seeds=seeds, ir_hash=ir_hash,
             compiler_version=compiler_version,
             covered_wait_nodes=tuple(covered_wait_nodes),
-            failures=tuple(failures), checks=tuple(checks))
+            failures=tuple(failures), checks=tuple(checks), contract=dict(contract or {}))
 
     def as_dict(self) -> dict[str, Any]:
         return {"verification_id": self.verification_id, "ok": self.ok,
@@ -82,7 +86,8 @@ class VerificationResult:
                 "strategies": list(self.strategies), "seeds": list(self.seeds),
                 "ir_hash": self.ir_hash, "compiler_version": self.compiler_version,
                 "covered_wait_nodes": list(self.covered_wait_nodes),
-                "failures": list(self.failures), "checks": list(self.checks)}
+                "failures": list(self.failures), "checks": list(self.checks),
+                "contract": dict(self.contract)}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> VerificationResult:
@@ -94,7 +99,8 @@ class VerificationResult:
                    compiler_version=data.get("compiler_version"),
                    covered_wait_nodes=tuple(data.get("covered_wait_nodes", ())),
                    failures=tuple(data.get("failures", ())),
-                   checks=tuple(data.get("checks", ())))
+                   checks=tuple(data.get("checks", ())),
+                   contract=dict(data.get("contract", {})))
 
 
 @dataclass(frozen=True)

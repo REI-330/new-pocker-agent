@@ -20,23 +20,30 @@ def safe_zone(zone_id: str) -> str:
     return zone_id.replace("-", "_")
 
 
-def resolve_zone(state: dict[str, Any], item: ActionInputDescriptor) -> str:
-    """The concrete zone id for a descriptor input, given the current state.
+def zone_instance(state: dict[str, Any], zone_id: str) -> str:
+    """Resolve a declared player-zone id to the acting seat's instance.
 
-    ``actor`` zones are the acting seat's instance, which the compiler publishes
-    as ``state['zone_<id>']``; if that key is somehow absent the deterministic
-    ``<zone>-<current_player>`` convention is used. ``shared`` zones are
-    addressed by their declared id.
+    The compiler publishes the instance as ``state['zone_<id>']``; the
+    ``<zone>-<current_player>`` convention is the deterministic fallback.
     """
-    if item.scope == "shared":
-        return item.zone
-    resolved = state.get(f"zone_{safe_zone(item.zone)}")
+    resolved = state.get(f"zone_{safe_zone(zone_id)}")
     if isinstance(resolved, str) and resolved:
         return resolved
     current = state.get("current_player")
     if isinstance(current, int) and not isinstance(current, bool):
-        return f"{item.zone}-{current}"
-    raise ToolError(f"action_zone_unresolved:{item.zone}")
+        return f"{zone_id}-{current}"
+    raise ToolError(f"action_zone_unresolved:{zone_id}")
+
+
+def resolve_zone(state: dict[str, Any], item: ActionInputDescriptor) -> str:
+    """The concrete zone id for a descriptor input, given the current state.
+
+    ``actor`` zones are the acting seat's instance; ``shared`` zones are
+    addressed by their declared id.
+    """
+    if item.scope == "shared":
+        return item.zone
+    return zone_instance(state, item.zone)
 
 
 def card_ids(state: dict[str, Any], action_id: str, item: ActionInputDescriptor,

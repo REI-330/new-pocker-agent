@@ -15,6 +15,7 @@ through :func:`verify_composed`.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 from ..artifacts import GameArtifact, VerificationResult, build_artifact
@@ -37,6 +38,7 @@ from ..playtest import (
 )
 from ..registry import core_registry
 from ..rules import CompiledRules, ComposedRulesIR, compile_composed, normalized_ir
+from .contract_check import contract_check
 
 # The formal gate's policies and seeds are host decisions, per ADR-0008 decision 1:
 # diagnosis may pick its own seed, the playable gate may not.
@@ -90,6 +92,12 @@ def verify_composed(ir: ComposedRulesIR | dict[str, Any], registry: ToolRegistry
                          compiler_version=compiled.compiler_version, strategies=strategies,
                          seeds=seeds, invariants=invariants,
                          require_wait_coverage=require_wait_coverage)
+    # The dynamic gate is not enough on its own: an independent monitor re-derives
+    # the declared clauses from the IR and checks the running product against them.
+    contract = contract_check(rules, compiled.plan, registry, strategies, seeds)
+    result = replace(result, ok=result.ok and contract.ok,
+                     failures=result.failures + tuple(contract.failures()),
+                     contract=contract.as_dict())
     return compiled, result
 
 

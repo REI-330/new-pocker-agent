@@ -77,7 +77,16 @@ from .rules import (
                      resolve_composition,
 )
 from .session import Session, SessionStore
-from .verify import publish_composed, verify_composed, verify_plan
+from .verify import (
+                     ContractReport,
+                     compare_traces,
+                     contract_check,
+                     publish_composed,
+                     record_trace,
+                     replay_trace,
+                     verify_composed,
+                     verify_plan,
+)
 from .zone_tools import ZonesTool
 from .zones import (
                      ZONES_KEY,
@@ -109,6 +118,7 @@ __all__ = [
                      "CompiledRules",
                      "ComposedRulesIR",
                      "CompositionReport",
+                     "ContractReport",
                      "FlowCase",
                      "FlowNode",
                      "GameArtifact",
@@ -150,9 +160,11 @@ __all__ = [
                      "card_conservation",
                      "card_first",
                      "check_ir",
+                     "compare_traces",
                      "compile_composed",
                      "composed_action",
                      "composition_samples",
+                     "contract_check",
                      "core_registry",
                      "coverage_report",
                      "crazy_eights_plan",
@@ -183,6 +195,8 @@ __all__ = [
                      "promotion_report",
                      "publish_composed",
                      "random_legal",
+                     "record_trace",
+                     "replay_trace",
                      "required_axes",
                      "resilient_first",
                      "resolve_composition",

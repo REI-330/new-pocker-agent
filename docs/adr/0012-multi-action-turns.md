@@ -86,6 +86,8 @@ FlowSpec
 - **新增宿主操作**：`zones.cards(state, zone)`（纯读，返回该区牌列表），供 `has_match` 使用；它使 `registry.contract_hash()` 变化，旧 composed 验证凭据按 ADR-0008 失效并需重新验证。
 - **指纹**：不含顶牌引用的单动作 guard 仍编译为 `pre_turn`/`guard_branch`，M2 指纹不变；含顶牌引用的 guard 会先发宿主调用再求值，指纹变化属预期。
 
+第 7 条的 trigger 实现：`ActionSpec.trigger` 是一个有序效果列表（本包只允许 `skip`），编译器把它降层到终局闸门**之后**的共享阶段，用 `state.input.action` 分发到实际运行的动作；`skip` 写 `state.skip_next`，`bump_turn` 前进 `1 + skip_next` 并在 `set_turn_index` 里清零。规则无 trigger 时保留 M2 的 `bump_turn`/初始化，指纹不变。新增 `contract_check` 监测器 `action_counting`（行动数 == 记录到的动作数）与 `trigger_after_terminal`（结束局面的那个动作不得写 `skip_next`），对应失败矩阵的最后两行。
+
 ## 迁移与删除
 
 - `round_action` 保持必填；`turn_actions` 为空即单动作，行为与 plan 指纹不变（回归测试锁定）。

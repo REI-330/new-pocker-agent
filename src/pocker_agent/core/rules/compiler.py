@@ -41,6 +41,7 @@ from .composed import (
     RefillEffect,
     RemovePairsEffect,
     SelectEffect,
+    SkipEffect,
 )
 from .expr import compile_expression, guard_mechanisms
 from .requirements import CompositionReport, clause_for, resolve_composition
@@ -245,6 +246,7 @@ class _Compiler:
         self.players = ir.players.count
         self.actions = [ir.action(action_id) for action_id in ir.flow.action_sequence]
         self.action = self.actions[0]
+        self._has_trigger = any(action.trigger for action in self.actions)
         self.nodes: dict[str, dict[str, Any]] = {}
         self.entries: list[dict[str, str]] = []
         self._has_compare = any(isinstance(effect, CompareEffect)
@@ -371,6 +373,8 @@ class _Compiler:
         values: dict[str, Any] = {"zones": self._zone_table(), "scores": [0] * self.players,
                                   "round": 1, "action_count": 0, "turn_index": 0,
                                   "finished": False, "winners": [], "phase": "play"}
+        if self._has_trigger:
+            values["skip_next"] = 0
         for variable in self.ir.variables:
             values[f"v_{variable.name}"] = variable.initial
         self._update("init", values, "round_start", "setup.initialize")
@@ -609,17 +613,30 @@ class _Compiler:
     def _after_turn_nodes(self) -> None:
         self._eval("advance_turn", {"add": ["$state.action_count", 1]}, "next_action_count",
                    "set_action_count", "flow.round_action")
-        # ADR-0010: check the action/score terminal gate after the action's own
-        # effects, before the seat advances. A round-scoring rule checks the
-        # action budget only after resolve, so it is excluded here.
-        action_gate = self._terminal_gate("after_action", "bump_turn",
+        # ADR-0010/ADR-0012: check the action/score terminal gate after the
+        # action's own effects. The trigger phase (skip) runs only on the
+        # continue path, so a finished game never skips. A round-scoring rule
+        # checks the action budget only after resolve.
+        trigger_entry = self._trigger_nodes()
+        action_gate = self._terminal_gate("after_action", trigger_entry,
                                           include_action_budget=not self._has_compare)
         self._update("set_action_count", {"action_count": "$state.next_action_count"},
                      action_gate, "flow.round_action")
-        self._eval("bump_turn", {"add": ["$state.turn_index", 1]}, "next_turn_index",
-                   "set_turn_index", "flow.round_action")
-        self._update("set_turn_index", {"turn_index": "$state.next_turn_index"},
-                     "turn_check", "flow.round_action")
+        # The seat advances by 1 + any pending skip (ADR-0012 section 7); the
+        # skipped seat never reaches ``advance_turn`` so it is not counted. A
+        # rule without triggers keeps the exact M2 nodes and fingerprint.
+        if self._has_trigger:
+            self._eval("bump_turn",
+                       {"add": [{"add": ["$state.turn_index", 1]}, "$state.skip_next"]},
+                       "next_turn_index", "set_turn_index", "flow.round_action")
+            self._update("set_turn_index", {"turn_index": "$state.next_turn_index",
+                                            "skip_next": 0},
+                         "turn_check", "flow.round_action")
+        else:
+            self._eval("bump_turn", {"add": ["$state.turn_index", 1]}, "next_turn_index",
+                       "set_turn_index", "flow.round_action")
+            self._update("set_turn_index", {"turn_index": "$state.next_turn_index"},
+                         "turn_check", "flow.round_action")
         self._eval("turn_check", {"ge": ["$state.turn_index", self.players]}, "round_done",
                    "turn_check_branch", "flow.round_action")
         self._branch("turn_check_branch", "$state.round_done",
@@ -636,6 +653,61 @@ class _Compiler:
         self._update("set_next_seat", {"current_player": "$state.next_seat"},
                      self._zone_entry or self._turn_entry, "flow.round_action")
         self._end_round_nodes()
+
+    # --------------------------------------------------------------- triggers
+    def _trigger_nodes(self) -> str:
+        """Emit the trigger phase, after the terminal gate and before advancing.
+
+        ADR-0012: a trigger runs only on the terminal gate's continue path, so a
+        finished game never skips (B10). ``state.input.action`` records which
+        candidate action ran, so one shared phase dispatches each action's
+        triggers instead of duplicating the turn loop per action.
+        """
+        prepared = [(action, self._compile_triggers(action))
+                    for action in self.actions if action.trigger]
+        if not prepared:
+            return "bump_turn"
+        target = "bump_turn"
+        for action, chain_entry in reversed(prepared):
+            path = f"actions.{action.id}.trigger"
+            check_id = f"trigger_{action.id}_check"
+            branch_id = f"trigger_{action.id}_branch"
+            self._eval(check_id, {"eq": ["$state.input.action", action.id]},
+                       f"trigger_{action.id}_hit", branch_id, path)
+            self._branch(branch_id, f"$state.trigger_{action.id}_hit",
+                         [{"value": True, "target": chain_entry}], target, path)
+            target = check_id
+        return target
+
+    def _compile_triggers(self, action: Any) -> str:
+        """Lower one action's trigger list to a bounded skip chain (ADR-0012)."""
+        entry: str | None = None
+        exits: list[str] = []
+        for index, effect in enumerate(action.trigger):
+            path = f"actions.{action.id}.trigger.{index}"
+            if not isinstance(effect, SkipEffect):
+                self._fail("unsupported_trigger_effect", effect.kind, path)
+            set_id = f"trig_{action.id}_{index}_set"
+            self._update(set_id, {"skip_next": effect.count}, "PENDING", path)
+            if effect.condition is None:
+                start, new_exits = set_id, [set_id]
+            else:
+                eval_id = f"trig_{action.id}_{index}_eval"
+                branch_id = f"trig_{action.id}_{index}_branch"
+                guard_entry = self._lower_guard(effect.condition,
+                                                f"trig_ok_{action.id}_{index}",
+                                                branch_id, path, plain_node_id=eval_id)
+                self._branch(branch_id, f"$state.trig_ok_{action.id}_{index}",
+                             [{"value": True, "target": set_id}], "PENDING", path)
+                start, new_exits = guard_entry, [branch_id, set_id]
+            if entry is None:
+                entry = start
+            for exit_id in exits:
+                self.nodes[exit_id]["next"] = start
+            exits = new_exits
+        for exit_id in exits:
+            self.nodes[exit_id]["next"] = "bump_turn"
+        return entry or "bump_turn"
 
     # ---------------------------------------------------------------- resolve
     def _compile_resolve(self, resolve_exit: str = "end_round") -> str:

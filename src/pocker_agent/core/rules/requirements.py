@@ -30,6 +30,7 @@ from .composed import (
     RefillEffect,
     RemovePairsEffect,
     SelectEffect,
+    SkipEffect,
 )
 from .expr import guard_mechanisms, refs_in
 
@@ -128,6 +129,7 @@ def derive_requirements(ir: ComposedRulesIR) -> tuple[Requirement, ...]:
             found.append(Requirement("zone", item.zone, f"{base}.inputs.{item.id}",
                                      _clause(ir, base)))
         _effect_requirements(ir, action.effects, base, found)
+        _effect_requirements(ir, action.trigger, f"{base}.trigger", found)
 
     _effect_requirements(ir, ir.flow.resolve, "flow.resolve", found)
 
@@ -171,6 +173,12 @@ def _effect_requirements(ir: ComposedRulesIR, effects: Any, base: str,
             out.append(Requirement("operation", "zones.count_zone", path, clause))
             out.append(Requirement("operation", "zones.top", path, clause))
             out.append(Requirement("operation", "zones.move", path, clause))
+        elif isinstance(effect, SkipEffect):
+            out.append(Requirement("operation", "state.update", path, clause))
+            if effect.condition is not None:
+                _expr_requirements(ir, effect.condition, path, out)
+                for mechanism in sorted(guard_mechanisms(effect.condition)):
+                    out.append(Requirement("operation", mechanism, path, clause))
 
 
 def axes_for(ir: ComposedRulesIR) -> tuple[str, ...]:

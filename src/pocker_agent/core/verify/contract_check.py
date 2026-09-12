@@ -39,6 +39,8 @@ MONITOR_CLAUSES: dict[str, str] = {
     "scoring": "scoring",
     "pair_scoring": "scoring",
     "refill": "scoring",
+    "action_counting": "flow.round_action",
+    "trigger_after_terminal": "flow.round_action",
     "terminal": "terminal",
     "zone_visibility": "zones",
 }
@@ -309,6 +311,43 @@ def _refill(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
     return ClauseCheck("refill", True, f"target<={effect.target_count}")
 
 
+def _action_counting(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
+    """``action_count`` counts executed actions only (ADR-0012 section 7).
+
+    The trace records one input per executed action, so a skipped seat -- which
+    never produces an input -- must not appear in ``action_count``. Counted from
+    the trace, not from the plan's own arithmetic.
+    """
+    final = trace.observations[-1].state if trace.observations else {}
+    counted = int(final.get("action_count", 0))
+    if counted != len(trace.inputs):
+        return ClauseCheck("action_counting", False,
+                           f"action_count={counted}!=actions={len(trace.inputs)}")
+    return ClauseCheck("action_counting", True, f"actions={counted}")
+
+
+def _trigger_after_terminal(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
+    """No trigger (skip) may run in the action that ended the game (B10).
+
+    Re-derived from the trace: find the actor action whose span leaves the state
+    finished, and assert no ``skip_next`` write happened in that span, so a plan
+    that reordered the trigger before the terminal gate is rejected even though
+    it still runs.
+    """
+    if not any(action.trigger for action in ir.actions):
+        return ClauseCheck("trigger_after_terminal", True, "no_triggers")
+    for start, end in trace.spans:
+        if end <= start or not trace.observations[end - 1].state.get("finished"):
+            continue
+        for index in range(start, end):
+            before = trace.observations[index - 1].state if index > 0 else {}
+            after = trace.observations[index].state
+            if before.get("skip_next", 0) != after.get("skip_next", 0):
+                return ClauseCheck("trigger_after_terminal", False,
+                                   f"skip_before_finish@{index}")
+    return ClauseCheck("trigger_after_terminal", True, "ok")
+
+
 def _terminal(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
     if not trace.finished or not trace.observations:
         return ClauseCheck("terminal", False, "game_did_not_finish")
@@ -388,6 +427,8 @@ def contract_check(ir: ComposedRulesIR, plan: GamePlan, registry: ToolRegistry,
                 ("scoring", lambda t: _scoring(ir, t)),
                 ("pair_scoring", lambda t: _pair_scoring(ir, t)),
                 ("refill", lambda t: _refill(ir, t)),
+                ("action_counting", lambda t: _action_counting(ir, t)),
+                ("trigger_after_terminal", lambda t: _trigger_after_terminal(ir, t)),
                 ("terminal", lambda t: _terminal(ir, t)),
                 ("zone_visibility", lambda t: _visibility(ir, t)))
     for name, monitor in monitors:

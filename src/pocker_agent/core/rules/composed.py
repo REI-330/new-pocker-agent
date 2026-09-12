@@ -168,6 +168,20 @@ class RefillEffect(_Strict):
     max_draw: int = Field(default=13, ge=1, le=13)
 
 
+class SkipEffect(_Strict):
+    """Skip the next seat once (ADR-0012 section 7).
+
+    Declared in an action's ``trigger`` list, so the compiler emits it *after*
+    the terminal gate: a finished game never runs skip (B10). ``condition`` is an
+    optional closed expression evaluated at trigger time; the skipped seat does
+    not count as an action (B11).
+    """
+
+    kind: Literal["skip"] = "skip"
+    count: int = Field(default=1, ge=1, le=4)
+    condition: Expr | None = None
+
+
 class CompareEffect(_Strict):
     kind: Literal["compare"] = "compare"
     zone: str = Field(min_length=1, max_length=32)
@@ -184,7 +198,7 @@ class AssignEffect(_Strict):
 
 Effect = Annotated[
     SelectEffect | MoveSelectionEffect | MoveTopEffect | RemovePairsEffect
-    | RefillEffect | CompareEffect | AssignEffect,
+    | RefillEffect | CompareEffect | AssignEffect | SkipEffect,
     Field(discriminator="kind"),
 ]
 
@@ -194,6 +208,9 @@ class ActionSpec(_Strict):
     guard: Expr | None = None
     inputs: list[ActionInputSpec] = Field(default_factory=list, max_length=4)
     effects: list[Effect] = Field(default_factory=list, max_length=64)
+    # ADR-0012: effects that run in the trigger phase -- after the terminal gate,
+    # before the seat advances. Only ``skip`` is a trigger effect today.
+    trigger: list[Effect] = Field(default_factory=list, max_length=8)
 
 
 class ScoreRule(_Strict):
@@ -426,6 +443,17 @@ class ComposedRulesIR(_Strict):
                         f"assign_type_mismatch:{action.id}:{effect.variable}:{actual}!={variable.type}")
             elif isinstance(effect, CompareEffect):
                 raise ValueError(f"compare_is_a_flow_resolve_effect:{action.id}")
+            elif isinstance(effect, SkipEffect):
+                raise ValueError(f"skip_must_be_a_trigger:{action.id}")
+        for index, effect in enumerate(action.trigger):
+            path = f"actions.{action.id}.trigger.{index}"
+            if not isinstance(effect, SkipEffect):
+                raise ValueError(f"trigger_only_supports_skip:{path}")
+            if effect.condition is not None:
+                validate_expression(effect.condition, self.variable_names)
+                validate_guard(effect.condition, frozenset(z.id for z in self.zones))
+                if infer_type(effect.condition, self.variable_types()) not in {BOOLEAN, ANY_TYPE}:
+                    raise ValueError(f"trigger_condition_type_mismatch:{path}")
         for item in action.inputs:
             zone = self.zone(item.zone)
             if zone is None:
@@ -469,7 +497,7 @@ class ComposedRulesIR(_Strict):
                     if zone.scope != "shared":
                         raise ValueError(f"move_top_requires_shared_zone:{zone_id}")
             elif isinstance(effect, SelectEffect | MoveSelectionEffect | AssignEffect
-                            | RemovePairsEffect | RefillEffect):
+                            | RemovePairsEffect | RefillEffect | SkipEffect):
                 raise ValueError(f"resolve_effect_not_allowed:{effect.kind}")
         # A rule can score entirely inside its action (remove_pairs / suit scoring),
         # so an empty resolve is allowed; the turn loop then goes straight to the

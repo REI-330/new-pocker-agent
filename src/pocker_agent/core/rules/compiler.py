@@ -36,6 +36,7 @@ from .composed import (
     AssignEffect,
     CompareEffect,
     ComposedRulesIR,
+    DrawEffect,
     MoveSelectionEffect,
     MoveTopEffect,
     RefillEffect,
@@ -316,7 +317,8 @@ class _Compiler:
             for item in action.inputs:
                 found.add(item.zone)
             for effect in action.effects:
-                if isinstance(effect, (MoveSelectionEffect, RemovePairsEffect, RefillEffect)):
+                if isinstance(effect, (MoveSelectionEffect, RemovePairsEffect, RefillEffect,
+                                      DrawEffect)):
                     found.add(effect.from_zone)
                     found.add(effect.to_zone)
         return sorted(zone_id for zone_id in found
@@ -509,6 +511,10 @@ class _Compiler:
                 first, last = self._refill_nodes(action, effect, index, path)
                 link(first)
                 previous = last
+            elif isinstance(effect, DrawEffect):
+                first, last = self._draw_nodes(action, effect, index, path)
+                link(first)
+                previous = last
             else:
                 self._fail("unsupported_action_effect", effect.kind, path)
         if previous is not None:
@@ -591,6 +597,41 @@ class _Compiler:
                            "min_count": 1, "max_count": 1}]}, nxt, path)
             if first is None:
                 first = hand_id
+        self._update(done_id, {}, "PENDING", path)
+        return first or done_id, done_id
+
+    def _draw_nodes(self, action: Any, effect: DrawEffect, index: int,
+                    path: str) -> tuple[str, str]:
+        """Lower ``draw`` to a bounded, unrolled sequence of stock draws.
+
+        Each step checks the stock before drawing, so the sequence is a finite
+        straight line and a card only ever leaves the stock (conservation).
+        """
+        action_id = action.id
+        source, target = effect.from_zone, self._zone_arg(effect.to_zone)
+        done_id = f"act_{action_id}_{index}_draw_done"
+        first: str | None = None
+        for step in range(effect.count):
+            base = f"act_{action_id}_{index}_draw_{step}"
+            stock_id, can_id, branch_id = f"{base}_stock", f"{base}_can", f"{base}_branch"
+            top_id, move_id = f"{base}_top", f"{base}_move"
+            nxt = (f"act_{action_id}_{index}_draw_{step + 1}_stock"
+                   if step + 1 < effect.count else done_id)
+            self._call(stock_id, "zones", "count_zone", {"state": "$state", "zone": source},
+                       can_id, path, result_key=f"draw_stock_{index}_{step}")
+            self._eval(can_id, {"gt": [f"$state.draw_stock_{index}_{step}.count", 0]},
+                       f"draw_can_{index}_{step}", branch_id, path)
+            self._branch(branch_id, f"$state.draw_can_{index}_{step}",
+                         [{"value": True, "target": top_id}], done_id, path)
+            self._call(top_id, "zones", "top", {"state": "$state", "zone": source},
+                       move_id, path, result_key=f"draw_top_{index}_{step}")
+            self._call(move_id, "zones", "move",
+                       {"state": "$state", "moves": [{
+                           "from": source, "to": target,
+                           "card_ids": [f"$state.draw_top_{index}_{step}.id"],
+                           "min_count": 1, "max_count": 1}]}, nxt, path)
+            if first is None:
+                first = stock_id
         self._update(done_id, {}, "PENDING", path)
         return first or done_id, done_id
 

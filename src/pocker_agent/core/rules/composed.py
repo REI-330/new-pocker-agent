@@ -168,6 +168,21 @@ class RefillEffect(_Strict):
     max_draw: int = Field(default=13, ge=1, le=13)
 
 
+class DrawEffect(_Strict):
+    """Draw a fixed, bounded number of cards from a shared stock (ADR-0012 B9).
+
+    Unlike ``refill`` the count is absolute, so a rule can say "draw 1 and end
+    the turn" without knowing the hand size. The compiler unrolls at most
+    ``count`` steps, each skipped once the stock is empty, so there is no
+    unbounded loop and total card conservation holds.
+    """
+
+    kind: Literal["draw"] = "draw"
+    from_zone: str = Field(min_length=1, max_length=32)
+    to_zone: str = Field(min_length=1, max_length=32)
+    count: int = Field(default=1, ge=1, le=5)
+
+
 class SkipEffect(_Strict):
     """Skip the next seat once (ADR-0012 section 7).
 
@@ -198,7 +213,7 @@ class AssignEffect(_Strict):
 
 Effect = Annotated[
     SelectEffect | MoveSelectionEffect | MoveTopEffect | RemovePairsEffect
-    | RefillEffect | CompareEffect | AssignEffect | SkipEffect,
+    | RefillEffect | DrawEffect | CompareEffect | AssignEffect | SkipEffect,
     Field(discriminator="kind"),
 ]
 
@@ -432,6 +447,15 @@ class ComposedRulesIR(_Strict):
                     raise ValueError(f"refill_target_must_be_player:{action.id}:{effect.to_zone}")
                 if effect.max_draw < effect.target_count:
                     raise ValueError(f"refill_max_draw_below_target:{action.id}")
+            elif isinstance(effect, DrawEffect):
+                source = self.zone(effect.from_zone)
+                target = self.zone(effect.to_zone)
+                if source is None or target is None:
+                    raise ValueError(f"draw_unknown_zone:{action.id}")
+                if source.scope != "shared":
+                    raise ValueError(f"draw_stock_must_be_shared:{action.id}:{effect.from_zone}")
+                if target.scope != "player":
+                    raise ValueError(f"draw_target_must_be_player:{action.id}:{effect.to_zone}")
             elif isinstance(effect, AssignEffect):
                 variable = self.variable(effect.variable)
                 if variable is None:
@@ -497,7 +521,7 @@ class ComposedRulesIR(_Strict):
                     if zone.scope != "shared":
                         raise ValueError(f"move_top_requires_shared_zone:{zone_id}")
             elif isinstance(effect, SelectEffect | MoveSelectionEffect | AssignEffect
-                            | RemovePairsEffect | RefillEffect | SkipEffect):
+                            | RemovePairsEffect | RefillEffect | DrawEffect | SkipEffect):
                 raise ValueError(f"resolve_effect_not_allowed:{effect.kind}")
         # A rule can score entirely inside its action (remove_pairs / suit scoring),
         # so an empty resolve is allowed; the turn loop then goes straight to the

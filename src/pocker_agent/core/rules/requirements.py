@@ -25,6 +25,7 @@ from .composed import (
     AssignEffect,
     CompareEffect,
     ComposedRulesIR,
+    DrawEffect,
     MoveSelectionEffect,
     MoveTopEffect,
     RefillEffect,
@@ -170,6 +171,10 @@ def _effect_requirements(ir: ComposedRulesIR, effects: Any, base: str,
             out.append(Requirement("operation", "zones.move", path, clause))
             out.append(Requirement("operation", "score_settle.call", path, clause))
         elif isinstance(effect, RefillEffect):
+            out.append(Requirement("operation", "zones.count_zone", path, clause))
+            out.append(Requirement("operation", "zones.top", path, clause))
+            out.append(Requirement("operation", "zones.move", path, clause))
+        elif isinstance(effect, DrawEffect):
             out.append(Requirement("operation", "zones.count_zone", path, clause))
             out.append(Requirement("operation", "zones.top", path, clause))
             out.append(Requirement("operation", "zones.move", path, clause))

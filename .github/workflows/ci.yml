@@ -38,6 +38,7 @@ jobs:
           tests/test_g2_m3_contract.py tests/test_g2_m3_terminal.py
           tests/test_g2_m3_scenario_c.py tests/test_g2_m3_action_sequence.py
           tests/test_g2_m3_guard_top.py tests/test_g2_m3_skip.py
+          tests/test_g2_m3_draw_pass.py
 
       - name: Architecture invariants (blocking)
         run: uv run --frozen pytest tests/test_architecture_invariants.py -q

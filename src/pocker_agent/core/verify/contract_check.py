@@ -226,12 +226,28 @@ def _terminal(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
     expected = [index for index, value in enumerate(scores) if value == max(scores)] if scores else []
     if winners != expected:
         return ClauseCheck("terminal", False, f"winners={winners},expected={expected}")
-    rounds = sum(1 for observation in trace.observations
-                 if observation.tool == "rank_compare" and observation.operation == "call")
-    if rounds != ir.terminal.max_rounds:
+
+    terminal = ir.terminal
+    actions = int(final.get("action_count", 0))
+    # Completed rounds in the current model: one action per seat per round. The
+    # compiled ``round`` counter can lag when a gate fires before ``end_round``,
+    # so it is not reliable as the count of *played* rounds.
+    rounds = actions // ir.players.count
+    if terminal.max_actor_actions is not None and actions > terminal.max_actor_actions:
         return ClauseCheck("terminal", False,
-                           f"rounds={rounds},max_rounds={ir.terminal.max_rounds}")
-    return ClauseCheck("terminal", True, f"winners={winners},rounds={rounds}")
+                           f"actions={actions}>{terminal.max_actor_actions}")
+    if terminal.max_rounds is not None and rounds > terminal.max_rounds:
+        return ClauseCheck("terminal", False, f"rounds={rounds}>{terminal.max_rounds}")
+    threshold_met = (terminal.score_reaches is not None and bool(scores)
+                     and max(scores) >= terminal.score_reaches)
+    action_bound_met = (terminal.max_actor_actions is not None
+                        and actions == terminal.max_actor_actions)
+    round_bound_met = terminal.max_rounds is not None and rounds == terminal.max_rounds
+    if not (threshold_met or action_bound_met or round_bound_met):
+        return ClauseCheck("terminal", False,
+                           f"no_bound_satisfied:actions={actions},rounds={rounds},scores={scores}")
+    return ClauseCheck("terminal", True,
+                       f"winners={winners},actions={actions},rounds={rounds}")
 
 
 def _visibility(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:

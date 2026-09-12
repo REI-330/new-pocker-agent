@@ -343,8 +343,13 @@ class _Compiler:
     def _after_turn_nodes(self) -> None:
         self._eval("advance_turn", {"add": ["$state.action_count", 1]}, "next_action_count",
                    "set_action_count", "flow.round_action")
+        # ADR-0010: check the action/score terminal gate after the action's own
+        # effects, before the seat advances. A round-scoring rule checks the
+        # action budget only after resolve, so it is excluded here.
+        action_gate = self._terminal_gate("after_action", "bump_turn",
+                                          include_action_budget=not self._has_compare)
         self._update("set_action_count", {"action_count": "$state.next_action_count"},
-                     "bump_turn", "flow.round_action")
+                     action_gate, "flow.round_action")
         self._eval("bump_turn", {"add": ["$state.turn_index", 1]}, "next_turn_index",
                    "set_turn_index", "flow.round_action")
         self._update("set_turn_index", {"turn_index": "$state.next_turn_index"},
@@ -354,7 +359,10 @@ class _Compiler:
         self._branch("turn_check_branch", "$state.round_done",
                      [{"value": True, "target": "resolve_start"}], "next_turn",
                      "flow.round_action")
-        resolve_entry = self._compile_resolve()
+        # A round's scoring happens in resolve, so the gate runs again afterwards.
+        round_gate = self._terminal_gate("after_resolve", "end_round",
+                                         include_action_budget=True)
+        resolve_entry = self._compile_resolve(round_gate)
         self.nodes["turn_check_branch"]["cases"][0]["target"] = resolve_entry
         self._eval("next_turn",
                    {"mod": [{"add": ["$state.first_seat", "$state.turn_index"]}, self.players]},
@@ -364,11 +372,11 @@ class _Compiler:
         self._end_round_nodes()
 
     # ---------------------------------------------------------------- resolve
-    def _compile_resolve(self) -> str:
+    def _compile_resolve(self, resolve_exit: str = "end_round") -> str:
         segments = [self._resolve_segment(effect, index)
                     for index, effect in enumerate(self.ir.flow.resolve)]
         for index, (_, exits) in enumerate(segments):
-            nxt = segments[index + 1][0] if index + 1 < len(segments) else "end_round"
+            nxt = segments[index + 1][0] if index + 1 < len(segments) else resolve_exit
             for exit_id in exits:
                 self.nodes[exit_id]["next"] = nxt
         return segments[0][0]
@@ -441,17 +449,51 @@ class _Compiler:
     def _end_round_nodes(self) -> None:
         self._eval("end_round", {"add": ["$state.round", 1]}, "next_round", "set_round",
                    "terminal")
-        self._update("set_round", {"round": "$state.next_round"}, "round_check", "terminal")
-        self._eval("round_check", {"gt": ["$state.round", self.ir.terminal.max_rounds]},
-                   "at_end", "round_check_branch", "terminal")
-        self._branch("round_check_branch", "$state.at_end",
-                     [{"value": True, "target": "finish"}], "round_start", "terminal")
+        if self.ir.terminal.max_rounds is None:
+            # No round bound: the counter still advances (for round parity), but
+            # termination comes from the action/score gate (ADR-0010).
+            self._update("set_round", {"round": "$state.next_round"}, "round_start",
+                         "terminal")
+        else:
+            self._update("set_round", {"round": "$state.next_round"}, "round_check",
+                         "terminal")
+            self._eval("round_check", {"gt": ["$state.round", self.ir.terminal.max_rounds]},
+                       "at_end", "round_check_branch", "terminal")
+            self._branch("round_check_branch", "$state.at_end",
+                         [{"value": True, "target": "finish"}], "round_start", "terminal")
         self._call("finish", "winner_resolve", "call",
                    {"values": "$state.scores", "mode": "max"}, "declare", "terminal",
                    result_key="winner_indexes")
         self._update("declare", {"finished": True, "winners": "$state.winner_indexes",
                                  "phase": "finished"}, "end", "terminal")
         self._add("end", {"kind": "end"}, "terminal")
+
+    def _terminal_gate(self, prefix: str, on_continue: str,
+                       include_action_budget: bool) -> str:
+        """Emit a threshold/budget check that finishes the game, or pass through.
+
+        ADR-0010: the check runs after the current action's effects (and, for a
+        round-scoring rule, after resolve); hitting the boundary ends the game
+        immediately, without advancing the seat once more. Multiple conditions
+        are OR-ed. ``include_action_budget`` is false for the action gate of a
+        round-scoring rule, so an action budget can never skip a round's scoring.
+        """
+        terminal = self.ir.terminal
+        conditions: list[Any] = []
+        if terminal.score_reaches is not None:
+            threshold = terminal.score_reaches
+            conditions.append({"any": [{"ge": [f"$state.scores.{seat}", threshold]}
+                                       for seat in range(self.players)]})
+        if include_action_budget and terminal.max_actor_actions is not None:
+            conditions.append({"ge": ["$state.action_count", terminal.max_actor_actions]})
+        if not conditions:
+            return on_continue
+        expression = conditions[0] if len(conditions) == 1 else {"any": conditions}
+        result_key = f"{prefix}_terminal"
+        self._eval(prefix, expression, result_key, f"{prefix}_branch", "terminal")
+        self._branch(f"{prefix}_branch", f"$state.{result_key}",
+                     [{"value": True, "target": "finish"}], on_continue, "terminal")
+        return prefix
 
 
 # --------------------------------------------------------------------- public

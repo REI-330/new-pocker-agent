@@ -176,9 +176,26 @@ class FlowSpec(_Strict):
 
 
 class TerminalSpec(_Strict):
-    max_rounds: int = Field(ge=1, le=MAX_ROUNDS)
+    """When the game ends and how the winner is decided (ADR-0010).
+
+    Any of ``max_rounds`` / ``max_actor_actions`` / ``score_reaches`` may be set;
+    the conditions are OR-ed. At least one *hard bound* (rounds or actions) is
+    required: a threshold alone is not a termination guarantee. ``score_reaches``
+    means "any seat's score >= N", and the winner is always ``argmax(scores)``
+    (all tied seats win under ``tie=allow``).
+    """
+
+    max_rounds: int | None = Field(default=None, ge=1, le=MAX_ROUNDS)
+    max_actor_actions: int | None = Field(default=None, ge=1, le=MAX_STEP_LIMIT)
+    score_reaches: int | None = Field(default=None, ge=1, le=1000)
     winner: Literal["highest_score"] = "highest_score"
     tie: Literal["allow"] = "allow"
+
+    @model_validator(mode="after")
+    def bounded(self) -> TerminalSpec:
+        if self.max_rounds is None and self.max_actor_actions is None:
+            raise ValueError("terminal_requires_a_hard_bound")
+        return self
 
 
 class MacroSpec(_Strict):
@@ -384,6 +401,13 @@ class ComposedRulesIR(_Strict):
                 raise ValueError(f"resolve_effect_not_allowed:{effect.kind}")
         if not self.flow.resolve:
             raise ValueError("flow_resolve_required")
+        # A round-scoring rule must not end mid-round on the action budget: the
+        # budget is checked only after resolve (ADR-0010 rule 8), so it must land
+        # on a round boundary.
+        if any(isinstance(effect, CompareEffect) for effect in self.flow.resolve):
+            budget = self.terminal.max_actor_actions
+            if budget is not None and budget % self.players.count != 0:
+                raise ValueError("terminal_action_budget_must_align_with_rounds")
 
     def _check_compare_capacity(self, effect: CompareEffect) -> None:
         """Guarantee the compared positions are filled at *every* resolve.
@@ -434,7 +458,12 @@ class ComposedRulesIR(_Strict):
         if round_net >= 0:
             minimum = first_round
         else:
-            minimum = first_round + (self.terminal.max_rounds - 1) * round_net
+            # The worst case is every allowed round. A round bound is exact; an
+            # action bound converts to floor(actions / players) full rounds.
+            budget = self.terminal.max_rounds
+            if budget is None:
+                budget = max(1, (self.terminal.max_actor_actions or 1) // self.players.count)
+            minimum = first_round + (budget - 1) * round_net
         needed = max(effect.left, effect.right) + 1
         if minimum < needed:
             raise ValueError(

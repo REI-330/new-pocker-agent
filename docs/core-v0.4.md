@@ -24,8 +24,9 @@ playtest (playtest.py)        多 seed 完整对局 + 不变量 + 确定性重�
 ```
 
 - `cards.py`：`CardRef` 值对象 + 状态编解码（`CardRef` 只在这里定义一次）。
-- `tools.py`：机制（精确算式、状态写入、计分），不含玩法策略。
-- `registry.py`：核心工具白名单；`export()` 即未来 agent loop 的 function-calling 工具表。
+- `zones.py` / `zone_tools.py`：通用牌区（`select` / `move` / `top` / `count` / `verify`）与唯一归属校验；牌区只存 `CardRef`，不新建平行牌堆模型（ADR-0009）。
+- `tools.py`：机制（精确算式、状态写入、计分、接牌移牌），不含玩法策略。匹配工具的终局/回收已交还计划（ADR-0009）。
+- `registry.py`：核心工具白名单；每个 operation 另带 `input_schema` / `output_schema` / `reads` / `writes` / `feature_constraints` / `config_schema`，`export()` 即未来 agent loop 的 function-calling 工具表。
 - `plans.py`：宿主编写的参考计划（当前 `arithmetic_plan`），同时作为黄金 trace。
 
 ## 硬规则

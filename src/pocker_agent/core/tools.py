@@ -429,7 +429,14 @@ class TrickTool:
 
 
 class MatchingTool:
-    """Play/draw mechanics for matching games; operates on the shared state."""
+    """Play/draw mechanics for matching games; operates on the shared state.
+
+    Split of responsibilities (M1): this tool only checks legality and *moves*
+    the card. It deliberately does **not** decide that an empty hand ends the
+    game -- a rule whose terminal is "reach N points" must be able to play the
+    last card and keep going. The plan declares the terminal (`state.update`
+    with `finished`/`winners`) and the recycle policy explicitly.
+    """
 
     def play(self, state: dict[str, Any], hand_index: int, card_index: int,
              declared_suit: str = "", wild_ranks: Any = (),
@@ -451,26 +458,32 @@ class MatchingTool:
         state["discard"] = [*list(state.get("discard") or []), card]
         state["table"] = [card]
         state["active_suit"] = declared_suit if wild else card.suit
-        if not hand:
-            state.update(finished=True, winners=[hand_index], phase="finished")
         return {"played": card.id, "rank": card.rank, "active_suit": state["active_suit"],
-                "hand_size": len(hand)}
+                "hand_size": len(hand), "hand_empty": not hand}
 
     def draw(self, state: dict[str, Any], hand_index: int, seed: Any = 0,
-             recycle: bool = True) -> dict[str, Any]:
+             recycle: bool = False) -> dict[str, Any]:
+        """Draw one card. Recycling the discard is a *rule* choice, not a default.
+
+        ``recycle`` defaults to ``False`` so a plan that never states its
+        exhaustion policy cannot silently reuse the discard pile. A rule that
+        does want recycling passes ``recycle=True`` (and says so in the plan).
+        """
         hands = state.get("hands")
         if not isinstance(hands, list) or not 0 <= hand_index < len(hands):
             raise ToolError("invalid_hand_index")
         stock = state.get("stock") or []
+        recycled = False
         if not stock and recycle:
             pile = list(state.get("discard") or state.get("table") or [])
             if len(pile) > 1:
                 stock = pile[:-1]
                 state["discard"] = pile[-1:]
                 random.Random(str(seed)).shuffle(stock)
+                recycled = True
         if not stock:
             raise ToolError("deck_exhausted")
         card = stock.pop(0)
         hands[hand_index].append(card)
         state["stock"] = stock
-        return {"hand_size": len(hands[hand_index])}
+        return {"hand_size": len(hands[hand_index]), "recycled": recycled}

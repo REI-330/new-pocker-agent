@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from pocker_agent.core import ToolError, core_registry
+from pocker_agent.core import ToolError, core_registry, playtest
 
 CORE_DIR = Path(__file__).resolve().parents[1] / "src" / "pocker_agent" / "core"
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "pocker_agent" / "app.py"
@@ -233,9 +233,35 @@ def test_the_shipped_macro_library_owes_no_promotion():
 
 # Composed games that passed the design service are legitimate consumers too.
 # G2 records them here instead of forcing a Python reference game per mechanism
-# (section 6.4 of the standards). Still empty: M2 produces the first verified
-# composition. Entries must be real tool names -- checked below.
-COMPOSITION_CONSUMERS: tuple[tuple[str, tuple[str, ...]], ...] = ()
+# (section 6.4 of the standards). M1 ships two development-only samples that
+# share the generic zones.select / zones.move / score_settle.call / wait turn
+# sequence while scoring differently; M2 replaces them with real compositions.
+COMPOSITION_CONSUMERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("zones_exchange_compare", ("deck", "logic", "rank_compare", "score_settle", "state",
+                                "winner_resolve", "zones")),
+    ("zones_exchange_suit_score", ("deck", "logic", "pattern", "score_settle", "state",
+                                   "winner_resolve", "zones")),
+)
+
+
+def test_composition_consumers_are_real_plans_that_share_generic_ops():
+    """A declared consumer must be a plan that runs -- not a promise on paper.
+
+    The samples exist to prove "one move/score/turn operation, two combinations":
+    they must therefore actually play a full game and share the generic zones
+    move and score operations, differing only in their scoring rule.
+    """
+    from pocker_agent.core.compositions import composition_samples, exchange_strategy
+
+    samples = composition_samples()
+    assert {name for name, _ in COMPOSITION_CONSUMERS} == set(samples)
+    for name, tools in COMPOSITION_CONSUMERS:
+        plan = samples[name]
+        assert {binding.name for binding in plan.tools} == set(tools), name
+        report = playtest(plan, core_registry(), exchange_strategy, seeds=(0,))
+        assert report.ok, (name, report.failures)
+    shared = set.intersection(*(set(tools) for _, tools in COMPOSITION_CONSUMERS))
+    assert {"state", "logic", "deck", "zones", "score_settle", "winner_resolve"} <= shared
 
 
 def test_every_registered_tool_is_used_by_a_reference_plan_or_a_composition():

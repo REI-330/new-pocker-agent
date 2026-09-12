@@ -71,6 +71,20 @@ mechanism_problems(registry)   # core/capability.py
 **结论**：三个验收场景里，B（空手不结束）和 C（对子计分 2 分、双区域选择）**当前无法表达**。
 这不是模型能力问题，是机制粒度问题——与 §4「`turn_adapter=stable` 不等于已实现竞叫」同一性质。
 
+### M1 更新（2026-09-12）：哪些已拆，哪些仍欠
+
+| 隐式行为 | M1 状态 | 落地/欠账 |
+|---|---|---|
+| `MatchingTool.play` 空手终局 | **已拆** | 工具不再写 `finished`/`winners`；`crazy_eights`/`uno` 用计划节点 `empty{seat}`→`declare{seat}` 显式声明终局（ADR-0009） |
+| `MatchingTool.draw` 默认回收 | **已拆** | `recycle` 默认 `False`；两个消费者显式传 `recycle=True` |
+| 无稳定牌区引用 / 跨区选择 | **已补** | 新增第 18 个工具 `zones`（`select`/`move`/`top`/`count`/`verify`）+ `core/zones.py`；唯一归属与重复副本守恒有测试 |
+| `TrickTool.play` 墩数上限终局 | **未拆** | 计划 M1.3 明确「按第二个消费者的需要拆」；M2 组合编译器需要时再拆 |
+| `HiddenDrawTool.discard_pairs` 每对 +1、写死 key `pairs` | **未拆** | 同上；场景 C 的「每对 +2」仍不可表达，属于 M2 欠账 |
+| `HiddenDrawTool.ask` 失败自动摸牌 | **未拆** | 同上 |
+| `trigger.apply` 的回收/消费时机 | **部分** | 回收仍在工具内（`trigger_tools._draw`）；消费时机本就由 uno 计划显式排序。M1 未改 `trigger`，欠账保留 |
+
+本文 §3～§4 的其余结论（可依赖机制子集、明确排除项）不变。
+
 ## 4. G2 可用的机制子集（本轮核对后）
 
 **可依赖**：`deck`（含显式牌值）、`state`、`logic`、`pattern`（match/choices/describe/classify/beats）、

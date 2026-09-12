@@ -421,8 +421,9 @@ nondeterministic_replay
 |---|---|---|
 | 执行路径数 | 1 | `test_core_has_exactly_one_interpreter` |
 | 游戏专属工具数 | 0 | `test_no_game_specific_tool_in_the_core_registry` |
-| core 工具数 | ≤ 18（ADR-0004）· 当前 17 | `test_core_tool_budget_is_a_ratchet` |
+| core 工具数 | ≤ 18（ADR-0004/ADR-0009）· 当前 18 | `test_core_tool_budget_is_a_ratchet` |
 | 未使用工具数 | 0 | `test_every_registered_tool_is_used_by_a_reference_plan` |
+| operation 必须声明类型化契约 | — | `test_every_operation_declares_a_typed_contract`（`tests/test_g2_m1.py`） |
 | 只允许 `state` 用 `"*"` effects | — | `test_only_state_tool_may_write_arbitrary_keys` |
 | `stable` 轴必须指向真实机制 | 0 个占位 | `test_a_stable_axis_must_name_a_real_mechanism` |
 | 未覆盖轴必须说明缺口 | 4/4 有 note | `test_every_uncovered_axis_says_what_is_missing` |
@@ -479,6 +480,7 @@ K 默认 2，可在 ADR 中调整。**注册表只能按"被证明的复用"增�
 | 0006 | 收窄原始 Plan 入口 | accepted（未实现） |
 | 0007 | Schema 版本与数据迁移 | accepted（未实现） |
 | 0008 | 验证证据与版本绑定 | accepted（未实现） |
+| 0009 | `zones` 通用牌区 + 拆开匹配终局/回收 | accepted（M1 已实现） |
 
 标「未实现」的 ADR 已做决策但代码未完成；它约束后续实施，**不得**被当作已完成能力引用。
 

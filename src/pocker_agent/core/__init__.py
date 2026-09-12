@@ -7,6 +7,12 @@ be shown as playable.
 """
 from .capability import AXES, Capability, CapabilityReport, capability_check, capability_matrix
 from .cards import CardRef, decode, encode
+from .compositions import (
+                     composition_samples,
+                     exchange_compare_composition,
+                     exchange_strategy,
+                     exchange_suit_score_composition,
+)
 from .contracts import Observation, OperationSpec, ToolError, ToolRegistry, ToolSpec
 from .corpus import coverage_report, load_corpus
 from .interpreter import Interpreter
@@ -45,12 +51,26 @@ from .policy import bet_first, bot_action, run_bots
 from .reference import REFERENCE_GAMES, build_plan, ensure_playtested, list_reference_games
 from .registry import core_registry
 from .session import Session, SessionStore
+from .zone_tools import ZonesTool
+from .zones import (
+                     ZONES_KEY,
+                     all_cards,
+                     apply_moves,
+                     assert_unique_ownership,
+                     find_zone_of,
+                     ownership_problems,
+                     select_cards,
+                     top_card,
+                     zone_cards,
+                     zone_table,
+)
 
 __all__ = [
                      "AXES",
                      "MATCH_TURN",
                      "PLAN_MACROS",
                      "REFERENCE_GAMES",
+                     "ZONES_KEY",
                      "ArithmeticIR",
                      "BlackjackIR",
                      "Capability",
@@ -79,7 +99,11 @@ __all__ = [
                      "UnoIR",
                      "WarIR",
                      "WhistIR",
+                     "ZonesTool",
+                     "all_cards",
+                     "apply_moves",
                      "arithmetic_plan",
+                     "assert_unique_ownership",
                      "bet_first",
                      "blackjack_plan",
                      "bot_action",
@@ -90,6 +114,7 @@ __all__ = [
                      "card_conservation",
                      "card_first",
                      "check_ir",
+                     "composition_samples",
                      "core_registry",
                      "coverage_report",
                      "crazy_eights_plan",
@@ -97,7 +122,11 @@ __all__ = [
                      "default_macros",
                      "encode",
                      "ensure_playtested",
+                     "exchange_compare_composition",
+                     "exchange_strategy",
+                     "exchange_suit_score_composition",
                      "expand_macro",
+                     "find_zone_of",
                      "first_legal",
                      "five_card_poker_plan",
                      "go_fish_plan",
@@ -106,6 +135,7 @@ __all__ = [
                      "list_reference_games",
                      "load_corpus",
                      "never_finishes_without_winners_or_scores",
+                     "ownership_problems",
                      "parse_ir",
                      "playtest",
                      "promotion_report",
@@ -113,9 +143,13 @@ __all__ = [
                      "required_axes",
                      "resilient_first",
                      "run_bots",
+                     "select_cards",
+                     "top_card",
                      "uno_plan",
                      "validate_macro",
                      "war_plan",
                      "whist_plan",
                      "wire",
+                     "zone_cards",
+                     "zone_table",
 ]

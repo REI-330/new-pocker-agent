@@ -116,7 +116,7 @@ def crazy_eights_plan(*, hand_size: int = 5, wild_rank: str | None = "8",
     match = {"wild_ranks": wild}
 
     def play_node(player: int) -> dict:
-        return {"kind": "call", "next": "check_end", "action": {
+        return {"kind": "call", "next": f"empty{player}", "action": {
             "tool": "matching", "operation": "play",
             "args": {"state": "$state", "hand_index": player,
                      "card_index": "$state.input.card_index",
@@ -124,9 +124,31 @@ def crazy_eights_plan(*, hand_size: int = 5, wild_rank: str | None = "8",
                      "suits": list(suits), **match}}}
 
     def draw_node(player: int) -> dict:
+        # The rule (not the tool) says the discard may be recycled.
         return {"kind": "call", "next": "turn", "action": {
             "tool": "matching", "operation": "draw",
-            "args": {"state": "$state", "hand_index": player, "seed": "$state.round_seed"}}}
+            "args": {"state": "$state", "hand_index": player,
+                     "seed": "$state.round_seed", "recycle": True}}}
+
+    def terminal_nodes(player: int) -> dict:
+        """An empty hand ends the game *because the plan says so*.
+
+        ``matching.play`` no longer declares a winner, so the terminal clause
+        lives in the plan where a rule can see (and change) it.
+        """
+        return {
+            f"empty{player}": {"kind": "call", "next": f"empty_branch{player}", "action": {
+                "tool": "logic", "operation": "evaluate",
+                "args": {"expression": {"eq": [{"count": [f"$state.hands.{player}"]}, 0]}},
+                "result_key": "hand_empty"}},
+            f"empty_branch{player}": {"kind": "branch", "value": "$state.hand_empty",
+                                      "cases": [{"value": True, "target": f"declare{player}"}],
+                                      "next": "check_end"},
+            f"declare{player}": {"kind": "call", "next": "check_end", "action": {
+                "tool": "state", "operation": "update",
+                "args": {"state": "$state", "values": {
+                    "finished": True, "winners": [player], "phase": "finished"}}}},
+        }
 
     def turn_nodes(player: int) -> tuple[dict, str]:
         """A seat's turn, built from the shared ``match_turn`` macro.
@@ -139,6 +161,7 @@ def crazy_eights_plan(*, hand_size: int = 5, wild_rank: str | None = "8",
         wire(nodes, {"play": f"play{player}", "draw": f"draw{player}"})
         nodes[f"play{player}"] = play_node(player)
         nodes[f"draw{player}"] = draw_node(player)
+        nodes.update(terminal_nodes(player))
         return nodes, entry
 
     turn0, entry0 = turn_nodes(0)
@@ -584,7 +607,7 @@ def uno_plan(*, hand_size: int = 5, wild_rank: str | None = "8",
         nodes, entry = expand_macro(MATCH_TURN, f"seat{seat}",
                                     cards=f"$state.hands.{seat}")
         wire(nodes, {"play": f"play{seat}", "draw": f"draw{seat}"})
-        nodes[f"play{seat}"] = {"kind": "call", "next": "check_win", "action": {
+        nodes[f"play{seat}"] = {"kind": "call", "next": f"empty{seat}", "action": {
             "tool": "matching", "operation": "play",
             "args": {"state": "$state", "hand_index": seat,
                      "card_index": "$state.input.card_index",
@@ -594,7 +617,19 @@ def uno_plan(*, hand_size: int = 5, wild_rank: str | None = "8",
         nodes[f"draw{seat}"] = {"kind": "call", "next": "turn", "action": {
             "tool": "matching", "operation": "draw",
             "args": {"state": "$state", "hand_index": seat,
-                     "seed": "$state.round_seed"}}}
+                     "seed": "$state.round_seed", "recycle": True}}}
+        # The empty-hand terminal clause is the plan's, not the tool's.
+        nodes[f"empty{seat}"] = {"kind": "call", "next": f"empty_branch{seat}", "action": {
+            "tool": "logic", "operation": "evaluate",
+            "args": {"expression": {"eq": [{"count": [f"$state.hands.{seat}"]}, 0]}},
+            "result_key": "hand_empty"}}
+        nodes[f"empty_branch{seat}"] = {"kind": "branch", "value": "$state.hand_empty",
+                                         "cases": [{"value": True, "target": f"declare{seat}"}],
+                                         "next": "check_win"}
+        nodes[f"declare{seat}"] = {"kind": "call", "next": "check_win", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {
+                "finished": True, "winners": [seat], "phase": "finished"}}}}
         return nodes, entry
 
     seat_turns = {seat: seat_nodes(seat) for seat in range(players)}

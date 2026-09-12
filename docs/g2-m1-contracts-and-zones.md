@@ -27,7 +27,7 @@
   - `select_cards`：数量在界内、无重复 id、卡牌确实属于该区，**零副作用**。
   - `apply_moves`：在副本上逐条应用 `{from,to,card_ids}`，任一非法则整表不变；结束时校验唯一归属。
   - `ownership_problems` / `assert_unique_ownership`：同一 `card.id` 不得同时存在于两个区；`copies>1` 靠唯一 id 区分并守恒。
-- `core/zone_tools.py`：`zones` 工具（第 18 个，预算 18/18），operations `select` / `move` / `top` / `count` / `verify`；`select` 等为 `reject_only`，只有 `move` 写 `("zones",)`。
+- `core/zone_tools.py`：`zones` 工具（第 18 个，预算 18/18），operations `select` / `move` / `top` / `count` / `count_zone` / `verify`；`select` 等为 `reject_only`，只有 `move` 写 `("zones",)`。`count`（全部区域→`counts`）与 `count_zone`（指定区域→`zone`/`count`）分开，避免一个带可选分支的模糊契约。
 - `Interpreter.project_zones(viewer)`：按 `public` / `owner_only`（仅拥有者或终局可见）/ `hidden`（只给数量）投影到 `view()["zones"]`。这是**视图**规则：它阻止隐藏牌从投影泄露，但**不**等同于每视角动作权限（工具层无 viewer 上下文，见 §4）。
 - `invariants.authoritative_cards`：有 `zones` 时只统计权威牌区，避免把 `picked_*` 等派生选择结果重复计数；无 `zones` 的旧计划回退到原来的递归扫描。
 
@@ -69,6 +69,7 @@
 | `card_conservation` 不重复计数派生选择 | `test_card_conservation_counts_authoritative_zones_not_selections` | PASS |
 | 契约导出不是活对象的别名 | `test_contract_export_does_not_alias_the_live_schemas` | PASS |
 | 视图投影尊重可见性 | `test_zone_view_projection_respects_visibility_and_owner` | PASS |
+| `zones.count` 契约无可选分支 | `test_zones_count_operations_declare_their_real_shapes` | PASS |
 
 两个组合样例（`core/compositions.py`，开发期样例，不是参考玩法）：
 
@@ -84,9 +85,9 @@ $env:POCKER_AGENT_DATA_DIR = 'C:\Users\hr206\new-pocker-agent\artifacts\g2-runti
 uv run python scripts/run_web.py --skip-build --port 8012
 ```
 
-- `uv run --frozen pytest -q` → **226 passed**（M0 基线 202；`1e624d8` 为 217，本轮审阅修复 +9）。
+- `uv run --frozen pytest -q` → **227 passed**（M0 基线 202；`1e624d8` 为 217，第一轮审阅修复 +9，第二轮 +1）。
 - 架构不变量 → **17 passed**。
-- `uv run python scripts/doctor.py --url http://127.0.0.1:8012` → 全项 PASS，`server code matches the working tree`（本轮指纹 `4edafa448bd1`），`GET /api/games :: 8 games`。
+- `uv run python scripts/doctor.py --url http://127.0.0.1:8012` → 全项 PASS，`server code matches the working tree`（本轮指纹 `bbd26d6e73f0`），`GET /api/games :: 8 games`。
 - `uv run python scripts/e2e_smoke.py http://127.0.0.1:8012` → **28 checks passed**（含 8 个参考玩法的可玩性 / 隐私 / 终局检查）。
 - `uvx --offline ruff check <CI 列表>` → All checks passed。
 
@@ -106,6 +107,8 @@ uv run python scripts/run_web.py --skip-build --port 8012
 | P2 | `matching.play` 的 `reads` 漏 `discard` | `reads` 补 `discard` |
 
 同时按审阅建议补了「zones 视图投影」：`view()["zones"]` 现在按可见性/拥有者过滤。
+
+第二轮复核（审阅基线 `3370488`）发现 `zones.count` 的输入/输出契约带可选分支（`zone=None` 返回 `counts`，指定时返回 `count`）。已拆成两个无歧义 operation：`count`（全部区域，必填 `state`，输出 `counts`）与 `count_zone`（必填 `state`/`zone`，输出 `zone`/`count`），并由 `test_zones_count_operations_declare_their_real_shapes` 固定。
 
 ## 5. 未做 / 降级（诚实说明）
 

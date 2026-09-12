@@ -135,6 +135,21 @@ def test_an_operation_cannot_override_the_tool_config_schema():
                  config_schema={"type": "object", "properties": {"x": {"type": "integer"}}})
 
 
+def test_zones_count_operations_declare_their_real_shapes():
+    """An optional branch must be two operations, not one ambiguous schema."""
+    registry = core_registry()
+    every = registry.spec("zones").operation("count")
+    one = registry.spec("zones").operation("count_zone")
+    assert every.input_schema["required"] == ["state"]
+    assert "zone" not in every.input_schema["properties"]
+    assert every.output_schema["required"] == ["counts"]
+    assert one.input_schema["required"] == ["state", "zone"]
+    assert one.output_schema["required"] == ["zone", "count"]
+    tool = registry.create("zones")
+    assert tool.count(zones_state())["counts"] == {"hand-0": 2, "market": 1}
+    assert tool.count_zone(zones_state(), "hand-0") == {"zone": "hand-0", "count": 2}
+
+
 def test_matching_play_contract_no_longer_claims_a_terminal_write():
     spec = core_registry().spec("matching").operation("play")
     assert "finished" not in spec.writes and "winners" not in spec.writes

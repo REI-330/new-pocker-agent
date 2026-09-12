@@ -40,12 +40,15 @@ class ZonesTool:
         return {"zone": zone, "id": card.id, "rank": card.rank,
                 "suit": card.suit, "value": card.value}
 
-    def count(self, state: dict[str, Any], zone: Any = None) -> dict[str, Any]:
+    def count(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Card counts for every zone, with no optional branch in the shape."""
         zones = zone_table(state)
-        if zone is None:
-            return {"counts": {zone_id: len(entry["cards"])
-                               for zone_id, entry in sorted(zones.items())}}
-        return {"zone": zone, "count": len(zone_cards(zones, zone))}
+        return {"counts": {zone_id: len(entry["cards"])
+                           for zone_id, entry in sorted(zones.items())}}
+
+    def count_zone(self, state: dict[str, Any], zone: Any) -> dict[str, Any]:
+        """Card count for one named zone; ``zone`` is always required."""
+        return {"zone": zone, "count": len(zone_cards(zone_table(state), zone))}
 
     def verify(self, state: dict[str, Any]) -> dict[str, Any]:
         """A pure ownership audit, used by invariants and diagnostics."""

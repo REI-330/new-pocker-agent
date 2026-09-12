@@ -189,3 +189,94 @@ def test_a_legacy_0_4_plan_parses_without_action_descriptors():
                   "e": {"kind": "end"}}})
     assert plan.schema_version == "0.4"
     assert plan.actions == []
+
+
+# ------------------------------------------------------- dual-zone selection
+def dual_zone_ir() -> dict:
+    """One action with two selection inputs (actor hand + shared market).
+
+    Scenario C's acceptance distinction: a fixed ``card_index`` model cannot
+    express an action that reads two zones, but the plan-0.5 descriptor can.
+    """
+    return {
+        "schema_version": "0.5", "kind": "composed",
+        "meta": {"title": "双区域交换", "description": "两个选牌输入。"},
+        "requirements": [],
+        "players": {"count": 2},
+        "deck": {"ranks": [str(n) for n in range(2, 10)], "suits": ["S", "H"],
+                 "copies": 1, "values": {str(n): n for n in range(2, 10)}},
+        "zones": [
+            {"id": "hand", "visibility": "public", "scope": "player"},
+            {"id": "market", "visibility": "public", "scope": "shared"},
+            {"id": "discard", "visibility": "public", "scope": "shared"},
+            {"id": "stock", "visibility": "hidden", "scope": "shared"},
+        ],
+        "setup": {"deals": [{"zone": "hand", "count": 3, "per_seat": True},
+                              {"zone": "market", "count": 3, "per_seat": False}],
+                  "stock_zone": "stock"},
+        "variables": [],
+        "actions": [{
+            "id": "exchange",
+            "inputs": [
+                {"id": "hand_card", "kind": "card_selection", "zone": "hand",
+                 "scope": "actor", "min_count": 1, "max_count": 1},
+                {"id": "market_card", "kind": "card_selection", "zone": "market",
+                 "scope": "shared", "min_count": 1, "max_count": 1},
+            ],
+            "effects": [
+                {"kind": "select", "input": "hand_card", "result": "from_hand"},
+                {"kind": "select", "input": "market_card", "result": "from_market"},
+                {"kind": "move", "from_zone": "hand", "to_zone": "market",
+                 "selection": "from_hand"},
+                {"kind": "move", "from_zone": "market", "to_zone": "hand",
+                 "selection": "from_market"},
+            ],
+        }],
+        "flow": {"round_action": "exchange", "start_seat": "seat0", "resolve": [
+            {"kind": "compare", "zone": "market", "left": 0, "right": 1,
+             "rules": ["award_left", "award_right"]},
+        ]},
+        "scoring": [
+            {"id": "award_left", "on_outcome": "left", "points": 1, "recipient": "left"},
+            {"id": "award_right", "on_outcome": "right", "points": 1, "recipient": "right"},
+        ],
+        "terminal": {"max_rounds": 2, "winner": "highest_score", "tie": "allow"},
+        "macros": [],
+    }
+
+
+def test_a_two_zone_action_compiles_and_plays():
+    from pocker_agent.core.verify import VERIFICATION_SEEDS, VERIFICATION_STRATEGIES, contract_check
+
+    compiled = compile_composed(parse_design_ir(dual_zone_ir()), core_registry())
+    (action,) = compiled.plan.actions
+    assert action.id == "exchange"
+    assert [(item.id, item.scope, item.zone) for item in action.inputs] == [
+        ("hand_card", "actor", "hand"), ("market_card", "shared", "market")]
+    report = playtest(compiled.plan, core_registry(), bot_action, seeds=(0, 1, 7))
+    assert report.ok, report.failures
+    contract = contract_check(parse_design_ir(dual_zone_ir()), compiled.plan,
+                              core_registry(), VERIFICATION_STRATEGIES, VERIFICATION_SEEDS)
+    assert contract.ok, contract.failures()
+
+
+def test_the_bot_fills_every_zone_input():
+    compiled = compile_composed(parse_design_ir(dual_zone_ir()), core_registry())
+    interpreter = Interpreter(compiled.plan, core_registry(), seed=0)
+    interpreter.setup()
+    action, payload = bot_action(interpreter)
+    seat = interpreter.state["current_player"]
+    hand = [card.id for card in interpreter.state["zones"][f"hand-{seat}"]["cards"]]
+    market = [card.id for card in interpreter.state["zones"]["market"]["cards"]]
+    assert action == "exchange"
+    assert payload == {"hand_card": [hand[0]], "market_card": [market[0]]}
+
+
+def test_the_market_keeps_its_size_across_the_dual_zone_swap():
+    compiled = compile_composed(parse_design_ir(dual_zone_ir()), core_registry())
+    interpreter = Interpreter(compiled.plan, core_registry(), seed=5)
+    interpreter.setup()
+    before = len(interpreter.state["zones"]["market"]["cards"])
+    run_bots(interpreter, human_index=-1)
+    assert interpreter.state["finished"] is True
+    assert len(interpreter.state["zones"]["market"]["cards"]) == before == 3

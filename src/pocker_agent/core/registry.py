@@ -33,6 +33,7 @@ from .contracts import (
     ToolSpec,
     array,
     obj,
+    one_of,
 )
 from .hidden_tools import HiddenDrawTool
 from .point_tools import PointTotalTool
@@ -71,7 +72,10 @@ _POINT_CONFIG = obj({"target": INTEGER})
 
 
 def _match_args() -> dict:
-    return obj({"card": ANY, "top": ANY, "active_suit": STRING, "wild_ranks": STR_LIST})
+    # `card` and `top` are positional-required in PatternTool.match; declaring
+    # them optional let a composition compiler accept a call that always fails.
+    return obj({"card": ANY, "top": ANY, "active_suit": STRING, "wild_ranks": STR_LIST},
+               ("card", "top"))
 
 
 def core_registry() -> ToolRegistry:
@@ -125,7 +129,7 @@ def core_registry() -> ToolRegistry:
     registry.register(ToolSpec(
         "deck",
         lambda ranks, suits, copies=1, values=None: DeckTool(ranks, suits, copies, values),
-        (OperationSpec("cards", params=(), effects=(), returns="list[CardRef]",
+        (OperationSpec("cards", method="catalog", params=(), effects=(), returns="list[CardRef]",
                        input_schema=obj(), output_schema=CARD_LIST,
                        feature_constraints=("card_identity",)),
          OperationSpec("shuffled", params=("seed",), effects=(), returns="list[CardRef]",
@@ -188,7 +192,7 @@ def core_registry() -> ToolRegistry:
                                       "wild_ranks", "suits"),
                       effects=("hands", "table", "discard", "active_suit"),
                       returns="played/rank/active_suit/hand_size",
-                      reads=("hands", "table", "active_suit"),
+                      reads=("hands", "table", "active_suit", "discard"),
                       input_schema=obj({"state": OBJECT, "hand_index": INTEGER,
                                         "card_index": INTEGER, "declared_suit": STRING,
                                         "wild_ranks": STR_LIST, "suits": STR_LIST},
@@ -221,8 +225,11 @@ def core_registry() -> ToolRegistry:
                       input_schema=obj({"state": OBJECT, "hand_index": INTEGER,
                                         "card_index": INTEGER, "trump": STRING},
                                        ("state", "hand_index", "card_index")),
-                      output_schema=obj({"complete": BOOLEAN, "winner": INTEGER,
-                                         "tricks_won": INT_LIST}),
+                      output_schema=one_of(
+                          obj({"complete": BOOLEAN, "player": INTEGER},
+                              ("complete", "player")),
+                          obj({"complete": BOOLEAN, "winner": INTEGER, "tricks_won": INT_LIST},
+                              ("complete", "winner", "tricks_won"))),
                       feature_constraints=("turn_adapter", "card_identity", "scoring"))),
         config_schema=_TRICK_CONFIG))
     registry.register(ToolSpec("ledger", lambda **_: LedgerTool(), (

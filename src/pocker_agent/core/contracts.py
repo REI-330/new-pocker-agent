@@ -25,6 +25,7 @@ against the typed schemas by the architecture tests.
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -48,6 +49,19 @@ def obj(properties: dict[str, Any] | None = None,
         required: tuple[str, ...] = ()) -> dict[str, Any]:
     return {"type": "object", "properties": dict(properties or {}),
             "required": list(required), "additionalProperties": False}
+
+
+def one_of(*schemas: dict[str, Any]) -> dict[str, Any]:
+    """A tagged union, for an operation whose return shape depends on a branch.
+
+    ``trick.play`` is the concrete case: it returns ``{complete, player}`` while a
+    trick is in progress and ``{complete, winner, tricks_won}`` once it closes.
+    Declaring a single flat object would promise fields that are not always
+    there, so the return contract is the union of the two real shapes.
+    """
+    if len(schemas) < 2:
+        raise ToolError("one_of_requires_two_or_more_schemas")
+    return {"oneOf": [deepcopy(schema) for schema in schemas]}
 
 
 INT_LIST = array(INTEGER)
@@ -140,16 +154,22 @@ class OperationSpec:
         return self.effects
 
     def export(self) -> dict[str, Any]:
+        # Deep-copy the nested schemas: an exporter that aliased the live spec
+        # would let a caller mutate `registry.export()` and silently change the
+        # contract (and therefore `contract_hash()`) for every other reader.
         return {"name": self.name, "params": list(self.params),
-                "requires": [dict(item) if isinstance(item, dict) else item for item in self.requires],
-                "ensures": [dict(item) if isinstance(item, dict) else item for item in self.ensures],
+                "requires": [deepcopy(item) if isinstance(item, dict) else item
+                             for item in self.requires],
+                "ensures": [deepcopy(item) if isinstance(item, dict) else item
+                            for item in self.ensures],
                 "effects": list(self.effects), "writes": list(self.writes),
                 "returns": self.returns, "failure": self.failure,
                 "deterministic": self.deterministic,
-                "input_schema": self.input_schema, "output_schema": self.output_schema,
+                "input_schema": deepcopy(self.input_schema),
+                "output_schema": deepcopy(self.output_schema),
                 "reads": list(self.reads),
                 "feature_constraints": list(self.feature_constraints),
-                "config_schema": self.config_schema}
+                "config_schema": deepcopy(self.config_schema)}
 
 
 @dataclass(frozen=True)
@@ -161,11 +181,15 @@ class ToolSpec:
 
     def __post_init__(self) -> None:
         # Binding configuration is declared once on the tool; every operation of
-        # that tool sees the same config, so copy it down instead of repeating it.
-        if self.config_schema:
+        # that tool sees the same config. An operation must not carry a competing
+        # schema -- that would let the tool config and the operation disagree.
+        for operation in self.operations:
+            if operation.config_schema and operation.config_schema != self.config_schema:
+                raise ToolError(
+                    f"operation_config_conflict:{self.name}.{operation.name}")
+        if any(operation.config_schema != self.config_schema for operation in self.operations):
             object.__setattr__(self, "operations", tuple(
-                operation if operation.config_schema
-                else replace(operation, config_schema=self.config_schema)
+                replace(operation, config_schema=self.config_schema)
                 for operation in self.operations))
 
     def operation(self, name: str) -> OperationSpec:
@@ -175,7 +199,7 @@ class ToolSpec:
         raise ToolError(f"unknown_tool_operation:{self.name}.{name}")
 
     def export(self) -> dict[str, Any]:
-        return {"name": self.name, "config_schema": self.config_schema,
+        return {"name": self.name, "config_schema": deepcopy(self.config_schema),
                 "operations": [op.export() for op in self.operations]}
 
 

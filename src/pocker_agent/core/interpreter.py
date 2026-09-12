@@ -240,6 +240,41 @@ class Interpreter:
         return interpreter
 
     # ------------------------------------------------------------------ view
+    @staticmethod
+    def _viewer_index(viewer: str) -> int | None:
+        if isinstance(viewer, str) and viewer.startswith("player-"):
+            suffix = viewer.split("-", 1)[1]
+            if suffix.isdigit():
+                return int(suffix) - 1
+        return None
+
+    def project_zones(self, viewer: str = "player-1") -> dict[str, Any]:
+        """A viewer-aware projection of ``state['zones']``.
+
+        ``public`` zones show their cards to everyone; ``owner_only`` zones only
+        to the owning seat (or once the game is finished/revealed); ``hidden``
+        zones never expose identities, only a count. This is a *view* rule: it
+        stops the projection from leaking hidden cards without pretending the
+        host already enforces per-viewer action permissions.
+        """
+        zones = self.state.get("zones")
+        if not isinstance(zones, dict):
+            return {}
+        index = self._viewer_index(viewer)
+        reveal = bool(self.state.get("reveal")) or bool(self.state.get("finished"))
+        projected: dict[str, Any] = {}
+        for zone_id, entry in sorted(zones.items()):
+            cards = entry.get("cards") or []
+            visibility = entry.get("visibility", "public")
+            owner = entry.get("owner")
+            visible = (reveal or visibility == "public"
+                       or (visibility == "owner_only" and owner is not None and owner == index))
+            projected[zone_id] = {
+                "owner": owner, "visibility": visibility, "count": len(cards),
+                "cards": [card.as_dict() for card in cards] if visible else [],
+                "visible": visible}
+        return projected
+
     def view(self, viewer: str = "player-1") -> dict[str, Any]:
         state = self.state
         scores = list(state.get("scores", []))
@@ -279,6 +314,9 @@ class Interpreter:
             "private_hands": private,
             "events": self.events[-100:],
         }
+        projected = self.project_zones(viewer)
+        if projected:
+            result["zones"] = projected
         # Extra table state (chips, teams, tricks, pairs) is exposed read-only so
         # a UI can render it without knowing the game family.
         for key in ("pot", "stacks", "committed", "hand_committed", "folded",

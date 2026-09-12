@@ -127,6 +127,9 @@ def apply_moves(zones: dict[str, Any], moves: Any) -> dict[str, Any]:
     if not isinstance(moves, list) or not moves:
         raise ToolError("move_requires_moves")
     updated = deepcopy(zones)
+    # Refuse a malformed table up front: if two zones already shared a card id,
+    # removing "one" during a move would drop both while appending one card.
+    assert_unique_ownership(updated)
     for move in moves:
         if not isinstance(move, dict):
             raise ToolError("move_must_be_object")
@@ -138,8 +141,10 @@ def apply_moves(zones: dict[str, Any], moves: Any) -> dict[str, Any]:
         selected = select_cards(updated, source, move.get("card_ids"),
                                 move.get("min_count", 1), move.get("max_count", 1))
         from_cards = zone_cards(updated, source)
-        moved_ids = {card.id for card in selected}
-        updated[source]["cards"] = [card for card in from_cards if card.id not in moved_ids]
+        # Remove by object identity, not by id: that keeps the source/target card
+        # counts conserved even if the same card id somehow appears twice.
+        moved = {id(card) for card in selected}
+        updated[source]["cards"] = [card for card in from_cards if id(card) not in moved]
         updated[target]["cards"].extend(selected)
     assert_unique_ownership(updated)
     return updated

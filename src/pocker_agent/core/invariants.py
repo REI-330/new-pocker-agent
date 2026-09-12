@@ -11,6 +11,7 @@ from typing import Any
 from .cards import CardRef
 from .contracts import ToolError
 from .interpreter import Interpreter
+from .zones import ZONES_KEY, all_cards
 
 
 def _collect_cards(value: Any) -> list[CardRef]:
@@ -29,10 +30,25 @@ def _collect_cards(value: Any) -> list[CardRef]:
     return []
 
 
+def authoritative_cards(state: dict[str, Any]) -> list[CardRef]:
+    """The cards a state *owns*, not the cards it merely *observes*.
+
+    A zone table is the authority: a selection stored in ``state.picked`` may
+    repeat a ``CardRef`` that already lives in a zone, and counting both would
+    report a duplicate that does not exist. Legacy plans have no zone table, so
+    they keep the recursive sweep (their intermediate deal results are nulled
+    out by the plan, which is why that sweep was sound for them).
+    """
+    zones = state.get(ZONES_KEY)
+    if isinstance(zones, dict):
+        return all_cards(zones)
+    return _collect_cards(state)
+
+
 def card_conservation(total: int):
     """Every card exists exactly once in state; nothing is invented or lost."""
     def invariant(interpreter: Interpreter) -> None:
-        cards = _collect_cards(interpreter.state)
+        cards = authoritative_cards(interpreter.state)
         ids = [card.id for card in cards]
         if len(ids) != len(set(ids)):
             raise ToolError("card_duplication")

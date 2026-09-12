@@ -1,7 +1,9 @@
 # ADR-0007: Schema 版本与数据迁移（IR / Plan / 存档）
 
 - 日期：2026-09-12
-- 状态：accepted（**实现状态：未实现**，M1/M2 落地）
+- 状态：accepted（**实现状态：部分实现**，M3 进行中）
+  - 已实现：Plan `0.5` 增加 `actions` 输入描述符（M3a）；`actions == []` 即 0.4 计划，解析路径不变。
+  - 未实现：`binding_id`/`tool_type` 绑定拆分；旧存档迁移脚本与冻结 fixture。
 - 决策者：架构 owner
 
 ## 背景

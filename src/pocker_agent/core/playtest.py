@@ -44,6 +44,26 @@ class PlaytestReport:
                 "checks": list(self.checks), "covered_wait_nodes": list(self.covered_wait_nodes)}
 
 
+def _descriptor_payload(interpreter: Interpreter, action: str, *, newest: bool = False,
+                        offset: int = 0) -> dict[str, Any] | None:
+    """A payload for a plan-declared action, or ``None`` for a 0.4 plan."""
+    from .actions import descriptor_for, payload_for
+
+    descriptor = descriptor_for(interpreter.plan, action)
+    return None if descriptor is None else payload_for(
+        interpreter.state, descriptor, newest=newest, offset=offset)
+
+
+def _accepted(interpreter: Interpreter, action: str, payload: dict[str, Any]) -> bool:
+    """Whether the host accepts this (action, payload) on a throwaway copy."""
+    probe = Interpreter.restore(interpreter.serialize(), interpreter.registry)
+    try:
+        probe.step(action, **payload)
+    except ToolError:
+        return False
+    return True
+
+
 def first_legal(interpreter: Interpreter):
     """First legal action; the minimal deterministic policy."""
     actions = interpreter.legal_actions()
@@ -51,23 +71,42 @@ def first_legal(interpreter: Interpreter):
 
 
 def random_legal(interpreter: Interpreter):
-    """Deterministic legal-random: seeded by the interpreter, not global RNG."""
+    """Deterministic legal-random: seeded by the interpreter, not global RNG.
+
+    For a composed plan the randomness picks a rotation into each input zone as
+    well as an action, so different seeds reach different cards while staying
+    reproducible.
+    """
     actions = interpreter.legal_actions()
     if not actions:
         return None
-    index = (interpreter.seed + len(interpreter.events) * 17) % len(actions)
-    return (actions[index], {})
+    tick = interpreter.seed + len(interpreter.events) * 17
+    for step in range(len(actions)):
+        action = actions[(tick + step) % len(actions)]
+        payload = _descriptor_payload(interpreter, action, offset=tick)
+        payload = {} if payload is None else payload
+        if _accepted(interpreter, action, payload):
+            return (action, payload)
+    return None
 
 
 def boundary_first(interpreter: Interpreter):
-    """Prefer boundary actions (give up / pass / fold) before the happy path."""
+    """Prefer boundary actions (give up / pass / fold) before the happy path.
+
+    For a composed plan a boundary action may still need a minimal legal payload,
+    so the descriptor is filled with the smallest selection rather than skipped.
+    """
     actions = interpreter.legal_actions()
     if not actions:
         return None
-    for action in _BOUNDARY_PRIORITY:
-        if action in actions:
-            return (action, {})
-    return (actions[-1], {})
+    ordered = [action for action in _BOUNDARY_PRIORITY if action in actions]
+    ordered += [action for action in actions if action not in ordered]
+    for action in ordered:
+        payload = _descriptor_payload(interpreter, action)
+        payload = {} if payload is None else payload
+        if _accepted(interpreter, action, payload):
+            return (action, payload)
+    return None
 
 
 def card_first(interpreter: Interpreter):
@@ -98,13 +137,27 @@ def resilient_first(interpreter: Interpreter):
     if not actions:
         return None
     for action in actions:
-        probe = Interpreter.restore(interpreter.serialize(), interpreter.registry)
-        try:
-            probe.step(action)
-        except ToolError:
-            continue
-        return (action, {})
+        if _accepted(interpreter, action, {}):
+            return (action, {})
     raise ToolError("no_legal_action_succeeded")
+
+
+def goal_first(interpreter: Interpreter):
+    """Target-branch policy: pick from the other end so outcomes vary.
+
+    The default bot takes the first card/action, which can leave symmetric
+    resolve branches (left/right/tie, or a larger card beating a smaller one)
+    permanently uncovered. For a plan with action descriptors this selects the
+    newest card in each input zone; for a plan without them it probes forward.
+    Deterministic given the state, so replay stays byte-exact.
+    """
+    for action in interpreter.legal_actions():
+        payload = _descriptor_payload(interpreter, action, newest=True)
+        if payload is None:
+            continue
+        if _accepted(interpreter, action, payload):
+            return (action, payload)
+    return resilient_first(interpreter)
 
 
 def _play_one(plan: GamePlan, registry: ToolRegistry, seed: int, strategy: Strategy,

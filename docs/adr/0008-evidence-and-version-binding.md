@@ -1,7 +1,9 @@
 # ADR-0008: 验证证据与版本绑定（GameArtifact / VerificationResult）
 
 - 日期：2026-09-12
-- 状态：accepted（**实现状态：未实现**，M3 落地）
+- 状态：accepted（**实现状态：部分实现**，M3 进行中）
+  - 已实现：`core/artifacts.py`（`VerificationResult`/`GameArtifact` 与内容绑定的 `verification_id`）；`core/verify/` 发布服务（规范化 IR → 能力解析 → 编译 → 动态验证 → 产出不可变 artifact）；`SessionStore.record_verification`/`register_artifact`/`verify_and_register` 与按版本恢复；正式策略含目标分支 `goal_first`；类型化不变量（牌区守恒、得分边界、视角安全、终局可解释）。
+  - 未实现：`contract_check` 独立监测器与变异测试；`binding_id`/`tool_type`；旧 `core_agent_plans` 行迁移为 artifact；Agent/API 消费者切换到 artifact 路径；`request_id` 去重。
 - 决策者：架构 owner
 
 ## 背景

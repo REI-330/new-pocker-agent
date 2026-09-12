@@ -39,13 +39,15 @@ def resolve_zone(state: dict[str, Any], item: ActionInputDescriptor) -> str:
     raise ToolError(f"action_zone_unresolved:{item.zone}")
 
 
-def card_ids(state: dict[str, Any], action_id: str,
-             item: ActionInputDescriptor) -> list[str]:
-    """The deterministic legal selection: the first ``max_count`` cards in a zone.
+def card_ids(state: dict[str, Any], action_id: str, item: ActionInputDescriptor,
+             newest: bool = False, offset: int = 0) -> list[str]:
+    """The deterministic legal selection from a zone.
 
     ``min_count`` is a hard floor: a zone that cannot supply it means this action
     is not usable, which the caller treats as "no legal action" rather than a
-    crash. ``max_count`` is capped by what is actually there.
+    crash. ``max_count`` is capped by what is actually there. ``newest`` takes
+    from the far end and ``offset`` rotates the window, so independent policies
+    can explore different branches without any game-specific knowledge.
     """
     zone_id = resolve_zone(state, item)
     zones = state.get("zones")
@@ -55,18 +57,26 @@ def card_ids(state: dict[str, Any], action_id: str,
         raise ToolError(f"action_zone_missing:{zone_id}")
     if len(cards) < item.min_count:
         raise ToolError(f"action_input_insufficient_cards:{action_id}.{item.id}")
-    return [card.id for card in cards[:min(item.max_count, len(cards))]]
+    take = min(item.max_count, len(cards))
+    if take == 0:
+        return []
+    ordered = list(reversed(cards)) if newest else list(cards)
+    shift = offset % len(ordered)
+    ordered = ordered[shift:] + ordered[:shift]
+    return [card.id for card in ordered[:take]]
 
 
-def input_value(state: dict[str, Any], action_id: str, item: ActionInputDescriptor) -> Any:
+def input_value(state: dict[str, Any], action_id: str, item: ActionInputDescriptor,
+                newest: bool = False, offset: int = 0) -> Any:
     if item.kind == "card_selection":
-        return card_ids(state, action_id, item)
+        return card_ids(state, action_id, item, newest=newest, offset=offset)
     raise ToolError(f"unsupported_action_input_kind:{item.kind}")
 
 
-def payload_for(state: dict[str, Any], descriptor: ActionDescriptor) -> dict[str, Any]:
+def payload_for(state: dict[str, Any], descriptor: ActionDescriptor, newest: bool = False,
+                offset: int = 0) -> dict[str, Any]:
     """Every declared input of one action, as the payload ``Interpreter.step`` takes."""
-    return {item.id: input_value(state, descriptor.id, item)
+    return {item.id: input_value(state, descriptor.id, item, newest=newest, offset=offset)
             for item in descriptor.inputs}
 
 

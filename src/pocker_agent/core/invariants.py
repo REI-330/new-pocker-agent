@@ -64,3 +64,59 @@ def never_finishes_without_winners_or_scores():
         if state.get("finished") and not state.get("winners") and not state.get("scores"):
             raise ToolError("finished_without_outcome")
     return invariant
+
+
+def zone_conservation():
+    """A zone table holds a fixed multiset of card ids for the whole game.
+
+    Unlike :func:`card_conservation`, the total is learned from the first checked
+    state (after ``setup``), so a caller does not have to know the deck size. A
+    plan with no zone table is skipped: it is governed by the legacy sweep.
+    """
+    box: dict[str, int] = {}
+
+    def invariant(interpreter: Interpreter) -> None:
+        zones = interpreter.state.get(ZONES_KEY)
+        if not isinstance(zones, dict):
+            return
+        ids = [card.id for card in all_cards(zones)]
+        if len(ids) != len(set(ids)):
+            raise ToolError("zone_card_duplication")
+        total = box.setdefault("total", len(ids))
+        if len(ids) != total:
+            raise ToolError(f"zone_conservation:{len(ids)}!={total}")
+    return invariant
+
+
+def non_negative_scores():
+    """Scores are integer counters that never go negative."""
+    def invariant(interpreter: Interpreter) -> None:
+        scores = interpreter.state.get("scores")
+        if not isinstance(scores, list):
+            return
+        for value in scores:
+            if type(value) is not int or value < 0:
+                raise ToolError(f"score_out_of_bounds:{value!r}")
+    return invariant
+
+
+def view_is_safe():
+    """No viewer's projection may expose a card it does not own.
+
+    This checks the *projection*, not the raw state: a hidden or other-owned zone
+    must project to an empty card list until the game reveals or finishes.
+    """
+    def invariant(interpreter: Interpreter) -> None:
+        if interpreter.state.get("finished") or interpreter.state.get("reveal"):
+            return
+        for index in range(interpreter.plan.players):
+            view = interpreter.view(f"player-{index + 1}")
+            for zone in view.get("zones", {}).values():
+                visibility, owner = zone.get("visibility"), zone.get("owner")
+                if visibility == "public":
+                    continue
+                if owner is not None and owner == index:
+                    continue  # an owner may always see their own zone
+                if zone.get("visible") or zone.get("cards"):
+                    raise ToolError(f"view_leaks_zone:player-{index + 1}")
+    return invariant

@@ -28,7 +28,7 @@ def bet_first(interpreter: Interpreter):
     return (actions[0], {})
 
 
-def composed_action(interpreter: Interpreter):
+def composed_action(interpreter: Interpreter, newest: bool = False):
     """Generic policy for a composed plan: satisfy each declared input.
 
     The plan carries :class:`~pocker_agent.core.plan.ActionDescriptor` data, so
@@ -36,14 +36,16 @@ def composed_action(interpreter: Interpreter):
     candidate action's payload is built from the live state and probed on a
     throwaway copy, so a descriptor the state cannot satisfy (for example an
     empty zone) is treated as "this action is not usable", not as a crash. It is
-    deterministic given the state, which keeps replay byte-exact.
+    deterministic given the state, which keeps replay byte-exact. ``newest``
+    selects from the other end of each zone, which is how the goal-branch policy
+    reaches the outcomes the default policy never does.
     """
     for action in interpreter.legal_actions():
         descriptor = descriptor_for(interpreter.plan, action)
         if descriptor is None:
             continue
         try:
-            payload = payload_for(interpreter.state, descriptor)
+            payload = payload_for(interpreter.state, descriptor, newest=newest)
         except ToolError:
             continue
         probe = Interpreter.restore(interpreter.serialize(), interpreter.registry)

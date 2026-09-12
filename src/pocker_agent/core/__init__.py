@@ -5,6 +5,7 @@ One deterministic path: a validated ``GamePlan`` is interpreted by
 ``ToolRegistry``. ``playtest`` is the gate that a plan must pass before it can
 be shown as playable.
 """
+from .artifacts import GameArtifact, VerificationResult, build_artifact, verification_id
 from .capability import AXES, Capability, CapabilityReport, capability_check, capability_matrix
 from .cards import CardRef, decode, encode
 from .compositions import (
@@ -16,7 +17,13 @@ from .compositions import (
 from .contracts import Observation, OperationSpec, ToolError, ToolRegistry, ToolSpec
 from .corpus import coverage_report, load_corpus
 from .interpreter import Interpreter
-from .invariants import card_conservation, never_finishes_without_winners_or_scores
+from .invariants import (
+                     card_conservation,
+                     never_finishes_without_winners_or_scores,
+                     non_negative_scores,
+                     view_is_safe,
+                     zone_conservation,
+)
 from .ir import (
                      ArithmeticIR,
                      BlackjackIR,
@@ -46,7 +53,16 @@ from .plans import (
                      war_plan,
                      whist_plan,
 )
-from .playtest import PlaytestReport, boundary_first, card_first, first_legal, playtest, random_legal, resilient_first
+from .playtest import (
+                     PlaytestReport,
+                     boundary_first,
+                     card_first,
+                     first_legal,
+                     goal_first,
+                     playtest,
+                     random_legal,
+                     resilient_first,
+)
 from .policy import bet_first, bot_action, composed_action, run_bots
 from .reference import REFERENCE_GAMES, build_plan, ensure_playtested, list_reference_games
 from .registry import core_registry
@@ -61,6 +77,7 @@ from .rules import (
                      resolve_composition,
 )
 from .session import Session, SessionStore
+from .verify import publish_composed, verify_composed, verify_plan
 from .zone_tools import ZonesTool
 from .zones import (
                      ZONES_KEY,
@@ -94,6 +111,7 @@ __all__ = [
                      "CompositionReport",
                      "FlowCase",
                      "FlowNode",
+                     "GameArtifact",
                      "GamePlan",
                      "GoFishIR",
                      "Interpreter",
@@ -113,6 +131,7 @@ __all__ = [
                      "ToolRegistry",
                      "ToolSpec",
                      "UnoIR",
+                     "VerificationResult",
                      "WarIR",
                      "WhistIR",
                      "ZonesTool",
@@ -124,6 +143,7 @@ __all__ = [
                      "blackjack_plan",
                      "bot_action",
                      "boundary_first",
+                     "build_artifact",
                      "build_plan",
                      "capability_check",
                      "capability_matrix",
@@ -149,16 +169,19 @@ __all__ = [
                      "first_legal",
                      "five_card_poker_plan",
                      "go_fish_plan",
+                     "goal_first",
                      "host_compile",
                      "ir_hash",
                      "is_host_compiled",
                      "list_reference_games",
                      "load_corpus",
                      "never_finishes_without_winners_or_scores",
+                     "non_negative_scores",
                      "ownership_problems",
                      "parse_ir",
                      "playtest",
                      "promotion_report",
+                     "publish_composed",
                      "random_legal",
                      "required_axes",
                      "resilient_first",
@@ -168,9 +191,14 @@ __all__ = [
                      "top_card",
                      "uno_plan",
                      "validate_macro",
+                     "verification_id",
+                     "verify_composed",
+                     "verify_plan",
+                     "view_is_safe",
                      "war_plan",
                      "whist_plan",
                      "wire",
                      "zone_cards",
+                     "zone_conservation",
                      "zone_table",
 ]

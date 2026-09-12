@@ -113,6 +113,9 @@ class SelectEffect(_Strict):
     input: str = Field(min_length=1, max_length=32)
     result: str = Field(default="picked", min_length=1, max_length=32,
                         pattern=r"^[a-z][a-z0-9_]*$")
+    #: When set, the selected card(s) must match the top of this shared zone
+    #: (same suit or same rank). Declared top zones stay a closed vocabulary.
+    match_top: str | None = Field(default=None, max_length=32)
 
 
 class MoveSelectionEffect(_Strict):
@@ -197,6 +200,21 @@ class SkipEffect(_Strict):
     condition: Expr | None = None
 
 
+class ScoreTopEffect(_Strict):
+    """Award points to the actor based on the top card of a shared zone (B5).
+
+    Used after a move has placed the played card on the discard pile: the top
+    card's ``by`` field (suit or rank) selects the points. The points map is a
+    closed, static table, so a rule cannot invent a score at runtime.
+    """
+
+    kind: Literal["score_top"] = "score_top"
+    zone: str = Field(min_length=1, max_length=32)
+    by: Literal["suit", "rank"] = "suit"
+    points: dict[str, int] = Field(default_factory=dict, max_length=8)
+    recipient: Literal["actor"] = "actor"
+
+
 class CompareEffect(_Strict):
     kind: Literal["compare"] = "compare"
     zone: str = Field(min_length=1, max_length=32)
@@ -213,7 +231,8 @@ class AssignEffect(_Strict):
 
 Effect = Annotated[
     SelectEffect | MoveSelectionEffect | MoveTopEffect | RemovePairsEffect
-    | RefillEffect | DrawEffect | CompareEffect | AssignEffect | SkipEffect,
+    | RefillEffect | DrawEffect | ScoreTopEffect | CompareEffect | AssignEffect
+    | SkipEffect,
     Field(discriminator="kind"),
 ]
 
@@ -414,6 +433,14 @@ class ComposedRulesIR(_Strict):
                 if effect.result in seen_selections:
                     raise ValueError(f"select_duplicate_result:{action.id}:{effect.result}")
                 seen_selections.add(effect.result)
+                if effect.match_top is not None:
+                    top = self.zone(effect.match_top)
+                    if top is None:
+                        raise ValueError(
+                            f"select_unknown_match_zone:{action.id}:{effect.match_top}")
+                    if top.scope != "shared":
+                        raise ValueError(
+                            f"select_match_zone_must_be_shared:{action.id}:{effect.match_top}")
             elif isinstance(effect, MoveSelectionEffect):
                 for zone_id in (effect.from_zone, effect.to_zone):
                     if self.zone(zone_id) is None:
@@ -456,6 +483,19 @@ class ComposedRulesIR(_Strict):
                     raise ValueError(f"draw_stock_must_be_shared:{action.id}:{effect.from_zone}")
                 if target.scope != "player":
                     raise ValueError(f"draw_target_must_be_player:{action.id}:{effect.to_zone}")
+            elif isinstance(effect, ScoreTopEffect):
+                zone = self.zone(effect.zone)
+                if zone is None:
+                    raise ValueError(f"score_top_unknown_zone:{action.id}:{effect.zone}")
+                if zone.scope != "shared":
+                    raise ValueError(f"score_top_requires_shared_zone:{action.id}:{effect.zone}")
+                if not effect.points:
+                    raise ValueError(f"score_top_requires_points:{action.id}")
+                for key, value in effect.points.items():
+                    if not isinstance(key, str) or not key or len(key) > 8:
+                        raise ValueError(f"score_top_bad_key:{action.id}")
+                    if type(value) is not int or not 0 <= value <= 100:
+                        raise ValueError(f"score_top_bad_points:{action.id}:{key}")
             elif isinstance(effect, AssignEffect):
                 variable = self.variable(effect.variable)
                 if variable is None:
@@ -521,7 +561,8 @@ class ComposedRulesIR(_Strict):
                     if zone.scope != "shared":
                         raise ValueError(f"move_top_requires_shared_zone:{zone_id}")
             elif isinstance(effect, SelectEffect | MoveSelectionEffect | AssignEffect
-                            | RemovePairsEffect | RefillEffect | DrawEffect | SkipEffect):
+                            | RemovePairsEffect | RefillEffect | DrawEffect
+                            | ScoreTopEffect | SkipEffect):
                 raise ValueError(f"resolve_effect_not_allowed:{effect.kind}")
         # A rule can score entirely inside its action (remove_pairs / suit scoring),
         # so an empty resolve is allowed; the turn loop then goes straight to the

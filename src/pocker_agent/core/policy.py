@@ -6,10 +6,9 @@ host never invents an action that the plan did not offer.
 """
 from __future__ import annotations
 
-from .actions import descriptor_for, payload_for
 from .contracts import ToolError
 from .interpreter import Interpreter
-from .playtest import card_first, resilient_first
+from .playtest import card_first, descriptor_candidates, resilient_first
 
 HUMAN_INDEX = 0
 BOT_STEP_LIMIT = 500
@@ -33,27 +32,25 @@ def composed_action(interpreter: Interpreter, newest: bool = False):
 
     The plan carries :class:`~pocker_agent.core.plan.ActionDescriptor` data, so
     the host no longer has to guess an action's payload from its name. Each
-    candidate action's payload is built from the live state and probed on a
-    throwaway copy, so a descriptor the state cannot satisfy (for example an
-    empty zone) is treated as "this action is not usable", not as a crash. It is
-    deterministic given the state, which keeps replay byte-exact. ``newest``
-    selects from the other end of each zone, which is how the goal-branch policy
-    reaches the outcomes the default policy never does.
+    candidate payload is built from the live state and probed on a throwaway
+    copy, so a descriptor the state cannot satisfy (for example an empty zone, or
+    a play that must match the discard top) is treated as "this action is not
+    usable", not as a crash. It is deterministic given the state, which keeps
+    replay byte-exact. ``newest`` selects from the other end of each zone, which
+    is how the goal-branch policy reaches the outcomes the default policy never
+    does.
     """
     for action in interpreter.legal_actions():
-        descriptor = descriptor_for(interpreter.plan, action)
-        if descriptor is None:
+        candidates = descriptor_candidates(interpreter, action, newest=newest)
+        if candidates is None:
             continue
-        try:
-            payload = payload_for(interpreter.state, descriptor, newest=newest)
-        except ToolError:
-            continue
-        probe = Interpreter.restore(interpreter.serialize(), interpreter.registry)
-        try:
-            probe.step(action, **payload)
-        except ToolError:
-            continue
-        return (action, payload)
+        for payload in candidates:
+            probe = Interpreter.restore(interpreter.serialize(), interpreter.registry)
+            try:
+                probe.step(action, **payload)
+            except ToolError:
+                continue
+            return (action, payload)
     return None
 
 

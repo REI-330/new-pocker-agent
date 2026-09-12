@@ -68,7 +68,7 @@ mechanism_problems(registry)   # core/capability.py
 | `hidden_tools.py`（模块 docstring） | `HiddenDrawTool.ask`：对手没有该牌时**自动摸牌** | 「取牌失败后摸牌」是 Go Fish 的玩法规则，不是取牌机制；场景 C 不需要它 |
 | `trigger_tools.py` | `trigger.apply` 写入 `skip`/`direction`/`active_suit` | 效果表是数据，但**消费时机**（何时判终局、何时 skip）必须由规则显式排序 |
 
-**结论**：三个验收场景里，B（空手不结束、draw/pass 多动作）仍待实现；C 的「对子计分 2 分、双区域选择」已由 ADR-0011 的通用机制表达（M3）。
+**结论**：三个验收场景里，B（空手不结束、接牌合法性、花色计分、skip、draw/pass 多动作）已由 ADR-0012 + ADR-0013 的通用机制表达（M3g）；C 的「对子计分 2 分、双区域选择」已由 ADR-0011 的通用机制表达（M3）。
 这不是模型能力问题，是机制粒度问题——与 §4「`turn_adapter=stable` 不等于已实现竞叫」同一性质。
 
 ### M1 更新（2026-09-12）：哪些已拆，哪些仍欠

@@ -25,6 +25,7 @@ from ..rules import (
     MoveSelectionEffect,
     RefillEffect,
     RemovePairsEffect,
+    ScoreTopEffect,
     SelectEffect,
 )
 from ..rules.requirements import clause_for
@@ -38,6 +39,7 @@ MONITOR_CLAUSES: dict[str, str] = {
     "compare_outcome": "flow.resolve",
     "scoring": "scoring",
     "pair_scoring": "scoring",
+    "suit_scoring": "scoring",
     "refill": "scoring",
     "action_counting": "flow.round_action",
     "trigger_after_terminal": "flow.round_action",
@@ -288,6 +290,37 @@ def _pair_scoring(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
     return ClauseCheck("pair_scoring", True, f"settlements={settlements}")
 
 
+def _suit_scoring(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
+    """Independent monitor for ``score_top`` (ADR-0012 B5).
+
+    Re-derives the expected points from the *state before* each settlement: the
+    top card of the named zone and the declared points table. It never reads the
+    compiler's node arguments, so a mutated points value is rejected.
+    """
+    effects = [effect for action in ir.actions for effect in action.effects
+               if isinstance(effect, ScoreTopEffect)]
+    if not effects:
+        return ClauseCheck("suit_scoring", True, "no_score_top")
+    if len(effects) != 1:
+        return ClauseCheck("suit_scoring", True, f"skipped:effects={len(effects)}")
+    effect = effects[0]
+    settlements = 0
+    for index, observation in enumerate(trace.observations):
+        if observation.tool != "score_settle" or observation.operation != "call":
+            continue
+        settlements += 1
+        before = trace.observations[index - 1].state if index > 0 else None
+        cards = _cards_at(before, effect.zone)
+        key = getattr(cards[-1], effect.by) if cards else None
+        expected = effect.points.get(str(key), 0)
+        deltas = [observation.state["scores"][seat] - before["scores"][seat]
+                  for seat in range(ir.players.count)]
+        if sum(deltas) != expected or any(delta < 0 for delta in deltas):
+            return ClauseCheck("suit_scoring", False,
+                               f"key={key},expected={expected},observed={deltas}@{index}")
+    return ClauseCheck("suit_scoring", True, f"settlements={settlements}")
+
+
 def _refill(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
     """Independent monitor: a refill target zone never exceeds its declared size.
 
@@ -426,6 +459,7 @@ def contract_check(ir: ComposedRulesIR, plan: GamePlan, registry: ToolRegistry,
                 ("compare_outcome", lambda t: _compare_outcome(ir, t)),
                 ("scoring", lambda t: _scoring(ir, t)),
                 ("pair_scoring", lambda t: _pair_scoring(ir, t)),
+                ("suit_scoring", lambda t: _suit_scoring(ir, t)),
                 ("refill", lambda t: _refill(ir, t)),
                 ("action_counting", lambda t: _action_counting(ir, t)),
                 ("trigger_after_terminal", lambda t: _trigger_after_terminal(ir, t)),

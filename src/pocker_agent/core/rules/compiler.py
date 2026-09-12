@@ -41,6 +41,7 @@ from .composed import (
     MoveTopEffect,
     RefillEffect,
     RemovePairsEffect,
+    ScoreTopEffect,
     SelectEffect,
     SkipEffect,
 )
@@ -463,27 +464,38 @@ class _Compiler:
         bounds = {effect.result: self._input_bounds(action, effect.input)
                   for effect in action.effects if isinstance(effect, SelectEffect)}
         entry: str | None = None
-        previous: str | None = None
+        pending: list[str] = []
 
-        def link(node_id: str) -> None:
-            nonlocal entry, previous
+        def connect(first: str) -> None:
+            nonlocal entry
             if entry is None:
-                entry = node_id
-            if previous is not None:
-                self.nodes[previous]["next"] = node_id
-            previous = node_id
+                entry = first
+            for node_id in pending:
+                self.nodes[node_id]["next"] = first
+            pending.clear()
 
         for index, effect in enumerate(action.effects):
             path = f"actions.{action.id}.effects.{index}"
             if isinstance(effect, SelectEffect):
                 node_id = f"act_{action.id}_{index}_select"
                 low, high = bounds[effect.result]
-                self._call(node_id, "zones", "select",
-                           {"state": "$state", "zone": self._input_zone_arg(action, effect.input),
-                            "card_ids": f"$state.input.{effect.input}",
-                            "min_count": low, "max_count": high},
-                           "PENDING", path, result_key=f"sel_{effect.result}")
-                link(node_id)
+                if effect.match_top is None:
+                    self._call(node_id, "zones", "select",
+                               {"state": "$state",
+                                "zone": self._input_zone_arg(action, effect.input),
+                                "card_ids": f"$state.input.{effect.input}",
+                                "min_count": low, "max_count": high},
+                               "PENDING", path, result_key=f"sel_{effect.result}")
+                else:
+                    self._call(node_id, "zones", "select_matching",
+                               {"state": "$state",
+                                "zone": self._input_zone_arg(action, effect.input),
+                                "card_ids": f"$state.input.{effect.input}",
+                                "top_zone": effect.match_top,
+                                "min_count": low, "max_count": high},
+                               "PENDING", path, result_key=f"sel_{effect.result}")
+                connect(node_id)
+                pending = [node_id]
             elif isinstance(effect, MoveSelectionEffect):
                 node_id = f"act_{action.id}_{index}_move"
                 low, high = self._selection_bounds(action, effect.selection)
@@ -494,32 +506,66 @@ class _Compiler:
                                "card_ids": f"$state.sel_{effect.selection}.ids",
                                "min_count": low, "max_count": high}]},
                            "PENDING", path)
-                link(node_id)
+                connect(node_id)
+                pending = [node_id]
             elif isinstance(effect, AssignEffect):
                 eval_id, set_id = f"act_{action.id}_{index}_eval", f"act_{action.id}_{index}_set"
                 self._eval(eval_id, compile_expression(effect.value), f"t_assign_{index}",
                            set_id, path)
                 self._update(set_id, {f"v_{effect.variable}": f"$state.t_assign_{index}"},
                              "PENDING", path)
-                link(eval_id)
-                previous = set_id
+                connect(eval_id)
+                pending = [set_id]
             elif isinstance(effect, RemovePairsEffect):
                 first, last = self._remove_pairs_nodes(action, effect, index, path)
-                link(first)
-                previous = last
+                connect(first)
+                pending = [last]
             elif isinstance(effect, RefillEffect):
                 first, last = self._refill_nodes(action, effect, index, path)
-                link(first)
-                previous = last
+                connect(first)
+                pending = [last]
             elif isinstance(effect, DrawEffect):
                 first, last = self._draw_nodes(action, effect, index, path)
-                link(first)
-                previous = last
+                connect(first)
+                pending = [last]
+            elif isinstance(effect, ScoreTopEffect):
+                first, exits = self._score_top_nodes(action, effect, index, path)
+                connect(first)
+                pending = list(exits)
             else:
                 self._fail("unsupported_action_effect", effect.kind, path)
-        if previous is not None:
-            self.nodes[previous]["next"] = "advance_turn"
+        for node_id in pending:
+            self.nodes[node_id]["next"] = "advance_turn"
         return entry or "advance_turn"
+
+    def _score_top_nodes(self, action: Any, effect: ScoreTopEffect, index: int,
+                         path: str) -> tuple[str, list[str]]:
+        """Lower ``score_top`` to top-card read + one score per declared value.
+
+        A branch on the top card's ``by`` field selects the static points entry;
+        a value with no entry falls through and scores nothing.
+        """
+        action_id = action.id
+        top_id = f"act_{action_id}_{index}_score_top"
+        branch_id = f"act_{action_id}_{index}_score_branch"
+        card_key = f"score_card_{action_id}_{index}"
+        self._call(top_id, "zones", "top",
+                   {"state": "$state", "zone": self._zone_arg(effect.zone)},
+                   branch_id, path, result_key=card_key)
+        cases: list[dict[str, Any]] = []
+        exits: list[str] = []
+        for key, points in sorted(effect.points.items()):
+            score_id = f"act_{action_id}_{index}_score_{_safe(key)}"
+            self._call(score_id, "score_settle", "call",
+                       {"scores": "$state.scores",
+                        "winners": ["$state.current_player"],
+                        "points": points},
+                       "PENDING", path, result_key="scores")
+            cases.append({"value": key, "target": score_id})
+            exits.append(score_id)
+        self._branch(branch_id, f"$state.{card_key}.{effect.by}", cases, "PENDING", path)
+        exits.append(branch_id)
+        return top_id, exits
 
     def _remove_pairs_nodes(self, action: Any, effect: RemovePairsEffect, index: int,
                             path: str) -> tuple[str, str]:

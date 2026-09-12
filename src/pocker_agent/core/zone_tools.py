@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .contracts import ToolError
 from .zones import (
     ZONES_KEY,
     apply_moves,
@@ -26,6 +27,24 @@ class ZonesTool:
                min_count: int = 1, max_count: int = 1) -> dict[str, Any]:
         zones = zone_table(state)
         cards = select_cards(zones, zone, card_ids, min_count, max_count)
+        return {"zone": zone, "ids": [card.id for card in cards],
+                "cards": list(cards), "count": len(cards)}
+
+    def select_matching(self, state: dict[str, Any], zone: Any, card_ids: Any,
+                        top_zone: Any, min_count: int = 1,
+                        max_count: int = 1) -> dict[str, Any]:
+        """A selection where every chosen card matches ``top_zone``'s top card.
+
+        Same-suit or same-rank, the same rule as ``pattern.match`` with no wild
+        ranks. Pure and side-effect free: an illegal play is rejected before any
+        card moves (ADR-0012 B4).
+        """
+        zones = zone_table(state)
+        cards = select_cards(zones, zone, card_ids, min_count, max_count)
+        top = top_card(zones, top_zone)
+        for card in cards:
+            if card.suit != top.suit and card.rank != top.rank:
+                raise ToolError(f"selection_does_not_match:{card.id}")
         return {"zone": zone, "ids": [card.id for card in cards],
                 "cards": list(cards), "count": len(cards)}
 

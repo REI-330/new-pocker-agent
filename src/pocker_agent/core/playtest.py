@@ -23,6 +23,11 @@ Invariant = Callable[[Interpreter], None]
 # Actions that exercise boundaries rather than the "happy path".
 _BOUNDARY_PRIORITY = ("pass", "give_up", "no_solution", "fold", "check", "next_round")
 
+# How many candidate payloads (card rotations) a strategy probes per action. A
+# matching rule rejects a non-matching play, so the generic policy must be able
+# to try the other cards in the zone -- still bounded and deterministic.
+INPUT_CANDIDATE_LIMIT = 16
+
 
 @dataclass
 class PlaytestReport:
@@ -44,14 +49,40 @@ class PlaytestReport:
                 "checks": list(self.checks), "covered_wait_nodes": list(self.covered_wait_nodes)}
 
 
-def _descriptor_payload(interpreter: Interpreter, action: str, *, newest: bool = False,
-                        offset: int = 0) -> dict[str, Any] | None:
-    """A payload for a plan-declared action, or ``None`` for a 0.4 plan."""
-    from .actions import descriptor_for, payload_for
+def descriptor_candidates(interpreter: Interpreter, action: str, *, newest: bool = False,
+                          ) -> list[dict[str, Any]] | None:
+    """Candidate payloads for a plan-declared action, or ``None`` for a 0.4 plan.
+
+    A composed action may be guarded so that only *some* selections are legal
+    (for example a play that must match the discard top), so the host rotates
+    through the cards in each input zone and returns every candidate. The count
+    is bounded by the largest input zone (never the whole state), so this stays
+    deterministic and finite.
+    """
+    from .actions import descriptor_for, payload_for, resolve_zone
 
     descriptor = descriptor_for(interpreter.plan, action)
-    return None if descriptor is None else payload_for(
-        interpreter.state, descriptor, newest=newest, offset=offset)
+    if descriptor is None:
+        return None
+    limit = 1
+    zones = interpreter.state.get("zones")
+    for item in descriptor.inputs:
+        try:
+            zone_id = resolve_zone(interpreter.state, item)
+        except ToolError:
+            continue
+        entry = zones.get(zone_id) if isinstance(zones, dict) else None
+        cards = entry.get("cards") if isinstance(entry, dict) else None
+        if isinstance(cards, list):
+            limit = max(limit, min(len(cards), INPUT_CANDIDATE_LIMIT))
+    candidates: list[dict[str, Any]] = []
+    for offset in range(limit):
+        try:
+            candidates.append(payload_for(interpreter.state, descriptor,
+                                          newest=newest, offset=offset))
+        except ToolError:
+            break
+    return candidates
 
 
 def _accepted(interpreter: Interpreter, action: str, payload: dict[str, Any]) -> bool:
@@ -83,10 +114,18 @@ def random_legal(interpreter: Interpreter):
     tick = interpreter.seed + len(interpreter.events) * 17
     for step in range(len(actions)):
         action = actions[(tick + step) % len(actions)]
-        payload = _descriptor_payload(interpreter, action, offset=tick)
-        payload = {} if payload is None else payload
-        if _accepted(interpreter, action, payload):
-            return (action, payload)
+        candidates = descriptor_candidates(interpreter, action)
+        if candidates is None:
+            if _accepted(interpreter, action, {}):
+                return (action, {})
+            continue
+        if not candidates:
+            continue
+        shift = tick % len(candidates)
+        ordered = candidates[shift:] + candidates[:shift]
+        for payload in ordered:
+            if _accepted(interpreter, action, payload):
+                return (action, payload)
     return None
 
 
@@ -94,7 +133,8 @@ def boundary_first(interpreter: Interpreter):
     """Prefer boundary actions (give up / pass / fold) before the happy path.
 
     For a composed plan a boundary action may still need a minimal legal payload,
-    so the descriptor is filled with the smallest selection rather than skipped.
+    so the descriptor is filled with the smallest accepted selection rather than
+    skipped.
     """
     actions = interpreter.legal_actions()
     if not actions:
@@ -102,10 +142,14 @@ def boundary_first(interpreter: Interpreter):
     ordered = [action for action in _BOUNDARY_PRIORITY if action in actions]
     ordered += [action for action in actions if action not in ordered]
     for action in ordered:
-        payload = _descriptor_payload(interpreter, action)
-        payload = {} if payload is None else payload
-        if _accepted(interpreter, action, payload):
-            return (action, payload)
+        candidates = descriptor_candidates(interpreter, action)
+        if candidates is None:
+            if _accepted(interpreter, action, {}):
+                return (action, {})
+            continue
+        for payload in candidates:
+            if _accepted(interpreter, action, payload):
+                return (action, payload)
     return None
 
 
@@ -152,11 +196,12 @@ def goal_first(interpreter: Interpreter):
     Deterministic given the state, so replay stays byte-exact.
     """
     for action in interpreter.legal_actions():
-        payload = _descriptor_payload(interpreter, action, newest=True)
-        if payload is None:
+        candidates = descriptor_candidates(interpreter, action, newest=True)
+        if candidates is None:
             continue
-        if _accepted(interpreter, action, payload):
-            return (action, payload)
+        for payload in candidates:
+            if _accepted(interpreter, action, payload):
+                return (action, payload)
     return resilient_first(interpreter)
 
 

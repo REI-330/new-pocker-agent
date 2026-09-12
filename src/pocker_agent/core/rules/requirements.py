@@ -30,6 +30,7 @@ from .composed import (
     MoveTopEffect,
     RefillEffect,
     RemovePairsEffect,
+    ScoreTopEffect,
     SelectEffect,
     SkipEffect,
 )
@@ -152,7 +153,9 @@ def _effect_requirements(ir: ComposedRulesIR, effects: Any, base: str,
         path = f"{base}.{index}"
         clause = _clause(ir, path)
         if isinstance(effect, SelectEffect):
-            out.append(Requirement("operation", "zones.select", path, clause))
+            out.append(Requirement("operation",
+                                   "zones.select_matching" if effect.match_top else "zones.select",
+                                   path, clause))
             out.append(Requirement("input", effect.input, path, clause))
         elif isinstance(effect, MoveSelectionEffect):
             out.append(Requirement("operation", "zones.move", path, clause))
@@ -178,6 +181,9 @@ def _effect_requirements(ir: ComposedRulesIR, effects: Any, base: str,
             out.append(Requirement("operation", "zones.count_zone", path, clause))
             out.append(Requirement("operation", "zones.top", path, clause))
             out.append(Requirement("operation", "zones.move", path, clause))
+        elif isinstance(effect, ScoreTopEffect):
+            out.append(Requirement("operation", "zones.top", path, clause))
+            out.append(Requirement("operation", "score_settle.call", path, clause))
         elif isinstance(effect, SkipEffect):
             out.append(Requirement("operation", "state.update", path, clause))
             if effect.condition is not None:
@@ -207,6 +213,9 @@ def features_for(ir: ComposedRulesIR) -> tuple[str, ...]:
     if any(isinstance(effect, CompareEffect) for effect in ir.flow.resolve):
         features.add("scoring")
     if any(isinstance(effect, RemovePairsEffect)
+           for action in ir.actions for effect in action.effects):
+        features.add("scoring")
+    if any(isinstance(effect, ScoreTopEffect)
            for action in ir.actions for effect in action.effects):
         features.add("scoring")
     if any("pattern.choices" in guard_mechanisms(action.guard)

@@ -48,34 +48,36 @@ AXES: tuple[Capability, ...] = (
     Capability("sequential_turn", "顺序回合（wait / 分支推进）", "stable",
                ("plan.wait", "plan.branch", "state.current_player")),
     Capability("exact_expression", "精确四则算式判定", "stable",
-               ("tool.exact_expression",)),
+               ("tool.exact_expression.solve", "tool.exact_expression.validate")),
     Capability("score_settle", "显式计分与终局", "stable",
-               ("tool.score_settle", "state.finished")),
+               ("tool.score_settle.call", "tool.winner_resolve.call", "state.finished")),
     Capability("pattern_lang", "参数化牌型与合法性", "stable",
-               ("tool.pattern", "tool.shedding")),
+               ("tool.pattern.match", "tool.pattern.choices", "tool.matching.play")),
     Capability("rank_compare", "通用牌力比较（不内置玩法牌型）", "stable",
-               ("tool.rank_compare", "tool.deck")),
+               ("tool.rank_compare.call", "tool.deck.deal")),
     Capability("hand_rank", "五张牌型评分与比较（扑克类）", "stable",
-               ("tool.hand_rank",)),
+               ("tool.hand_rank.best", "tool.hand_rank.compare")),
     Capability("point_total", "牌值与软 A 求和（21 点类）", "stable",
-               ("tool.point_total",)),
+               ("tool.point_total.total", "tool.point_total.settle")),
     Capability("info_set", "信息集与按视角可见性", "stable",
                ("state.private_hands", "view(viewer)")),
     Capability("hidden_draw", "抽取对手隐藏牌（Go Fish / 抽乌龟类）", "stable",
-               ("tool.hidden_draw",)),
-    Capability("turn_adapter", "墩牌 / 跟牌 / 竞叫 / 优先级", "stable",
-               ("tool.trick", "state.current_player")),
+               ("tool.hidden_draw.askable", "tool.hidden_draw.ask"),
+               note="只覆按点数询问并取牌；不含按隐藏位置盲抽。"),
+    Capability("turn_adapter", "墩牌 / 跟牌 / 优先级", "stable",
+               ("tool.trick.legal", "tool.trick.play", "state.current_player"),
+               note="不含竞叫（bidding/auction）：trick 工具没有叫牌轮与叫品级别。"),
     Capability("trigger", "特殊牌效果 / 连锁触发", "stable",
-               ("tool.trigger",)),
+               ("tool.trigger.apply",)),
     Capability("simultaneous", "同时行动 / 抢牌反应", "planned",
                ("axis.simultaneous",),
                note="缺同时行动原语：wait 只能挂住一个座位，无法表达同时亮牌/抢牌反应。"),
     Capability("team", "队伍与合作胜负", "stable",
-               ("tool.trick.team_winners", "state.teams")),
+               ("tool.trick.play", "state.teams")),
     Capability("betting", "下注轮与边池", "stable",
-               ("tool.betting", "tool.ledger")),
+               ("tool.betting.legal", "tool.betting.act", "tool.ledger.settle")),
     Capability("ledger", "通用资源账本 / 经济", "stable",
-               ("tool.ledger", "state.stacks")),
+               ("tool.ledger.commit", "tool.ledger.settle", "state.stacks")),
     Capability("layout", "耐心 / 目标牌区与自动移动", "planned",
                ("axis.layout",),
                note="缺区域原语：没有 tableau/foundation 这类牌区，也没有自动翻牌与再发牌规则。"),
@@ -99,6 +101,36 @@ def capability_matrix() -> dict[str, Any]:
 
 def axis_status(axis_id: str) -> str:
     return AXIS_BY_ID[axis_id].status if axis_id in AXIS_BY_ID else "planned"
+
+
+def mechanism_problems(registry: Any,
+                       axes: tuple[Capability, ...] = ()) -> list[dict[str, str]]:
+    """Check every axis claim against the registry it claims to describe.
+
+    ``mechanisms`` used to be free-form labels nothing verified, so an axis could
+    be marked ``stable`` on a tool that does not exist. A coverage label is a
+    claim about the host, so it has to be checkable against the same registry the
+    interpreter enforces; otherwise corpus coverage is a label, not a capability.
+
+    Only ``tool.<name>[.<operation>]`` entries are checked here. ``state.*``,
+    ``plan.*``, ``axis.*`` and ``protocol.*`` name concepts that are not registry
+    entries, and are reported separately by the architecture tests.
+    """
+    problems: list[dict[str, str]] = []
+    names = set(registry.names())
+    operations = {name: {op.name for op in registry.spec(name).operations} for name in names}
+    for axis in (axes or AXES):
+        for mechanism in axis.mechanisms:
+            parts = mechanism.split(".")
+            if not parts or parts[0] != "tool":
+                continue
+            if len(parts) < 2 or parts[1] not in names:
+                problems.append({"axis": axis.id, "mechanism": mechanism,
+                                 "problem": "unknown_tool"})
+            elif len(parts) >= 3 and parts[2] not in operations[parts[1]]:
+                problems.append({"axis": axis.id, "mechanism": mechanism,
+                                 "problem": "unknown_operation"})
+    return problems
 
 
 @dataclass

@@ -35,8 +35,13 @@ LEGACY_ENGINE_MODULES = {"engine", "family_engines", "doudizhu_engine",
                          "rule_executor", "executors"}
 
 
-def _core_modules() -> list[Path]:
-    return sorted(CORE_DIR.glob("*.py"))
+def core_modules(root: Path = CORE_DIR) -> list[Path]:
+    """Every module under `core/`, at any depth.
+
+    Recursive on purpose: these checks are what keep a second execution path or a
+    legacy engine from reappearing, and G2 adds subpackages here.
+    """
+    return sorted(root.rglob("*.py"))
 
 
 def _imported_roots(module: Path) -> set[str]:
@@ -52,7 +57,7 @@ def _imported_roots(module: Path) -> set[str]:
 
 def test_core_is_a_single_execution_path():
     """core/ must never import a legacy engine or a second interpreter."""
-    for module in _core_modules():
+    for module in core_modules():
         leaked = _imported_roots(module) & LEGACY_ENGINE_MODULES
         assert not leaked, f"{module.name} imports legacy execution module(s): {sorted(leaked)}"
 
@@ -66,13 +71,13 @@ def test_app_serves_only_the_core_execution_path():
 def test_core_has_exactly_one_interpreter():
     """Exactly one class in core may define the step/advance state machine."""
     classes: list[str] = []
-    for module in _core_modules():
+    for module in core_modules():
         tree = ast.parse(module.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 methods = {item.name for item in node.body if isinstance(item, ast.FunctionDef)}
                 if {"step", "advance"} <= methods:
-                    classes.append(f"{module.name}:{node.name}")
+                    classes.append(f"{module.relative_to(CORE_DIR).as_posix()}:{node.name}")
     assert classes == ["interpreter.py:Interpreter"], classes
 
 
@@ -121,6 +126,58 @@ def test_only_state_tool_may_write_arbitrary_keys():
     wildcard = [tool["name"] for tool in core_registry().export()
                 if any("*" in operation["effects"] for operation in tool["operations"])]
     assert wildcard == ["state"], wildcard
+
+
+def test_the_architecture_scan_covers_new_subpackages(tmp_path):
+    """New directories must not dodge the single-interpreter / legacy-engine scan.
+
+    G2 splits `core/` into subpackages (rules/, compiler/, verify/); a
+    `core/*.py`-only scan would silently stop covering them.
+    """
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "engine.py").write_text("import executors\n", encoding="utf-8")
+    scanned = core_modules(tmp_path)
+    assert [path.name for path in scanned] == ["engine.py"]
+    assert _imported_roots(scanned[0]) & LEGACY_ENGINE_MODULES == {"executors"}
+    # the real package is walked recursively, not just its top level
+    assert core_modules() == sorted(CORE_DIR.rglob("*.py"))
+
+
+def test_every_axis_claim_points_at_a_real_operation():
+    """A coverage label is a claim about the host, so it must be checkable.
+
+    The matrix used to name `tool.shedding` (no such tool) and
+    `tool.trick.team_winners` (no such operation) on `stable` axes -- which is
+    how a corpus label can pass for a runnable capability.
+    """
+    from pocker_agent.core.capability import AXES, Capability, mechanism_problems
+
+    assert mechanism_problems(core_registry()) == []
+
+    # prove the audit is not vacuous: it must catch the two historical claims
+    stale = (Capability("pattern_lang", "t", "stable", ("tool.shedding",)),
+             Capability("team", "t", "stable", ("tool.trick.team_winners",)))
+    found = mechanism_problems(core_registry(), stale)
+    assert {(item["mechanism"], item["problem"]) for item in found} == {
+        ("tool.shedding", "unknown_tool"),
+        ("tool.trick.team_winners", "unknown_operation")}
+
+    # non-registry references are deliberately not audited here
+    non_tool = (Capability("sequential_turn", "t", "stable",
+                           ("plan.wait", "state.current_player", "view(viewer)")),)
+    assert mechanism_problems(core_registry(), non_tool) == []
+    assert len(AXES) == 18
+
+
+def test_stable_axes_that_over_claim_name_their_limit():
+    """`turn_adapter` used to read "... / bidding / priority" with neither."""
+    from pocker_agent.core.capability import AXIS_BY_ID
+
+    turn = AXIS_BY_ID["turn_adapter"]
+    assert "bidding" not in turn.title, turn.title
+    assert turn.note, "an axis whose title dropped a claim must say why"
+    assert AXIS_BY_ID["hidden_draw"].note, "hidden_draw covers rank asks only"
 
 
 def test_a_stable_axis_must_name_a_real_mechanism():
@@ -174,12 +231,23 @@ def test_the_shipped_macro_library_owes_no_promotion():
     assert promotion_report(PLAN_MACROS, default_macros()) == []
 
 
-def test_every_registered_tool_is_used_by_a_reference_plan():
+# Composed games that passed the design service are legitimate consumers too.
+# G2 records them here instead of forcing a Python reference game per mechanism
+# (section 6.4 of the standards). Still empty: M2 produces the first verified
+# composition. Entries must be real tool names -- checked below.
+COMPOSITION_CONSUMERS: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+
+def test_every_registered_tool_is_used_by_a_reference_plan_or_a_composition():
     """No dead tools: an unused registration is bloat and must be removed."""
     from pocker_agent.core.reference import REFERENCE_GAMES
 
     used: set[str] = set()
     for game in REFERENCE_GAMES.values():
         used |= {binding.name for binding in game.build().tools}
+    for sample, tools in COMPOSITION_CONSUMERS:
+        assert sample, "a composition consumer must name the sample that uses it"
+        assert set(tools) <= set(core_registry().names()), (sample, tools)
+        used |= set(tools)
     assert set(core_registry().names()) == used, (
         f"unused core tools: {sorted(set(core_registry().names()) - used)}")

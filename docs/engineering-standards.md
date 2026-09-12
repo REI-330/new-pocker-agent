@@ -287,6 +287,32 @@ S4             覆盖度量与交付（横切，贯穿始终）
 **尚未修复（下一阶段）**：`contract_check(IR, Plan)`（IR 与计划无语义对照）、流程顺序强制、
 设计会话持久化、`viewer/seat` 身份、`GamePlan.graph()` 可达性与终止性、IR/plan/tool 三层资源上限。
 
+### G2（第二阶段生成能力）· M0 准出状态：完成
+
+计划见 `E:\pocker agent\phase2-planning\docs\development-plan-phase2.md`；M0 交付以下内容。
+
+- **基线实跑**（专用数据目录 `artifacts/g2-runtime`，不复用用户对局）：干净库 **8** 个内置玩法、
+  `doctor.py --url` 全项 PASS、`e2e_smoke.py` **28 项**、全量 **202 passed**。
+- **能力审计可执行化**：`mechanism_problems()` 逐条核对轴的 `mechanisms` 是否指向真实 operation，
+  由 `test_every_axis_claim_points_at_a_real_operation` 强制。审计当场拓到 **2 处虚假声明**
+  （`tool.shedding` 不存在、`tool.trick.team_winners` 不存在）——这是「语料标签覆盖≠可运行覆盖」的具体形态。
+- **过宽标题修正**：`turn_adapter` 去掉「竞叫」、`hidden_draw` 去掉盲抽暗示，改在 `note` 里写明不含什么。
+- **机制粒度缺陷定位**（有代码位置，交 M1）：`tools.py:454` 空手内置终局、`tools.py:398` 墩数内置终局、
+  `MatchingTool.draw(recycle=True)` 内置回收、`hidden_tools.py:82` 内置每对 +1 分并写死 key、
+  `hidden_draw.ask` 内置失败摸牌、`trigger.apply` 消费时机。
+- **验收场景冻结**：`docs/g2-acceptance-scenarios.md`（A/B/C 三场景，条款带 ID、预期 IR 字段与 source map 关系，**不含执行 Plan**）。
+- **能力子集**：`docs/g2-capability-subset.md`。
+- **ADR-0005..0008**：组合 IR 降层、收窄 raw Plan 入口、Schema/数据迁移、验证证据与版本绑定。
+
+本轮两条工程规则调整（M0 第 5 项）：
+
+1. **宏能力状态取决于验证证据，不取决于元工具是否出现。** 出现 macro 元工具不自动等于 `stable`；
+   `test_the_macro_axis_stays_a_gap_until_the_agent_can_author_macros` 在出现宏工具时强制一次决策。
+2. **工具使用性测试允许经验证的组合样例作为消费者**（`COMPOSITION_CONSUMERS`），
+   不再强制每个新机制都先写一个 Python reference game；条目必须是真实工具名（测试校验）。
+
+另外：架构扫描由 `core/*.py` 改为 **递归** `core/**/*.py`，避免 G2 拆分子包后绕过单一执行器检查。
+
 ## 4. 测试规范
 
 ### 4.1 测试层次（每层证明什么）
@@ -401,6 +427,8 @@ nondeterministic_replay
 | `stable` 轴必须指向真实机制 | 0 个占位 | `test_a_stable_axis_must_name_a_real_mechanism` |
 | 未覆盖轴必须说明缺口 | 4/4 有 note | `test_every_uncovered_axis_says_what_is_missing` |
 | 宏提升欠账 | 0 | `test_the_shipped_macro_library_owes_no_promotion` |
+| 轴声明必须指向真实 operation | 0 处虚假 | `test_every_axis_claim_points_at_a_real_operation` |
+| 架构扫描必须递归覆盖 `core/**` | — | `test_the_architecture_scan_covers_new_subpackages` |
 | core LOC / 文件数 | 记录并只许持平 | 报表（S2 起自动化） |
 | 删除积压 | 0 | §6.3 · `tests/test_oracle_fixtures.py::test_no_legacy_engine_module_remains_in_the_package`（旧引擎已删，行为以 `benchmarks/oracle/` 数据保留） |
 
@@ -438,6 +466,21 @@ K 默认 2，可在 ADR 中调整。**注册表只能按"被证明的复用"增�
 必须写 ADR 的情形：§6.1 的单向门、预算调整、能力状态升级（`planned → experimental → stable`）、执行面变更。
 
 存放：`docs/adr/NNNN-title.md`，模板见 §11.3。
+
+索引：
+
+| ADR | 主题 | 状态 |
+|---|---|---|
+| 0001 | 单一执行路径 | accepted |
+| 0002 | 工具预算 12 → 16（betting/ledger/hand_rank） | accepted |
+| 0003 | 工具预算 16 → 17（`hidden_draw`） | accepted |
+| 0004 | 工具预算 17 → 18（`trigger`） | accepted |
+| 0005 | ComposedRulesIR + 确定性降层 | accepted（未实现） |
+| 0006 | 收窄原始 Plan 入口 | accepted（未实现） |
+| 0007 | Schema 版本与数据迁移 | accepted（未实现） |
+| 0008 | 验证证据与版本绑定 | accepted（未实现） |
+
+标「未实现」的 ADR 已做决策但代码未完成；它约束后续实施，**不得**被当作已完成能力引用。
 
 ---
 

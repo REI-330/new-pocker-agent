@@ -916,7 +916,9 @@ team             █              1
 - [x] 长驻进程陈旧检测：`/health` 暴露 `code` 指纹 + `doctor.py --url` + 启动器端口归属提示
 - [x] 轴状态与实现对齐：`Capability.note`（缺口必须说明）+ `stable` 不得建立在占位机制上 + 宏提升欠账为 0
 - [x] 外部审查缺陷批次：坏 plan 不再 500、plan 命名空间/指纹/不可变、session↔plan 绑定、牌 ID 与牌值、`failure` 语义、README/移动端/刷新恢复/测试连接/RulesPage
-- [ ] `contract_check(IR, Plan)` 语义对照 + 流程顺序强制 + 设计会话持久化 + `viewer/seat` 身份
+- [x] G2 M0：能力审计可执行化（拓出 2 处虚假轴声明）、验收场景 A/B/C 冻结、`docs/g2-capability-subset.md`、ADR-0005..0008
+- [ ] G2 M1 操作契约与通用动作 / M2 ComposedRulesIR 与编译器 / M3 验证与发布门禁 / M4 设计会话与 Agent / M5 通用前端 / M6 盲测
+- [ ] `contract_check(IR, Plan)` 语义对照 + 流程顺序强制 + `viewer/seat` 身份
 - [ ] 沙箱隔离协议
 
 ---

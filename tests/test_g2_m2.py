@@ -305,6 +305,114 @@ def test_control_flow_analysis_flags_unreachable_nodes_and_unbounded_cycles():
     assert report["inconclusive"] is True, "no bounded-counter knowledge means no claim"
 
 
+def shared_move_ir() -> dict:
+    """Scenario A variant whose round action moves from a *shared* source zone.
+
+    Regression for the P1 scope bug: a shared ``from_zone`` must compile to the
+    literal zone id, not ``$state.zone_<id>``.
+    """
+    payload = scenario_a_ir()
+    payload["zones"].append({"id": "market", "visibility": "public", "scope": "shared"})
+    payload["setup"] = {"deals": [{"zone": "hand", "count": 3, "per_seat": True},
+                                   {"zone": "market", "count": 6, "per_seat": False}],
+                        "stock_zone": "stock"}
+    payload["actions"][0]["inputs"] = [
+        {"id": "card", "kind": "card_selection", "zone": "market", "scope": "shared",
+         "min_count": 1, "max_count": 1}]
+    payload["actions"][0]["effects"] = [
+        {"kind": "select", "input": "card", "result": "picked"},
+        {"kind": "move", "from_zone": "market", "to_zone": "pot", "selection": "picked"},
+    ]
+    return payload
+
+
+def market_strategy(interpreter):
+    actions = interpreter.legal_actions()
+    if "play" not in actions:
+        return None
+    market = interpreter.state["zones"]["market"]["cards"]
+    return ("play", {"card": [market[0].id]})
+
+
+def test_a_shared_from_zone_compiles_to_the_literal_zone_id():
+    """P1 regression: scope-aware zone references, not a forced actor zone."""
+    compiled = compile_composed(parse_design_ir(shared_move_ir()), core_registry())
+    move = compiled.plan.nodes["act_play_1_move"].action.args["moves"][0]
+    assert move["from"] == "market"
+    assert move["to"] == "pot"
+    assert "zone_market" not in compiled.plan.nodes, "a shared zone needs no actor lookup"
+    report = playtest(compiled.plan, core_registry(), market_strategy, seeds=(0, 1))
+    assert report.ok, report.failures
+
+
+def test_a_player_from_zone_still_uses_the_actor_instance():
+    compiled = compile_composed(parse_design_ir(scenario_a_ir()), core_registry())
+    move = compiled.plan.nodes["act_play_1_move"].action.args["moves"][0]
+    assert move["from"] == "$state.zone_hand"
+    assert move["to"] == "pot"
+
+
+def test_input_scope_must_match_the_zone_scope():
+    payload = scenario_a_ir()
+    payload["actions"][0]["inputs"][0]["scope"] = "shared"   # hand is a player zone
+    with pytest.raises(ValidationError, match="shared_input_requires_shared_zone"):
+        parse_design_ir(payload)
+
+
+def test_a_move_top_cannot_target_a_player_zone():
+    payload = scenario_a_ir()
+    payload["flow"]["resolve"][1]["to_zone"] = "hand"
+    with pytest.raises(ValidationError, match="move_top_requires_shared_zone"):
+        parse_design_ir(payload)
+
+
+def test_assignment_types_are_checked_statically():
+    payload = scenario_a_ir(variables=[{"name": "label", "type": "integer", "initial": 0}],
+                            actions=[{**scenario_a_ir()["actions"][0], "effects": [
+                                *scenario_a_ir()["actions"][0]["effects"],
+                                {"kind": "assign", "variable": "label",
+                                 "value": {"op": "lit", "value": "nope"}}]}])
+    with pytest.raises(ValidationError, match="assign_type_mismatch"):
+        parse_design_ir(payload)
+    # arithmetic on a string literal is rejected by the type inferer
+    with pytest.raises(ValidationError, match="expression_type_mismatch"):
+        parse_design_ir(scenario_a_ir(
+            variables=[{"name": "n", "type": "integer", "initial": 0}],
+            actions=[{**scenario_a_ir()["actions"][0], "effects": [
+                *scenario_a_ir()["actions"][0]["effects"],
+                {"kind": "assign", "variable": "n", "value": {
+                    "op": "add", "left": {"op": "lit", "value": "a"},
+                    "right": {"op": "lit", "value": 1}}}]}]))
+    # a compatible typed assignment compiles
+    compatible = scenario_a_ir(
+        variables=[{"name": "n", "type": "integer", "initial": 0}],
+        actions=[{**scenario_a_ir()["actions"][0], "effects": [
+            *scenario_a_ir()["actions"][0]["effects"],
+            {"kind": "assign", "variable": "n", "value": {
+                "op": "add", "left": {"op": "ref", "path": "action_count"},
+                "right": {"op": "lit", "value": 1}}}]}])
+    compile_composed(parse_design_ir(compatible), core_registry())
+
+
+def test_a_compare_position_must_be_filled_by_the_round_action():
+    payload = scenario_a_ir()
+    payload["flow"]["resolve"][0]["left"] = 3    # capacity is only 2
+    with pytest.raises(ValidationError, match="compare_zone_too_small"):
+        parse_design_ir(payload)
+
+
+def test_zones_count_operations_declare_their_real_shapes():
+    """Close the review note: ``count`` is state-only, ``count_zone`` requires a zone."""
+    registry = core_registry()
+    every = registry.spec("zones").operation("count")
+    one = registry.spec("zones").operation("count_zone")
+    assert every.input_schema["required"] == ["state"]
+    assert "zone" not in every.input_schema["properties"]
+    assert every.output_schema["required"] == ["counts"]
+    assert one.input_schema["required"] == ["state", "zone"]
+    assert one.output_schema["required"] == ["zone", "count"]
+
+
 def test_scenario_a_compiles_and_simulates_a_full_game():
     compiled = compile_composed(parse_design_ir(scenario_a_ir()), core_registry())
     report = playtest(compiled.plan, core_registry(), smallest_card_strategy,

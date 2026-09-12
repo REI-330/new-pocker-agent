@@ -151,11 +151,17 @@ class _Compiler:
         self._call(node_id, "logic", "evaluate", {"expression": expression}, next_id,
                    path, result_key=result_key)
 
-    def _zone_arg(self, zone_id: str, scope: str = "actor") -> str:
+    def _zone_arg(self, zone_id: str) -> str:
+        """The plan argument for a zone: the actor's instance, or the shared id.
+
+        The *declared* zone scope decides this. Forcing ``actor`` here (the old
+        bug) turned a shared ``from_zone`` into ``$state.zone_pot`` and failed at
+        run time; a player zone is always the acting seat's own instance.
+        """
         zone = self.ir.zone(zone_id)
         if zone is None:
             self._fail("unknown_zone", zone_id, f"zones.{zone_id}")
-        if scope == "actor" or zone.scope == "player":
+        if zone.scope == "player":
             return f"$state.zone_{_safe(zone_id)}"
         return zone_id
 
@@ -171,8 +177,7 @@ class _Compiler:
     def _actor_zone_ids(self) -> list[str]:
         found: set[str] = set()
         for item in self.action.inputs:
-            if item.scope == "actor":
-                found.add(item.zone)
+            found.add(item.zone)
         for effect in self.action.effects:
             if isinstance(effect, MoveSelectionEffect):
                 found.add(effect.from_zone)
@@ -300,7 +305,7 @@ class _Compiler:
                 self._call(node_id, "zones", "move",
                            {"state": "$state", "moves": [{
                                "from": self._zone_arg(effect.from_zone),
-                               "to": self._zone_arg(effect.to_zone, "shared"),
+                               "to": self._zone_arg(effect.to_zone),
                                "card_ids": f"$state.sel_{effect.selection}.ids",
                                "min_count": low, "max_count": high}]},
                            "PENDING", path)
@@ -333,7 +338,7 @@ class _Compiler:
 
     def _input_zone_arg(self, input_id: str) -> str:
         item = next(item for item in self.action.inputs if item.id == input_id)
-        return self._zone_arg(item.zone, item.scope)
+        return self._zone_arg(item.zone)
 
     def _after_turn_nodes(self) -> None:
         self._eval("advance_turn", {"add": ["$state.action_count", 1]}, "next_action_count",

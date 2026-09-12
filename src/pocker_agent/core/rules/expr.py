@@ -159,6 +159,99 @@ def validate_expression(expr: Any, declared_variables: frozenset[str]) -> None:
                 raise ToolError(f"expression_unknown_variable:{name}")
 
 
+# Static expression types. ``any`` is the honest answer when a value's type is
+# not knowable at compile time (e.g. an action input); it is never used to reject
+# a valid rule, only to avoid a false rejection.
+INTEGER = "integer"
+BOOLEAN = "boolean"
+STRING = "string"
+INTEGER_LIST = "integer_list"
+ANY_TYPE = "any"
+
+
+def _literal_type(value: Any) -> str:
+    if isinstance(value, bool):
+        return BOOLEAN
+    if isinstance(value, int):
+        return INTEGER
+    if isinstance(value, str):
+        return STRING
+    if isinstance(value, list) and all(isinstance(item, int) and not isinstance(item, bool)
+                                       for item in value):
+        return INTEGER_LIST
+    return ANY_TYPE
+
+
+def _ref_type(path: str, variable_types: dict[str, str]) -> str:
+    if path.startswith("variables."):
+        return variable_types.get(path[len("variables."):], ANY_TYPE)
+    if path == "scores":
+        return INTEGER_LIST
+    if path.startswith("scores."):
+        return INTEGER
+    if path in {"round", "actor", "action_count"}:
+        return INTEGER
+    return ANY_TYPE  # input.* -- the action input's type is decided at run time
+
+
+def _merge(*types: str) -> str:
+    return ANY_TYPE if ANY_TYPE in types else types[0]
+
+
+def infer_type(expr: Any, variable_types: dict[str, str] | None = None) -> str:
+    """Statically infer an expression's type, or ``any`` when it cannot be known.
+
+    Raises ``ToolError`` when an operator is applied to an operand of the wrong
+    type (e.g. arithmetic on a string literal), so a rule cannot silently produce
+    an integer variable from ``join``.
+    """
+    from ..contracts import ToolError
+
+    types = variable_types or {}
+    if not isinstance(expr, BaseModel):
+        return _literal_type(expr)
+    op = getattr(expr, "op", None)
+    if op == "lit":
+        return _literal_type(expr.value)
+    if op == "ref":
+        return _ref_type(expr.path, types)
+    if op == "not":
+        operand = infer_type(expr.operand, types)
+        if operand not in {BOOLEAN, ANY_TYPE}:
+            raise ToolError(f"expression_type_mismatch:not:{operand}")
+        return BOOLEAN
+    if op in _ARITHMETIC:
+        left, right = infer_type(expr.left, types), infer_type(expr.right, types)
+        if INTEGER not in {left, ANY_TYPE} or INTEGER not in {right, ANY_TYPE}:
+            raise ToolError(f"expression_type_mismatch:{op}:{left}:{right}")
+        return INTEGER
+    if op in _COMPARISONS:
+        left, right = infer_type(expr.left, types), infer_type(expr.right, types)
+        if op != "eq" and (INTEGER not in {left, ANY_TYPE} or INTEGER not in {right, ANY_TYPE}):
+            raise ToolError(f"expression_type_mismatch:{op}:{left}:{right}")
+        return BOOLEAN
+    if op in ("all", "any"):
+        for item in expr.items:
+            if infer_type(item, types) not in {BOOLEAN, ANY_TYPE}:
+                raise ToolError(f"expression_type_mismatch:{op}")
+        return BOOLEAN
+    if op == "count":
+        operand = infer_type(expr.operand, types)
+        if operand not in {INTEGER_LIST, STRING, ANY_TYPE}:
+            raise ToolError(f"expression_type_mismatch:count:{operand}")
+        return INTEGER
+    if op == "join":
+        for item in expr.items:
+            infer_type(item, types)
+        return STRING
+    raise ToolError(f"unknown_expression_operation:{op}")
+
+
+def check_assignable(actual: str, target: str) -> bool:
+    """Whether a value of ``actual`` type may be stored in a ``target`` variable."""
+    return actual == ANY_TYPE or actual == target
+
+
 def compile_expression(expr: Any) -> Any:
     """Lower a typed AST into the ``logic.evaluate`` payload.
 

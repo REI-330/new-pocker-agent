@@ -16,7 +16,15 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .expr import RESERVED_STATE_NAMES, Expr, validate_expression
+from .expr import (
+    ANY_TYPE,
+    BOOLEAN,
+    RESERVED_STATE_NAMES,
+    Expr,
+    check_assignable,
+    infer_type,
+    validate_expression,
+)
 
 # Budgets (development-plan-phase2 section 7). Raising one is an architecture
 # decision recorded in review, not a diff side effect.
@@ -210,6 +218,9 @@ class ComposedRulesIR(_Strict):
     def variable_names(self) -> frozenset[str]:
         return frozenset(item.name for item in self.variables)
 
+    def variable_types(self) -> dict[str, str]:
+        return {item.name: item.type for item in self.variables}
+
     # ------------------------------------------------------------ validation
     @model_validator(mode="after")
     def executable(self) -> ComposedRulesIR:
@@ -293,6 +304,10 @@ class ComposedRulesIR(_Strict):
         for action in self.actions:
             if action.guard is not None:
                 validate_expression(action.guard, self.variable_names)
+                guard_type = infer_type(action.guard, self.variable_types())
+                if guard_type not in {BOOLEAN, ANY_TYPE}:
+                    raise ValueError(
+                        f"guard_type_mismatch:{action.id}:{guard_type}")
             self._check_action_effects(action)
 
     def _check_action_effects(self, action: ActionSpec) -> None:
@@ -315,20 +330,30 @@ class ComposedRulesIR(_Strict):
                     raise ValueError(f"move_unknown_selection:{action.id}:{effect.selection}")
             elif isinstance(effect, MoveTopEffect):
                 for zone_id in (effect.from_zone, effect.to_zone):
-                    if self.zone(zone_id) is None:
+                    zone = self.zone(zone_id)
+                    if zone is None:
                         raise ValueError(f"move_top_unknown_zone:{action.id}:{zone_id}")
+                    if zone.scope != "shared":
+                        raise ValueError(f"move_top_requires_shared_zone:{action.id}:{zone_id}")
             elif isinstance(effect, AssignEffect):
-                if self.variable(effect.variable) is None:
+                variable = self.variable(effect.variable)
+                if variable is None:
                     raise ValueError(f"assign_unknown_variable:{action.id}:{effect.variable}")
                 validate_expression(effect.value, self.variable_names)
+                actual = infer_type(effect.value, self.variable_types())
+                if not check_assignable(actual, variable.type):
+                    raise ValueError(
+                        f"assign_type_mismatch:{action.id}:{effect.variable}:{actual}!={variable.type}")
             elif isinstance(effect, CompareEffect):
                 raise ValueError(f"compare_is_a_flow_resolve_effect:{action.id}")
         for item in action.inputs:
-            if self.zone(item.zone) is None:
-                raise ValueError(f"input_unknown_zone:{action.id}:{item.zone}")
             zone = self.zone(item.zone)
-            if item.scope == "actor" and zone is not None and zone.scope != "player":
+            if zone is None:
+                raise ValueError(f"input_unknown_zone:{action.id}:{item.zone}")
+            if item.scope == "actor" and zone.scope != "player":
                 raise ValueError(f"actor_input_requires_player_zone:{action.id}:{item.zone}")
+            if item.scope == "shared" and zone.scope != "shared":
+                raise ValueError(f"shared_input_requires_shared_zone:{action.id}:{item.zone}")
             if item.max_count < item.min_count:
                 raise ValueError(f"input_bounds_invalid:{action.id}:{item.id}")
 
@@ -347,14 +372,49 @@ class ComposedRulesIR(_Strict):
                 for rule in effect.rules:
                     if rule not in rules:
                         raise ValueError(f"compare_unknown_scoring_rule:{rule}")
+                self._check_compare_capacity(effect)
             elif isinstance(effect, MoveTopEffect):
                 for zone_id in (effect.from_zone, effect.to_zone):
-                    if self.zone(zone_id) is None:
+                    zone = self.zone(zone_id)
+                    if zone is None:
                         raise ValueError(f"move_top_unknown_zone:{zone_id}")
+                    if zone.scope != "shared":
+                        raise ValueError(f"move_top_requires_shared_zone:{zone_id}")
             elif isinstance(effect, SelectEffect | MoveSelectionEffect | AssignEffect):
                 raise ValueError(f"resolve_effect_not_allowed:{effect.kind}")
         if not self.flow.resolve:
             raise ValueError("flow_resolve_required")
+
+    def _check_compare_capacity(self, effect: CompareEffect) -> None:
+        """Guarantee the compared positions will actually be filled at resolve time.
+
+        Cards enter the zone from the round action every turn; the guaranteed
+        count is ``players * sum(min_count of moves into the zone)`` plus any
+        ``move_top`` that runs before this compare. This is a static lower bound,
+        so a rule that could index an empty slot is rejected at parse time rather
+        than failing mid-game with ``state_reference_not_found``.
+        """
+        select_by_result = {e.result: e for e in self.action(self.flow.round_action).effects
+                            if isinstance(e, SelectEffect)}
+        input_min = {item.id: item.min_count
+                     for item in self.action(self.flow.round_action).inputs}
+        per_turn = 0
+        for item in self.action(self.flow.round_action).effects:
+            if not isinstance(item, MoveSelectionEffect) or item.to_zone != effect.zone:
+                continue
+            select = select_by_result.get(item.selection)
+            if select is not None:
+                per_turn += input_min.get(select.input, 0)
+        guaranteed = per_turn * self.players.count
+        for item in self.flow.resolve:
+            if item is effect:
+                break
+            if isinstance(item, MoveTopEffect) and item.to_zone == effect.zone:
+                guaranteed += item.count
+        needed = max(effect.left, effect.right) + 1
+        if guaranteed < needed:
+            raise ValueError(
+                f"compare_zone_too_small:{effect.zone}:{guaranteed}<{needed}")
 
     def _check_macros(self) -> None:
         if self.macros:

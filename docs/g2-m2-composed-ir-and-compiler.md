@@ -50,6 +50,7 @@ parse_design_ir(payload)     # 接受 composed
 
 - `eval` / 动态 import / 反射 / 任意状态路径 / 卡片对象字段直读 **在 Schema 层被拒**（`path` 有严格正则，`op` 是闭集判别符）。
 - 深度 ≤ `MAX_EXPR_DEPTH`(12)；引用必须指向已声明变量（`validate_expression`）。
+- **静态类型推导**（`infer_type`）：字面量/引用/运算的类型推导到 `integer`/`boolean`/`string`/`integer_list`/`any`。算术只收整数、布尔只收 bool、`count` 只收集合/字符串；`assign` 目标变量类型必须匹配（整数变量赋字符串报 `assign_type_mismatch`），`guard` 必须是布尔（报 `guard_type_mismatch`）。`any` 只用于「编译期不可知」（如 `input.*`），不会否定合法规则。
 - 降层为 `logic.evaluate` 的嵌套表达式，引用变成 `$state.<path>` 字符串；解释器只解析、不求值代码。
 
 ## 3. 能力推导与解析（M2.2）
@@ -77,6 +78,8 @@ parse_design_ir(payload)     # 接受 composed
 | 回合/轮次/终局 | `round_start` → `second_seat` → `zone_<z>` → `turn(wait)` → 动作效果 → `advance_turn` → `turn_check` → `resolve_*` → `end_round` → `round_check` → `finish/declare/end` |
 | `select` | `zones.select(state, zone=$state.zone_<z>, card_ids=$state.input.<id>, min,max)` |
 | `move` | `zones.move`（原子，按选择结果的 `ids`） |
+
+**区域引用按声明的 scope 生成**（P1 修复）：player zone → `$state.zone_<id>`（当前行动座位自己的实例）；shared zone → **字面量 id**。禁止把 shared `from_zone` 强行当作 actor zone，否则 `pot → discard` 会编译成 `$state.zone_pot` 并在运行时 `state_reference_not_found`。`move_top` 只能作用于 shared zone（resolve 无行动座位），`input.scope` 必须与 zone scope 一致。
 | `move_top` | 有界展开为 `zones.top` + `zones.move` ×count |
 | `compare` | `rank_compare.call` → `branch($state.cmp.outcome)` → 各 outcome 的 `score_settle.call` |
 | `assign` | `logic.evaluate` → `state.update(v_<name>)` |
@@ -95,6 +98,8 @@ parse_design_ir(payload)     # 接受 composed
 - 每个环都经过一个**显式有界计数器**节点：回合环经 `set_turn_index`（界=`players`），轮次环经 `set_round`（界=`terminal.max_rounds`）；未被计数器约束的环报 `unbounded_cycle`。
 
 分析器在**没有**计数器知识时返回 `inconclusive=True`，即「不能证明终止」而不是「已证明终止」；编译器自身只生成上述两种有界环。
+
+**compare 位置容量检查**：`CompareEffect` 的 `left/right` 不仅要≤上限，还必须在解析期证明该区域会被填满到对应位置——保证量 = `players × Σ(回合动作中移入该区的选择 min_count)` + 该 compare 之前 `move_top` 的移入数；不足则报 `compare_zone_too_small`，不依赖运行时索引错误。
 
 ### 4.1 source map
 
@@ -133,6 +138,7 @@ uv run python scripts/e2e_smoke.py http://127.0.0.1:8012
 ## 7. 未做 / 降级（诚实说明）
 
 1. **场景 B/C 尚未编译**：M2 的编译器覆盖「选择 → 移动 → 比较 → 计分 → 阶段」语义节点。B（跳过、按花色计分、摸牌/pass、阈值终局）与 C（双区域选择、成对移除、补牌）需要新的效果种类（`branch_score`、`draw`、`pass`、`remove_pairs`）与动作内条件输入，属 M3 欠账；本包不假装其可表达。
+   - 注：C 的「双区域选择」所需的区域作用域基础已就绪（player/shared 各自生成正确引用），但「一个动作两个区选择」的选择器编排仍待补。
 2. **宏未编译**：`macros` 非空即拒（M4）。
 3. **Plan `0.5` 绑定拆分未做**：`binding_id`/`tool_type` 与 `GameArtifact` 一起在 M3 落地；本包沿用 `0.4` 字段集。
 4. **Agent/HTTP 入口未接**：`parse_design_ir` 已存在，但元工具与 `/api` 未暴露 composed（M4/M5）；`/api/games` 不注册组合产物。
@@ -140,9 +146,18 @@ uv run python scripts/e2e_smoke.py http://127.0.0.1:8012
 6. **M1 开发样例仍在**：`core/compositions.py` 是 M1 证据，未删除；删除判据 = M2 编译样例被 M5 采用、且无 M1 测试引用（ADR-0009 已记录 `matching` 的删除判据）。
 7. **能力轴未扩展**：`capability.py` 未改；牌区/选择以 operation 粒度解析，不新增 axis。
 
+### 7.1 复核修复（基线 `cc349e0`）
+
+| 级别 | 问题 | 处理 |
+|---|---|---|
+| P1 | `MoveSelectionEffect` 的 shared `from_zone` 被按 actor zone 生成 `$state.zone_x` | 改为按声明 scope 生成：player→actor 实例，shared→字面量 id；新增 shared→shared 可运行回归与 player→shared 断言 |
+| P2 | 变量赋值无表达式结果类型检查 | 新增 `infer_type`/`check_assignable`；`assign`/`guard` 静态类型校验 |
+| P2 | `CompareEffect.left/right` 未验证区域实际够大 | 新增 `_check_compare_capacity` 静态下界（`compare_zone_too_small`） |
+| — | 复核称 `zones.count` 仍带必需 `zone` 与二选一输出 | **复核有误**：`registry.py:369-373` 的 `count` 已是 `required=["state"]`、`outputs={counts}`；带 `zone` 的是 `count_zone`。由 `test_zones_count_operations_declare_their_real_shapes` 固定（M1 已修） |
+
 ## 8. 本包测试与运行结果
 
-- `uv run --frozen pytest -q` → **244 passed**（M1 基线 227；M2 新增 `tests/test_g2_m2.py` 17 项）。
+- `uv run --frozen pytest -q` → **251 passed**（M1 基线 227；M2 新增 `tests/test_g2_m2.py` 24 项）。
 - 架构不变量（含递归扫描新子包）→ 全部通过。
 - `uvx --offline ruff check <CI 列表 + tests/test_g2_m2.py>` → All checks passed。
 - 专用目录 `artifacts/g2-runtime`、端口 **8012** 启动当前 checkout：

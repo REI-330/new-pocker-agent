@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -80,6 +81,8 @@ class VerificationResult:
             failures=tuple(failures), checks=tuple(checks), contract=dict(contract or {}))
 
     def as_dict(self) -> dict[str, Any]:
+        # Deep copies: the credential is immutable data, so a caller must not be
+        # able to mutate the host's stored contract through the returned mapping.
         return {"verification_id": self.verification_id, "ok": self.ok,
                 "plan_hash": self.plan_hash,
                 "registry_contract_hash": self.registry_contract_hash,
@@ -87,7 +90,7 @@ class VerificationResult:
                 "ir_hash": self.ir_hash, "compiler_version": self.compiler_version,
                 "covered_wait_nodes": list(self.covered_wait_nodes),
                 "failures": list(self.failures), "checks": list(self.checks),
-                "contract": dict(self.contract)}
+                "contract": deepcopy(self.contract)}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> VerificationResult:
@@ -100,7 +103,7 @@ class VerificationResult:
                    covered_wait_nodes=tuple(data.get("covered_wait_nodes", ())),
                    failures=tuple(data.get("failures", ())),
                    checks=tuple(data.get("checks", ())),
-                   contract=dict(data.get("contract", {})))
+                   contract=deepcopy(data.get("contract", {})))
 
 
 @dataclass(frozen=True)
@@ -123,27 +126,30 @@ class GameArtifact:
     schema_version: str = ARTIFACT_SCHEMA_VERSION
 
     def as_dict(self) -> dict[str, Any]:
+        # ``plan``/``ir``/``source_map`` are mutable dicts behind a frozen
+        # dataclass; return copies so a stored artifact cannot be edited in place.
         return {"schema_version": self.schema_version, "game_id": self.game_id,
                 "version": self.version, "title": self.title,
-                "generation_source": self.generation_source, "plan": self.plan,
+                "generation_source": self.generation_source, "plan": deepcopy(self.plan),
                 "plan_hash": self.plan_hash,
                 "verification_id": self.verification_id,
                 "registry_contract_hash": self.registry_contract_hash,
-                "ir": self.ir, "ir_hash": self.ir_hash,
+                "ir": deepcopy(self.ir), "ir_hash": self.ir_hash,
                 "compiler_version": self.compiler_version,
-                "source_map": self.source_map,
+                "source_map": deepcopy(self.source_map),
                 "approval_ir_hash": self.approval_ir_hash}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GameArtifact:
         return cls(game_id=data["game_id"], version=int(data["version"]),
                    title=data.get("title", data["game_id"]),
-                   generation_source=data["generation_source"], plan=data["plan"],
-                   plan_hash=data["plan_hash"], verification_id=data["verification_id"],
+                   generation_source=data["generation_source"],
+                   plan=deepcopy(data["plan"]), plan_hash=data["plan_hash"],
+                   verification_id=data["verification_id"],
                    registry_contract_hash=data["registry_contract_hash"],
-                   ir=data.get("ir"), ir_hash=data.get("ir_hash"),
+                   ir=deepcopy(data.get("ir")), ir_hash=data.get("ir_hash"),
                    compiler_version=data.get("compiler_version"),
-                   source_map=data.get("source_map"),
+                   source_map=deepcopy(data.get("source_map")),
                    approval_ir_hash=data.get("approval_ir_hash"),
                    schema_version=data.get("schema_version", ARTIFACT_SCHEMA_VERSION))
 
@@ -180,6 +186,6 @@ def build_artifact(*, game_id: str, version: int, title: str, plan: GamePlan | d
         game_id=game_id, version=int(version), title=title,
         generation_source=generation_source, plan=validated.model_dump(mode="json"),
         plan_hash=actual, verification_id=verification.verification_id,
-        registry_contract_hash=verification.registry_contract_hash, ir=ir,
+        registry_contract_hash=verification.registry_contract_hash, ir=deepcopy(ir),
         ir_hash=verification.ir_hash, compiler_version=verification.compiler_version,
-        source_map=source_map, approval_ir_hash=approval_ir_hash)
+        source_map=deepcopy(source_map), approval_ir_hash=approval_ir_hash)

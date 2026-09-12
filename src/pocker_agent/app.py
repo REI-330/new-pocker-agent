@@ -133,7 +133,7 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
     async def bad_value(request, error):
         message = str(error)
         conflict = ("stale_revision", "plan_changed", "plan_already_registered",
-                    "game_id_reserved")
+                    "game_id_reserved", "request_id_conflict")
         status = 409 if message.startswith(conflict) else 422
         return JSONResponse(status_code=status, content={"detail": message})
 
@@ -193,8 +193,11 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
         registered = False
         if result.finalized and result.plan and result.ir:
             try:
-                store.register_plan(result.ir["game_id"], result.plan, result.playtest or {},
-                                    result.ir.get("title", ""))
+                # Host gate: re-verify with a host-chosen policy, then register an
+                # immutable artifact. The loop's own playtest report is not used
+                # as evidence (ADR-0008).
+                store.verify_and_register_plan(result.ir["game_id"], result.plan,
+                                               result.ir.get("title", ""))
                 registered = True
             except ValueError as error:
                 # The design itself is still valid and worth showing; only the

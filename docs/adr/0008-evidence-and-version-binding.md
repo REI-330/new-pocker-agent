@@ -2,8 +2,8 @@
 
 - 日期：2026-09-12
 - 状态：accepted（**实现状态：部分实现**，M3 进行中）
-  - 已实现：`core/artifacts.py`（`VerificationResult`/`GameArtifact` 与内容绑定的 `verification_id`）；`core/verify/` 发布服务（规范化 IR → 能力解析 → 编译 → 动态验证 → 独立 `contract_check` → 产出不可变 artifact）；输入日志录制与重放（逐步 `state['input']` + 每操作状态摘要，事件与状态分别比较）；`SessionStore.record_verification`/`register_artifact`/`verify_and_register` 与按版本恢复；正式策略含目标分支 `goal_first`；类型化不变量（牌区守恒、得分边界、视角安全、终局可解释）；变异测试（改分值/赢家/轮数/可见性/比较位置均由独立监测器拒绝）；`act` 内存与 SQLite 均为原子提交（机器人失败回滚、revision 不变），`request_id` 重复提交去重（持久化，有界）。
-  - 未实现：`binding_id`/`tool_type`；旧 `core_agent_plans` 行迁移为 artifact；Agent/API 消费者切换到 artifact 路径。
+  - 已实现：`core/artifacts.py`（`VerificationResult`/`GameArtifact` 与内容绑定的 `verification_id`；`as_dict`/`from_dict` 深拷贝，防止调用方改内存存储）；`core/verify/` 发布服务（规范化 IR → 能力解析 → 编译 → 动态验证 → 独立 `contract_check` → 产出不可变 artifact）；输入日志录制与重放（逐步 `state['input']` + 每操作状态摘要，事件与状态分别比较）；`SessionStore.record_verification`/`register_artifact`/`verify_and_register`/`verify_and_register_plan`（Agent 主链已改为宿主重跑验证后注册，不再信任调用方报告）与按版本恢复；正式策略含目标分支 `goal_first`；类型化不变量（牌区守恒、得分边界、视角安全、终局可解释）；变异测试（改分值/赢家/轮数/可见性/比较位置均由独立监测器拒绝）；`act` 内存与 SQLite 均为原子提交（机器人失败回滚、revision 不变），`request_id` 重复提交去重（持久化、有界，并绑定 action/payload 指纹，同 key 不同内容报 `request_id_conflict`）。
+  - 未实现：`binding_id`/`tool_type`；旧 `core_agent_plans` 行迁移为 artifact（`register_plan` 作为兼容读取保留）；composed 设计链路（M4/M5）切换到 artifact 路径。
 - 决策者：架构 owner
 
 ## 背景

@@ -168,6 +168,20 @@ def test_a_repeated_request_id_is_not_applied_twice(tmp_path):
     assert c.get(f"/api/sessions/{session_id}").json()["revision"] == 1
 
 
+def test_reusing_a_request_id_with_a_different_body_is_a_conflict(tmp_path):
+    c = client(tmp_path)
+    state = c.post("/api/sessions", json={"game_id": "arithmetic24", "seed": 7}).json()
+    session_id = state["session_id"]
+    answer = solve(tuple(state["numbers"]))
+    assert c.post(action_path(session_id, "submit_expression"),
+                  json={"revision": 0, "expression": answer,
+                        "request_id": "key"}).status_code == 200
+    conflict = c.post(action_path(session_id, "submit_expression"),
+                      json={"revision": 0, "expression": "1+2", "request_id": "key"})
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"].startswith("request_id_conflict")
+
+
 def test_session_survives_an_app_restart(tmp_path):
     database = tmp_path / "persist.db"
     first = TestClient(create_app(database))
@@ -279,7 +293,12 @@ def test_agent_composes_a_game_and_it_becomes_playable_over_http(tmp_path):
 
     game_id = result["ir"]["game_id"]
     games = c.get("/api/games").json()["games"]
-    assert any(game["id"] == game_id and game.get("source") == "agent_compose" for game in games)
+    # The agent loop host-compiles a known IR, so the artifact records
+    # generation_source=known_parameters (ADR-0008), now behind a host-issued
+    # verification credential and an immutable version.
+    registered = next(game for game in games if game["id"] == game_id)
+    assert registered["source"] == "known_parameters"
+    assert registered["version"] == 1 and registered["verification_id"]
 
     state = c.post("/api/sessions", json={"game_id": game_id, "seed": 3}).json()
     session_id = state["session_id"]

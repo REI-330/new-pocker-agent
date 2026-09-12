@@ -254,3 +254,71 @@ def test_processed_request_ids_survive_a_reload(tmp_path):
     replay = reopened.act(session.id, "play", 0, request_id="retry-1", **payload)
     assert replay == first
     assert reopened.get(session.id).revision == 1
+
+
+def test_a_request_id_with_a_different_body_conflicts(tmp_path):
+    from pocker_agent.core.actions import descriptor_for, payload_for
+
+    store = SessionStore(tmp_path / "dedup.db")
+    store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="对局")
+    session = store.create("duel", seed=3)
+    descriptor = descriptor_for(session.plan, "play")
+    payload = payload_for(session.interpreter.state, descriptor)
+    store.act(session.id, "play", 0, request_id="key", **payload)
+    with pytest.raises(ValueError, match="request_id_conflict"):
+        store.act(session.id, "play", 0, request_id="key", card=["9H"])
+
+
+# ------------------------------------------------- immutability of the artifact
+def test_an_artifact_cannot_be_edited_through_its_output(tmp_path):
+    store = SessionStore(tmp_path / "artifact.db")
+    artifact = store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="对局")
+    exposed = artifact.as_dict()
+    exposed["plan"]["players"] = 99
+    exposed["title"] = "tampered"
+    exposed["ir"]["meta"]["title"] = "tampered"
+    stored = store.list_versions("duel")[0]
+    assert stored["plan"]["players"] != 99
+    assert stored["title"] == "对局"
+    assert stored["ir"]["meta"]["title"] != "tampered"
+    # ...and mutating the dataclass's own plan dict must not reach the store
+    artifact.plan["players"] = 99
+    assert store.list_versions("duel")[0]["plan"]["players"] != 99
+
+
+# ---------------------------------------------- host-verified agent registration
+def test_the_agent_registration_path_is_host_verified_and_idempotent(tmp_path):
+    from pocker_agent.core.plans import war_plan
+
+    store = SessionStore(tmp_path / "agent.db")
+    plan = war_plan(max_rounds=3).model_dump(mode="json")
+    artifact = store.verify_and_register_plan("agent-war", plan, "Agent War")
+    assert artifact.generation_source == "known_parameters"
+    assert artifact.verification_id
+    game = next(item for item in store.list_games() if item["id"] == "agent-war")
+    assert game["source"] == "known_parameters" and game["version"] == 1
+    again = store.verify_and_register_plan("agent-war", plan, "Agent War")
+    assert again.version == artifact.version
+    assert len(store.list_versions("agent-war")) == 1
+    # a changed rule set becomes a new immutable version
+    changed = war_plan(max_rounds=5).model_dump(mode="json")
+    newer = store.verify_and_register_plan("agent-war", changed, "Agent War")
+    assert newer.version == 2
+    assert len(store.list_versions("agent-war")) == 2
+
+
+def test_the_agent_registration_path_refuses_a_reserved_id(tmp_path):
+    from pocker_agent.core.plans import war_plan
+
+    store = SessionStore(tmp_path / "agent.db")
+    with pytest.raises(ValueError, match="game_id_reserved:war"):
+        store.verify_and_register_plan("war", war_plan(max_rounds=3).model_dump(mode="json"))
+
+
+def test_the_agent_registration_path_rejects_an_unplayable_plan(tmp_path):
+    store = SessionStore(tmp_path / "agent.db")
+    broken = {"schema_version": "0.4", "game_kind": "war", "players": 2,
+              "tools": [{"name": "deck"}], "initial": {}, "entry": "end",
+              "nodes": {"end": {"kind": "end"}}}
+    with pytest.raises(ValueError, match="verification_failed"):
+        store.verify_and_register_plan("agent-broken", broken)

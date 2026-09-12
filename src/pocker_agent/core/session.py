@@ -19,6 +19,7 @@ whatever now happens to sit under the same game id.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import threading
@@ -29,17 +30,29 @@ from pathlib import Path
 from typing import Any
 
 from ..storage import connect
-from .artifacts import GameArtifact, VerificationResult
+from .artifacts import GameArtifact, VerificationResult, build_artifact
 from .interpreter import Interpreter
 from .plan import GamePlan, plan_fingerprint
-from .policy import run_bots
+from .policy import bot_action, run_bots
 from .reference import REFERENCE_GAMES, build_plan, ensure_playtested, list_reference_games
 from .registry import core_registry
-from .verify import VERIFICATION_SEEDS, VERIFICATION_STRATEGIES, publish_composed
+from .verify import (
+    VERIFICATION_SEEDS,
+    VERIFICATION_STRATEGIES,
+    publish_composed,
+    verify_plan,
+)
 
 # How many recent idempotency keys a session remembers. Enough for a retry
 # window without letting a long game grow the persisted payload without bound.
 MAX_PROCESSED_REQUESTS = 16
+
+
+def _request_fingerprint(action: str, payload: dict[str, Any]) -> str:
+    """Content identity of a human request, independent of when it arrives."""
+    canonical = json.dumps({"action": action, "payload": payload}, sort_keys=True,
+                           ensure_ascii=False, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass
@@ -108,7 +121,7 @@ class SessionStore:
 
     def _stored_plans(self) -> dict[str, dict[str, Any]]:
         if not self.path:
-            return dict(self.plans)
+            return deepcopy(self.plans)
         with connect(self.path) as db:
             rows = db.execute("SELECT game_id, payload FROM core_agent_plans").fetchall()
         return {game_id: json.loads(payload) for game_id, payload in rows}
@@ -127,7 +140,7 @@ class SessionStore:
 
     def _stored_verifications(self) -> dict[str, dict[str, Any]]:
         if not self.path:
-            return dict(self.verifications)
+            return deepcopy(self.verifications)
         with connect(self.path) as db:
             rows = db.execute("SELECT verification_id, payload FROM core_verifications").fetchall()
         return {verification_id: json.loads(payload) for verification_id, payload in rows}
@@ -189,9 +202,53 @@ class SessionStore:
         self.register_artifact(artifact)
         return artifact
 
+    @staticmethod
+    def _host_strategies(plan: GamePlan) -> tuple[Any, ...]:
+        """The host-owned policy for a plan, chosen by mechanism family.
+
+        A known family reuses the reference strategy that already gates it; an
+        agent-authored plan uses the host bot policy. The caller never supplies
+        the policy, so it cannot pick a lenient gate.
+        """
+        for game in REFERENCE_GAMES.values():
+            if game.kind == plan.game_kind:
+                return (game.strategy,)
+        return (bot_action,)
+
+    def verify_and_register_plan(self, game_id: str, plan: GamePlan | dict[str, Any],
+                                 title: str = "", *, strategies: Any = None,
+                                 seeds: Any = None,
+                                 generation_source: str = "known_parameters") -> GameArtifact:
+        """Host gate for the agent path: verify with host policies, then register.
+
+        The caller's playtest report is never used as evidence; the host re-runs
+        the gate with a policy it chose. Re-registering the same plan is
+        idempotent, while a new rule set takes a new version.
+        """
+        if game_id in REFERENCE_GAMES:
+            raise ValueError(f"game_id_reserved:{game_id}")
+        validated = plan if isinstance(plan, GamePlan) else GamePlan.model_validate(plan)
+        chosen = tuple(strategies) if strategies else self._host_strategies(validated)
+        chosen_seeds = tuple(seeds) if seeds else VERIFICATION_SEEDS
+        result = verify_plan(validated, core_registry(), strategies=chosen,
+                             seeds=chosen_seeds)
+        if not result.ok:
+            raise ValueError("verification_failed:" + "; ".join(result.failures))
+        fingerprint = plan_fingerprint(validated)
+        existing = self._find_artifact(game_id, None)
+        if existing is not None and existing["plan_hash"] == fingerprint:
+            return GameArtifact.from_dict(existing)
+        version = 1 if existing is None else int(existing["version"]) + 1
+        artifact = build_artifact(game_id=game_id, version=version,
+                                  title=title or validated.game_kind, plan=validated,
+                                  verification=result, generation_source=generation_source)
+        self.record_verification(result)
+        self.register_artifact(artifact)
+        return artifact
+
     def _stored_artifacts(self) -> dict[tuple[str, int], dict[str, Any]]:
         if not self.path:
-            return dict(self.artifacts)
+            return deepcopy(self.artifacts)
         with connect(self.path) as db:
             rows = db.execute("SELECT game_id, version, payload FROM core_artifacts").fetchall()
         return {(game_id, version): json.loads(payload) for game_id, version, payload in rows}
@@ -303,8 +360,16 @@ class SessionStore:
         """
         with self.lock:
             session = self.get(session_id)
-            if request_id and request_id in session.processed:
-                return deepcopy(session.processed[request_id])
+            fingerprint = _request_fingerprint(action, payload)
+            if request_id:
+                entry = session.processed.get(request_id)
+                if entry is not None:
+                    if isinstance(entry, dict) and "response" in entry:
+                        if entry.get("fingerprint") != fingerprint:
+                            raise ValueError(
+                                "request_id_conflict: 相同 request_id 的请求内容不同")
+                        return deepcopy(entry["response"])
+                    return deepcopy(entry)          # legacy bare response shape
             if session.revision != revision:
                 raise ValueError("stale_revision: 牌局已经更新，请刷新牌局")
             start = len(session.interpreter.events)
@@ -320,7 +385,8 @@ class SessionStore:
                         "new_events": session.interpreter.events[start:],
                         "state": self.snapshot(session)}
             if request_id:
-                session.processed[request_id] = deepcopy(response)
+                session.processed[request_id] = {"fingerprint": fingerprint,
+                                                 "response": deepcopy(response)}
                 for stale in list(session.processed)[:-MAX_PROCESSED_REQUESTS]:
                     session.processed.pop(stale, None)
             self._save(session)

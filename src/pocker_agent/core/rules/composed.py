@@ -135,6 +135,38 @@ class MoveTopEffect(_Strict):
     count: int = Field(ge=1, le=MAX_SELECTION)
 
 
+class RemovePairsEffect(_Strict):
+    """Remove every same-rank group from a zone, scoring per group (ADR-0011).
+
+    The source/destination zones, the group size and the points per group all
+    come from the rule; the compiler lowers it to the generic
+    ``zones.select_duplicates`` (a pure partition) plus ``zones.move`` and a
+    rule-declared score. Nothing about the game is baked into the tool.
+    """
+
+    kind: Literal["remove_pairs"] = "remove_pairs"
+    from_zone: str = Field(min_length=1, max_length=32)
+    to_zone: str = Field(min_length=1, max_length=32)
+    group_size: int = Field(default=2, ge=2, le=8)
+    points_per_pair: int = Field(default=1, ge=1, le=100)
+
+
+class RefillEffect(_Strict):
+    """Draw from a shared stock into a zone up to ``target_count`` (ADR-0011).
+
+    Bounded: the compiler unrolls at most ``max_draw`` steps, each of which is
+    skipped once the target is reached or the stock runs out. There is no
+    unbounded "fill the hand" loop, and every drawn card comes from the stock,
+    so total card conservation holds by construction.
+    """
+
+    kind: Literal["refill"] = "refill"
+    from_zone: str = Field(min_length=1, max_length=32)
+    to_zone: str = Field(min_length=1, max_length=32)
+    target_count: int = Field(ge=1, le=13)
+    max_draw: int = Field(default=13, ge=1, le=13)
+
+
 class CompareEffect(_Strict):
     kind: Literal["compare"] = "compare"
     zone: str = Field(min_length=1, max_length=32)
@@ -150,7 +182,8 @@ class AssignEffect(_Strict):
 
 
 Effect = Annotated[
-    SelectEffect | MoveSelectionEffect | MoveTopEffect | CompareEffect | AssignEffect,
+    SelectEffect | MoveSelectionEffect | MoveTopEffect | RemovePairsEffect
+    | RefillEffect | CompareEffect | AssignEffect,
     Field(discriminator="kind"),
 ]
 
@@ -352,6 +385,26 @@ class ComposedRulesIR(_Strict):
                         raise ValueError(f"move_top_unknown_zone:{action.id}:{zone_id}")
                     if zone.scope != "shared":
                         raise ValueError(f"move_top_requires_shared_zone:{action.id}:{zone_id}")
+            elif isinstance(effect, RemovePairsEffect):
+                source = self.zone(effect.from_zone)
+                target = self.zone(effect.to_zone)
+                if source is None or target is None:
+                    raise ValueError(f"remove_pairs_unknown_zone:{action.id}")
+                if source.scope != target.scope:
+                    raise ValueError(f"remove_pairs_zone_scope_mismatch:{action.id}")
+                if source.scope == "shared":
+                    raise ValueError(f"remove_pairs_requires_player_zone:{action.id}")
+            elif isinstance(effect, RefillEffect):
+                source = self.zone(effect.from_zone)
+                target = self.zone(effect.to_zone)
+                if source is None or target is None:
+                    raise ValueError(f"refill_unknown_zone:{action.id}")
+                if source.scope != "shared":
+                    raise ValueError(f"refill_stock_must_be_shared:{action.id}:{effect.from_zone}")
+                if target.scope != "player":
+                    raise ValueError(f"refill_target_must_be_player:{action.id}:{effect.to_zone}")
+                if effect.max_draw < effect.target_count:
+                    raise ValueError(f"refill_max_draw_below_target:{action.id}")
             elif isinstance(effect, AssignEffect):
                 variable = self.variable(effect.variable)
                 if variable is None:
@@ -397,13 +450,12 @@ class ComposedRulesIR(_Strict):
                         raise ValueError(f"move_top_unknown_zone:{zone_id}")
                     if zone.scope != "shared":
                         raise ValueError(f"move_top_requires_shared_zone:{zone_id}")
-            elif isinstance(effect, SelectEffect | MoveSelectionEffect | AssignEffect):
+            elif isinstance(effect, SelectEffect | MoveSelectionEffect | AssignEffect
+                            | RemovePairsEffect | RefillEffect):
                 raise ValueError(f"resolve_effect_not_allowed:{effect.kind}")
-        if not self.flow.resolve:
-            raise ValueError("flow_resolve_required")
-        # A round-scoring rule must not end mid-round on the action budget: the
-        # budget is checked only after resolve (ADR-0010 rule 8), so it must land
-        # on a round boundary.
+        # A rule can score entirely inside its action (remove_pairs / suit scoring),
+        # so an empty resolve is allowed; the turn loop then goes straight to the
+        # terminal gate. A hard terminal bound is still required (ADR-0010).
         if any(isinstance(effect, CompareEffect) for effect in self.flow.resolve):
             budget = self.terminal.max_actor_actions
             if budget is not None and budget % self.players.count != 0:

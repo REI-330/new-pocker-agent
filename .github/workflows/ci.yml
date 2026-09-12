@@ -36,6 +36,7 @@ jobs:
           tests/test_plan_identity.py tests/test_card_identity.py tests/test_g2_m1.py
           tests/test_g2_m2.py tests/test_g2_m3.py tests/test_g2_m3_verify.py
           tests/test_g2_m3_contract.py tests/test_g2_m3_terminal.py
+          tests/test_g2_m3_scenario_c.py
 
       - name: Architecture invariants (blocking)
         run: uv run --frozen pytest tests/test_architecture_invariants.py -q

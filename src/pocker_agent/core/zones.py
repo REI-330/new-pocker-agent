@@ -25,6 +25,12 @@ from .contracts import ToolError
 ZONES_KEY = "zones"
 VISIBILITIES = ("public", "owner_only", "hidden")
 
+# ``zones.select_duplicates`` (ADR-0011): the card attributes a rule may group by
+# are a closed set, never a dynamic path, and every bound is static.
+DUPLICATE_KEYS = ("rank", "suit", "value")
+MAX_DUPLICATE_GROUP = 8
+MAX_DUPLICATE_TOTAL = 108
+
 
 def zone_table(state: dict[str, Any]) -> dict[str, Any]:
     """The zone mapping, or a contract violation when the plan never set it up."""
@@ -155,3 +161,41 @@ def top_card(zones: dict[str, Any], zone_id: Any) -> CardRef:
     if not cards:
         raise ToolError(f"zone_is_empty:{zone_id}")
     return cards[-1]
+
+
+def duplicate_groups(zones: dict[str, Any], zone_id: Any, key: str = "rank",
+                     min_count: int = 2, max_group: int = 2,
+                     max_total: int = MAX_DUPLICATE_TOTAL) -> dict[str, Any]:
+    """Partition a zone's cards into same-``key`` groups (ADR-0011).
+
+    Deterministic and bounded: ``key`` is a closed card attribute (never a
+    dynamic path); the result is capped by the static ``max_group``/``max_total``
+    bounds; groups are ordered by the group's card value then key, and cards
+    inside a group by id. Groups are a *partition* of the zone, so the same card
+    can never appear in two groups and cannot be moved twice. No state is
+    written: this is a pure selection.
+    """
+    if key not in DUPLICATE_KEYS:
+        raise ToolError(f"duplicate_key_unsupported:{key}")
+    if type(min_count) is not int or type(max_group) is not int or type(max_total) is not int:
+        raise ToolError("duplicate_bounds_must_be_integers")
+    if not 2 <= min_count <= max_group <= MAX_DUPLICATE_GROUP:
+        raise ToolError(f"invalid_duplicate_bounds:{min_count}:{max_group}")
+    if not 1 <= max_total <= MAX_DUPLICATE_TOTAL:
+        raise ToolError(f"invalid_duplicate_budget:{max_total}")
+    grouped: dict[Any, list[CardRef]] = {}
+    for card in zone_cards(zones, zone_id):
+        grouped.setdefault(getattr(card, key), []).append(card)
+    groups: list[dict[str, Any]] = []
+    selected: list[CardRef] = []
+    for group_key in sorted(grouped, key=lambda value: (grouped[value][0].value, str(value))):
+        bucket = sorted(grouped[group_key], key=lambda card: card.id)
+        if len(bucket) < min_count:
+            continue
+        chosen = bucket[:max_group]
+        groups.append({"key": str(group_key), "ids": [card.id for card in chosen]})
+        selected.extend(chosen)
+    if len(selected) > max_total:
+        raise ToolError(f"duplicate_selection_exceeds_budget:{len(selected)}>{max_total}")
+    return {"zone": zone_id, "key": key, "groups": groups,
+            "ids": [card.id for card in selected], "count": len(selected)}

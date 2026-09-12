@@ -27,6 +27,8 @@ from .composed import (
     ComposedRulesIR,
     MoveSelectionEffect,
     MoveTopEffect,
+    RefillEffect,
+    RemovePairsEffect,
     SelectEffect,
 )
 from .expr import refs_in
@@ -158,6 +160,14 @@ def _effect_requirements(ir: ComposedRulesIR, effects: Any, base: str,
                                        _clause(ir, f"scoring.{rule}")))
         elif isinstance(effect, AssignEffect):
             _expr_requirements(ir, effect.value, path, out)
+        elif isinstance(effect, RemovePairsEffect):
+            out.append(Requirement("operation", "zones.select_duplicates", path, clause))
+            out.append(Requirement("operation", "zones.move", path, clause))
+            out.append(Requirement("operation", "score_settle.call", path, clause))
+        elif isinstance(effect, RefillEffect):
+            out.append(Requirement("operation", "zones.count_zone", path, clause))
+            out.append(Requirement("operation", "zones.top", path, clause))
+            out.append(Requirement("operation", "zones.move", path, clause))
 
 
 def axes_for(ir: ComposedRulesIR) -> tuple[str, ...]:
@@ -179,6 +189,9 @@ def axes_for(ir: ComposedRulesIR) -> tuple[str, ...]:
 def features_for(ir: ComposedRulesIR) -> tuple[str, ...]:
     features = {"multi_zone", "card_identity", "explicit_order"}
     if any(isinstance(effect, CompareEffect) for effect in ir.flow.resolve):
+        features.add("scoring")
+    if any(isinstance(effect, RemovePairsEffect)
+           for action in ir.actions for effect in action.effects):
         features.add("scoring")
     return tuple(sorted(features))
 

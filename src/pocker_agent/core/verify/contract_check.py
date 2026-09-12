@@ -19,7 +19,14 @@ from ..cards import CardRef
 from ..contracts import ToolRegistry
 from ..plan import GamePlan
 from ..playtest import Strategy
-from ..rules import CompareEffect, ComposedRulesIR, MoveSelectionEffect, SelectEffect
+from ..rules import (
+    CompareEffect,
+    ComposedRulesIR,
+    MoveSelectionEffect,
+    RefillEffect,
+    RemovePairsEffect,
+    SelectEffect,
+)
 from ..rules.requirements import clause_for
 from .trace import GameTrace, compare_traces, record_trace, replay_trace
 
@@ -30,6 +37,8 @@ MONITOR_CLAUSES: dict[str, str] = {
     "selection_move": "actions",
     "compare_outcome": "flow.resolve",
     "scoring": "scoring",
+    "pair_scoring": "scoring",
+    "refill": "scoring",
     "terminal": "terminal",
     "zone_visibility": "zones",
 }
@@ -217,6 +226,89 @@ def _scoring(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
     return ClauseCheck("scoring", True, f"settlements={settlements}")
 
 
+def _pair_scoring(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
+    """Independent monitor for ``remove_pairs`` (ADR-0011).
+
+    Re-derives the expected groups from the zone before the selection (every rank
+    with at least ``group_size`` cards must appear, the groups must be a
+    disjoint partition of the returned ids), and checks the subsequent score is
+    exactly ``points_per_pair * number_of_groups``. This runs on the *group
+    property*, not by reusing the tool's own return value.
+    """
+    effects = [effect for action in ir.actions for effect in action.effects
+               if isinstance(effect, RemovePairsEffect)]
+    if not effects:
+        return ClauseCheck("pair_scoring", True, "no_remove_pairs")
+    if len(effects) != 1:
+        return ClauseCheck("pair_scoring", True, f"skipped:effects={len(effects)}")
+    effect = effects[0]
+    group_size = effect.group_size
+    pending: int | None = None
+    settlements = 0
+    for index, observation in enumerate(trace.observations):
+        if observation.tool == "zones" and observation.operation == "select_duplicates":
+            args = observation.args
+            if (args.get("key") != "rank" or args.get("min_count") != group_size
+                    or args.get("max_group") != group_size):
+                return ClauseCheck("pair_scoring", False, f"bounds_mismatch@{index}")
+            result = observation.state.get(observation.result_key) if observation.result_key else None
+            if not isinstance(result, dict):
+                return ClauseCheck("pair_scoring", False, f"missing_result@{index}")
+            ids = list(result.get("ids", []))
+            groups = result.get("groups", [])
+            flat = [card_id for group in groups for card_id in group.get("ids", [])]
+            if sorted(flat) != sorted(ids) or len(set(ids)) != len(ids):
+                return ClauseCheck("pair_scoring", False, f"not_a_partition@{index}")
+            before = trace.observations[index - 1].state if index > 0 else None
+            cards = _cards_at(before, args.get("zone"))
+            by_rank: dict[str, list[str]] = {}
+            for card in cards:
+                by_rank.setdefault(card.rank, []).append(card.id)
+            expected_ranks = {rank for rank, members in by_rank.items()
+                              if len(members) >= group_size}
+            observed_ranks = {group.get("key") for group in groups}
+            if expected_ranks != observed_ranks:
+                return ClauseCheck("pair_scoring", False,
+                                   f"groups={sorted(observed_ranks)}"
+                                   f",expected={sorted(expected_ranks)}@{index}")
+            pending = len(ids)
+        elif (observation.tool == "score_settle" and observation.operation == "call"
+              and pending is not None):
+            settlements += 1
+            expected = effect.points_per_pair * (pending // group_size)
+            before = trace.observations[index - 1].state
+            deltas = [observation.state["scores"][seat] - before["scores"][seat]
+                      for seat in range(ir.players.count)]
+            if sum(deltas) != expected or any(delta < 0 for delta in deltas):
+                return ClauseCheck("pair_scoring", False,
+                                   f"expected={expected},observed={deltas}@{index}")
+            pending = None
+    return ClauseCheck("pair_scoring", True, f"settlements={settlements}")
+
+
+def _refill(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
+    """Independent monitor: a refill target zone never exceeds its declared size.
+
+    Together with ``card_conservation`` (every drawn card comes from the stock),
+    this bounds the refill: it can neither overfill a hand nor invent cards.
+    """
+    effects = [effect for action in ir.actions for effect in action.effects
+               if isinstance(effect, RefillEffect)]
+    if not effects:
+        return ClauseCheck("refill", True, "no_refill")
+    if len(effects) != 1:
+        return ClauseCheck("refill", True, f"skipped:effects={len(effects)}")
+    effect = effects[0]
+    for index, observation in enumerate(trace.observations):
+        for seat in range(ir.players.count):
+            zone_id = f"{effect.to_zone}-{seat}"
+            count = len(_cards_at(observation.state, zone_id))
+            if count > effect.target_count:
+                return ClauseCheck("refill", False,
+                                   f"{zone_id}={count}>{effect.target_count}@{index}")
+    return ClauseCheck("refill", True, f"target<={effect.target_count}")
+
+
 def _terminal(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
     if not trace.finished or not trace.observations:
         return ClauseCheck("terminal", False, "game_did_not_finish")
@@ -294,6 +386,8 @@ def contract_check(ir: ComposedRulesIR, plan: GamePlan, registry: ToolRegistry,
                 ("selection_move", lambda t: _selection_move(ir, t)),
                 ("compare_outcome", lambda t: _compare_outcome(ir, t)),
                 ("scoring", lambda t: _scoring(ir, t)),
+                ("pair_scoring", lambda t: _pair_scoring(ir, t)),
+                ("refill", lambda t: _refill(ir, t)),
                 ("terminal", lambda t: _terminal(ir, t)),
                 ("zone_visibility", lambda t: _visibility(ir, t)))
     for name, monitor in monitors:

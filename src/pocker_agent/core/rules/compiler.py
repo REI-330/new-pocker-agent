@@ -29,6 +29,7 @@ from pydantic import ValidationError
 
 from ..contracts import ToolError, ToolRegistry
 from ..plan import ActionDescriptor, ActionInputDescriptor, GamePlan, plan_fingerprint
+from ..zones import MAX_DUPLICATE_TOTAL
 from .composed import (
     MAX_PLAN_NODES,
     MAX_STEP_LIMIT,
@@ -37,6 +38,8 @@ from .composed import (
     ComposedRulesIR,
     MoveSelectionEffect,
     MoveTopEffect,
+    RefillEffect,
+    RemovePairsEffect,
     SelectEffect,
 )
 from .expr import compile_expression
@@ -179,7 +182,7 @@ class _Compiler:
         for item in self.action.inputs:
             found.add(item.zone)
         for effect in self.action.effects:
-            if isinstance(effect, MoveSelectionEffect):
+            if isinstance(effect, (MoveSelectionEffect, RemovePairsEffect, RefillEffect)):
                 found.add(effect.from_zone)
                 found.add(effect.to_zone)
         return sorted(zone_id for zone_id in found
@@ -318,11 +321,98 @@ class _Compiler:
                              "PENDING", path)
                 link(eval_id)
                 previous = set_id
+            elif isinstance(effect, RemovePairsEffect):
+                first, last = self._remove_pairs_nodes(effect, index, path)
+                link(first)
+                previous = last
+            elif isinstance(effect, RefillEffect):
+                first, last = self._refill_nodes(effect, index, path)
+                link(first)
+                previous = last
             else:
                 self._fail("unsupported_action_effect", effect.kind, path)
         if previous is not None:
             self.nodes[previous]["next"] = "advance_turn"
         return entry or "advance_turn"
+
+    def _remove_pairs_nodes(self, effect: RemovePairsEffect, index: int,
+                            path: str) -> tuple[str, str]:
+        """Lower ``remove_pairs`` to select_duplicates + move + declared score.
+
+        ADR-0011: the operation only *finds* the groups; the source/target zones
+        and the points per group come from the rule. ``max_total`` is the deck
+        bound, a static upper limit, and the score uses the group count so a
+        group of any declared size works.
+        """
+        action_id = self.action.id
+        source = self._zone_arg(effect.from_zone)
+        target = self._zone_arg(effect.to_zone)
+        select_id = f"act_{action_id}_{index}_pairs"
+        points_id = f"act_{action_id}_{index}_pair_points"
+        move_id = f"act_{action_id}_{index}_pair_move"
+        score_id = f"act_{action_id}_{index}_pair_score"
+        self._call(select_id, "zones", "select_duplicates",
+                   {"state": "$state", "zone": source, "key": "rank",
+                    "min_count": effect.group_size, "max_group": effect.group_size,
+                    "max_total": MAX_DUPLICATE_TOTAL},
+                   points_id, path, result_key=f"sel_pairs_{index}")
+        self._eval(points_id,
+                   {"mul": [{"count": [f"$state.sel_pairs_{index}.groups"]},
+                             effect.points_per_pair]},
+                   f"t_pairs_{index}", move_id, path)
+        self._call(move_id, "zones", "move",
+                   {"state": "$state", "moves": [{
+                       "from": source, "to": target,
+                       "card_ids": f"$state.sel_pairs_{index}.ids",
+                       "min_count": 0, "max_count": MAX_DUPLICATE_TOTAL}]},
+                   score_id, path)
+        self._call(score_id, "score_settle", "call",
+                   {"scores": "$state.scores",
+                    "winners": ["$state.current_player"],
+                    "points": f"$state.t_pairs_{index}"},
+                   "PENDING", path, result_key="scores")
+        return select_id, score_id
+
+    def _refill_nodes(self, effect: RefillEffect, index: int,
+                      path: str) -> tuple[str, str]:
+        """Lower ``refill`` to a bounded, unrolled sequence of stock draws.
+
+        Each step checks the target and the stock *before* drawing, so the loop
+        is a finite straight line with an exit; a card is only ever moved out of
+        the stock, so total card conservation holds.
+        """
+        action_id = self.action.id
+        source, target = effect.from_zone, self._zone_arg(effect.to_zone)
+        done_id = f"act_{action_id}_{index}_refill_done"
+        first: str | None = None
+        for step in range(effect.max_draw):
+            base = f"act_{action_id}_{index}_refill_{step}"
+            hand_id, stock_id = f"{base}_hand", f"{base}_stock"
+            can_id, branch_id = f"{base}_can", f"{base}_branch"
+            top_id, move_id = f"{base}_top", f"{base}_move"
+            nxt = (f"act_{action_id}_{index}_refill_{step + 1}_hand"
+                   if step + 1 < effect.max_draw else done_id)
+            self._call(hand_id, "zones", "count_zone", {"state": "$state", "zone": target},
+                       stock_id, path, result_key=f"refill_hand_{index}_{step}")
+            self._call(stock_id, "zones", "count_zone", {"state": "$state", "zone": source},
+                       can_id, path, result_key=f"refill_stock_{index}_{step}")
+            self._eval(can_id, {"all": [
+                {"lt": [f"$state.refill_hand_{index}_{step}.count", effect.target_count]},
+                {"gt": [f"$state.refill_stock_{index}_{step}.count", 0]}]},
+                f"refill_can_{index}_{step}", branch_id, path)
+            self._branch(branch_id, f"$state.refill_can_{index}_{step}",
+                         [{"value": True, "target": top_id}], done_id, path)
+            self._call(top_id, "zones", "top", {"state": "$state", "zone": source},
+                       move_id, path, result_key=f"refill_top_{index}_{step}")
+            self._call(move_id, "zones", "move",
+                       {"state": "$state", "moves": [{
+                           "from": source, "to": target,
+                           "card_ids": [f"$state.refill_top_{index}_{step}.id"],
+                           "min_count": 1, "max_count": 1}]}, nxt, path)
+            if first is None:
+                first = hand_id
+        self._update(done_id, {}, "PENDING", path)
+        return first or done_id, done_id
 
     def _input_bounds(self, input_id: str) -> tuple[int, int]:
         item = next((item for item in self.action.inputs if item.id == input_id), None)
@@ -373,6 +463,10 @@ class _Compiler:
 
     # ---------------------------------------------------------------- resolve
     def _compile_resolve(self, resolve_exit: str = "end_round") -> str:
+        if not self.ir.flow.resolve:
+            # A rule can score entirely inside its action; the turn then goes
+            # straight to the round gate (ADR-0011).
+            return resolve_exit
         segments = [self._resolve_segment(effect, index)
                     for index, effect in enumerate(self.ir.flow.resolve)]
         for index, (_, exits) in enumerate(segments):

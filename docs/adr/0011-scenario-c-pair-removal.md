@@ -1,7 +1,7 @@
 # ADR-0011: 场景 C 的成对移除机制（成组选择）
 
 - 日期：2026-09-14
-- 状态：proposed（等待架构 owner 决策）
+- 状态：accepted（**实现状态：已实现**，M3 场景 C 包；双消费者与迁移测试已落地）
 - 决策者：架构 owner
 
 ## 背景
@@ -57,6 +57,6 @@ score_settle.call(scores, winners=[actor], points=$state.t_pair_points)
 
 ## 迁移与删除
 
-- `HiddenDrawTool.discard_pairs` 在 Go Fish 消费者迁移到新机制后删除（另一个 PR），删除前保留现有行为与测试。
-- 契约哈希变化后，`core_verifications` 中的旧记录不得再授权注册（`verification_stale`），需重新验证。
-- 本 ADR 获批前不实现 C 的编译器降层；先补该操作的契约测试与失败矩阵。
+- `HiddenDrawTool.discard_pairs` 保留给尚未迁移的 Go Fish 参考计划；在新的成套收集消费者已接入后（本包已验证），删除它的 PR 只需确认无剩余消费者与测试。
+- `zones` 增加 `select_duplicates` 后 `registry.contract_hash()` 变化，旧 `core_verifications` 记录不再授权注册（`verification_stale`）；`tests/test_g2_m3_scenario_c.py` 覆盖该迁移反例。
+- **仍欠账**：场景 C 原文的「12 个行动回合」在 16 张牌堆上最终需要「手牌/牌堆皆空时 pass」的第二动作，这依赖多动作回合（与场景 B 的 draw/pass 同一机制）。本包用 `max_actor_actions=4` 的可持续牌堆验证机制；多动作回合在 B 包实现后再回到 12 回合原文。

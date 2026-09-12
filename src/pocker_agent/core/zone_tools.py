@@ -13,6 +13,7 @@ from .zones import (
     ZONES_KEY,
     apply_moves,
     assert_unique_ownership,
+    duplicate_groups,
     select_cards,
     top_card,
     zone_cards,
@@ -49,6 +50,13 @@ class ZonesTool:
     def count_zone(self, state: dict[str, Any], zone: Any) -> dict[str, Any]:
         """Card count for one named zone; ``zone`` is always required."""
         return {"zone": zone, "count": len(zone_cards(zone_table(state), zone))}
+
+    def select_duplicates(self, state: dict[str, Any], zone: Any, key: str = "rank",
+                          min_count: int = 2, max_group: int = 2,
+                          max_total: int = 108) -> dict[str, Any]:
+        """A pure partition of a zone into same-``key`` groups (ADR-0011)."""
+        return duplicate_groups(zone_table(state), zone, key, min_count, max_group,
+                                max_total)
 
     def verify(self, state: dict[str, Any]) -> dict[str, Any]:
         """A pure ownership audit, used by invariants and diagnostics."""

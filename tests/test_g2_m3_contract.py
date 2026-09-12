@@ -27,7 +27,7 @@ from pocker_agent.core.verify import (
 )
 
 ALL_MONITORS = {"replay", "card_conservation", "selection_move", "compare_outcome",
-                "scoring", "terminal", "zone_visibility"}
+                "scoring", "pair_scoring", "refill", "terminal", "zone_visibility"}
 
 
 def compiled():

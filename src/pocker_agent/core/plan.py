@@ -59,7 +59,12 @@ class FlowNode(_Strict):
 
 
 class GamePlan(_Strict):
-    schema_version: Literal["0.4"] = "0.4"
+    # ADR-0007: plan versions are distinguishable. ``0.4`` remains authoritative
+    # for the current field set; ``0.5`` is reserved for the M3 binding split
+    # (``binding_id``/``tool_type``). Changing a persisted field's meaning must
+    # come with a version bump, and a migrated plan's hash is a *content* hash --
+    # it never stands in for an old verification credential.
+    schema_version: Literal["0.4", "0.5"] = "0.4"
     game_kind: str = Field(min_length=1, max_length=64)
     players: int = Field(ge=1, le=12)
     tools: list[ToolBinding] = Field(min_length=1, max_length=64)

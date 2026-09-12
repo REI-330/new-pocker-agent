@@ -22,6 +22,7 @@ from .plans import (
     war_plan,
     whist_plan,
 )
+from .rules.composed import ComposedRulesIR
 
 DEFAULT_RANK_VALUES = {"A": 1, **{str(n): n for n in range(2, 11)}, "J": 11, "Q": 12, "K": 13}
 DEFAULT_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
@@ -230,6 +231,16 @@ RulesIR = Annotated[
     Field(discriminator="kind")]
 IR_ADAPTER = TypeAdapter(RulesIR)
 
+# G2/M2: the design entry adds a ``composed`` discriminant branch (ADR-0005). The
+# known-eight adapter stays separate so the agent prompt keeps advertising only
+# the families it can host-compile; the design entry accepts both and is what the
+# M2 compiler reads.
+DesignIR = Annotated[
+    ArithmeticIR | WarIR | SheddingIR | WhistIR | PokerIR | BlackjackIR | GoFishIR | UnoIR
+    | ComposedRulesIR,
+    Field(discriminator="kind")]
+DESIGN_ADAPTER = TypeAdapter(DesignIR)
+
 HOST_COMPILED = ("arithmetic", "war", "shedding", "whist", "poker", "blackjack", "go_fish",
                  "uno")
 REQUIRED_AXES: dict[str, tuple[str, ...]] = {
@@ -248,11 +259,22 @@ def parse_ir(payload: dict) -> ArithmeticIR | WarIR:
     return IR_ADAPTER.validate_python(payload)
 
 
+def parse_design_ir(payload: dict) -> ComposedRulesIR | ArithmeticIR | WarIR:
+    """Parse any design entry, including the ``composed`` branch (G2/M2)."""
+    return DESIGN_ADAPTER.validate_python(payload)
+
+
 def required_axes(ir: ArithmeticIR | WarIR) -> list[str]:
+    if isinstance(ir, ComposedRulesIR):
+        from .rules.requirements import axes_for
+        return list(axes_for(ir))
     return list(REQUIRED_AXES[ir.kind])
 
 
 def check_ir(ir: ArithmeticIR | WarIR) -> CapabilityReport:
+    if isinstance(ir, ComposedRulesIR):
+        from .rules.requirements import axes_for
+        return capability_check(axes_for(ir))
     return capability_check(required_axes(ir))
 
 

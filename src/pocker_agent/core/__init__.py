@@ -50,6 +50,16 @@ from .playtest import PlaytestReport, boundary_first, card_first, first_legal, p
 from .policy import bet_first, bot_action, run_bots
 from .reference import REFERENCE_GAMES, build_plan, ensure_playtested, list_reference_games
 from .registry import core_registry
+from .rules import (
+                     CompiledRules,
+                     CompileError,
+                     ComposedRulesIR,
+                     CompositionReport,
+                     compile_composed,
+                     derive_requirements,
+                     ir_hash,
+                     resolve_composition,
+)
 from .session import Session, SessionStore
 from .zone_tools import ZonesTool
 from .zones import (
@@ -76,6 +86,10 @@ __all__ = [
                      "Capability",
                      "CapabilityReport",
                      "CardRef",
+                     "CompileError",
+                     "CompiledRules",
+                     "ComposedRulesIR",
+                     "CompositionReport",
                      "FlowCase",
                      "FlowNode",
                      "GamePlan",
@@ -114,12 +128,14 @@ __all__ = [
                      "card_conservation",
                      "card_first",
                      "check_ir",
+                     "compile_composed",
                      "composition_samples",
                      "core_registry",
                      "coverage_report",
                      "crazy_eights_plan",
                      "decode",
                      "default_macros",
+                     "derive_requirements",
                      "encode",
                      "ensure_playtested",
                      "exchange_compare_composition",
@@ -131,6 +147,7 @@ __all__ = [
                      "five_card_poker_plan",
                      "go_fish_plan",
                      "host_compile",
+                     "ir_hash",
                      "is_host_compiled",
                      "list_reference_games",
                      "load_corpus",
@@ -142,6 +159,7 @@ __all__ = [
                      "random_legal",
                      "required_axes",
                      "resilient_first",
+                     "resolve_composition",
                      "run_bots",
                      "select_cards",
                      "top_card",

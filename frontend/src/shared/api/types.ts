@@ -60,8 +60,11 @@ export type LoopResult = {
   attempts: number
   observations: LoopObservation[]
   messages: ChatMessage[]
+  registered?: boolean
+  registration_error?: string
 }
 export type ModelConfig = {
   configured: boolean; has_key: boolean; base_url: string; model: string
   warning?: string | null
 }
+export type ConnectionTest = {ok: boolean; model: string; base_url: string}

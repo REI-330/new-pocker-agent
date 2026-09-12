@@ -7,6 +7,8 @@ same interpreter and the same playtest gate apply.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -83,3 +85,15 @@ class GamePlan(_Strict):
             if node.action is not None and node.action.tool not in names:
                 raise ValueError(f"plan_action_tool_not_declared:{node.action.tool}")
         return self
+
+
+def plan_fingerprint(plan: GamePlan | dict[str, Any]) -> str:
+    """Stable identity for a plan, so a session can prove which one it ran.
+
+    Sessions store this at creation and re-check it on restore: a plan that was
+    replaced under the same id would otherwise resume old state against a new
+    control-flow graph.
+    """
+    payload = plan.model_dump(mode="json") if isinstance(plan, GamePlan) else plan
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]

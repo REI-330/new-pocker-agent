@@ -14,7 +14,7 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
   onRestart: () => void; onRefresh: () => void
 }) {
   const [expression, setExpression] = useState('')
-  const [index, setIndex] = useState(0)
+  const [chosenId, setChosenId] = useState<string | null>(null)
   const [suit, setSuit] = useState('S')
   const [amount, setAmount] = useState(20)
 
@@ -29,7 +29,16 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
   const mine = state.players[0]
   const legal = state.legal_card_indices ?? []
   const canChooseCards = legal.length > 0
-  const selected = mine.hand[index]
+  // Track the chosen card by identity, not by position: a draw, a recycle or a
+  // restart moves cards around, and a stale index would silently select a
+  // different card (or one that is not playable at all).
+  const chosen = (() => {
+    const found = mine.hand.findIndex(card => card.id === chosenId)
+    if (found >= 0 && (!canChooseCards || legal.includes(found))) return found
+    if (!mine.hand.length) return 0
+    return Math.min(legal.length ? legal[0] : 0, mine.hand.length - 1)
+  })()
+  const selected = mine.hand[chosen]
   const isWild = !!selected && (state.wild_ranks ?? []).includes(selected.rank)
   const score = mine.score
   const recent = state.events.slice(-6).reverse()
@@ -37,7 +46,7 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
   const fire = (action: string) => {
     if (busy) return
     const payload: Record<string, unknown> = {}
-    if (action === 'play') { payload.card_index = index; payload.declared_suit = suit }
+    if (action === 'play') { payload.card_index = chosen; payload.declared_suit = suit }
     if (action === 'raise') payload.amount = amount
     onAct(action, payload)
   }
@@ -108,10 +117,10 @@ export function WorkspacePage({state, busy, onAct, onRestart, onRefresh}: {
       <div className="hand-cards">
         {mine.hand.map((card, position) => {
           const playable = !canChooseCards || legal.includes(position)
-          return <button className={'card-choice ' + (index === position ? 'selected' : '')}
+          return <button className={'card-choice ' + (chosen === position ? 'selected' : '')}
             key={card.id} disabled={busy || !playable}
             title={playable ? undefined : '不符合当前出牌条件'}
-            onClick={() => setIndex(position)} aria-pressed={index === position}>
+            onClick={() => setChosenId(card.id)} aria-pressed={chosen === position}>
             <PlayingCard card={card} /></button>
         })}
       </div>

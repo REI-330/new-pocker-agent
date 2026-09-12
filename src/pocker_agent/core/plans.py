@@ -272,10 +272,15 @@ def five_card_poker_plan(*, stacks: int = 100, min_raise: int = 10, cards_each: 
     the round ends when every live stack has acted and matched; a fold wins the
     pot uncontested, otherwise the better five-card hand takes it (ties split).
     """
+    # Ace-high on a 14 scale, because ``hand_rank`` scores straights (and the
+    # wheel, A-2-3-4-5) against a 14-high ace; position alone would make it 13.
+    rank_values = {"J": 11, "Q": 12, "K": 13, "A": 14,
+                   **{str(n): n for n in range(2, 11)}}
     tools = [
         {"name": "state"},
         {"name": "logic"},
-        {"name": "deck", "config": {"ranks": list(ranks), "suits": list(suits)}},
+        {"name": "deck", "config": {"ranks": list(ranks), "suits": list(suits),
+                                      "values": rank_values}},
         {"name": "hand_rank"},
         {"name": "betting", "config": {"min_raise": min_raise}},
         {"name": "ledger"},

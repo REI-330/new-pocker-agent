@@ -9,6 +9,22 @@ const STARTERS = [
   '无下注 21 点，我对庄家，共 3 轮',
 ]
 
+// The registry refuses two things: a built-in id, and an id already in use.
+// Both are recoverable, so say what to do instead of showing a raw code.
+function registrationReason(code: string): string {
+  const [reason, id] = code.split(':')
+  if (reason === 'game_id_reserved') {
+    return `玩法 ID “${id}” 与内置玩法冲突，未被保存（内置玩法不可被覆盖）。让 Agent 换一个 ID 后重试。`
+  }
+  if (reason === 'plan_already_registered') {
+    return `玩法 ID “${id}” 已存在且内容不同，未被保存（已注册的玩法不会被静默替换）。`
+  }
+  if (reason === 'plan_not_playtested') {
+    return `玩法 “${id}” 未通过 playtest，未被保存。`
+  }
+  return code
+}
+
 function observationDetail(observation: LoopObservation): string {
   if (observation.error) return observation.error
   if (observation.question) return observation.question
@@ -49,13 +65,15 @@ export function DesignPage({onPlay}: {onPlay: (gameId: string) => void}) {
 
   const gameId = result?.ir && typeof result.ir.game_id === 'string' ? result.ir.game_id : null
   const needsModel = /模型配置/.test(error)
+  // A frozen plan is not the same thing as a registered, playable game.
+  const playable = !!result?.finalized && result.registered !== false && !!gameId
 
   return <div className="prototype-page new-page">
     <div className="page-heading">
       <div><span className="eyebrow">02 / DESIGN</span><h1>和 Agent 一起设计玩法</h1>
         <p>像聊天一样把规则说清楚。Agent 只能调用元工具操作规则与计划；先通过 playtest 才能试玩。</p></div>
-      {result && <Pill tone={result.finalized ? 'success' : result.kind === 'unsupported' ? 'warning' : 'neutral'}>
-        {result.finalized ? '已冻结 · 可试玩' : result.kind}</Pill>}
+      {result && <Pill tone={playable ? 'success' : result.kind === 'unsupported' ? 'warning' : 'neutral'}>
+        {playable ? '已冻结 · 可试玩' : result.finalized ? '未能注册' : result.kind}</Pill>}
     </div>
 
     <div className="new-layout new-chat-layout">
@@ -107,7 +125,10 @@ export function DesignPage({onPlay}: {onPlay: (gameId: string) => void}) {
                wait 覆盖 {result.playtest.covered_wait_nodes.join(', ') || '—'}</p></div>
             <Pill tone={result.playtest.ok ? 'success' : 'danger'}>
               {result.playtest.ok ? '通过' : `${result.playtest.failures.length} 失败`}</Pill></div>}
-          {result.finalized && gameId &&
+          {result.registration_error && <div className="rule-card"><div><h3>未能注册</h3>
+            <p>{registrationReason(result.registration_error)}</p></div>
+            <Pill tone="warning">改名后可重试</Pill></div>}
+          {playable && gameId &&
             <button className="action-primary" onClick={() => onPlay(gameId)}>开始试玩</button>}
           {result.observations.length > 0 && <details className="runtime-log">
             <summary>元工具调用记录（{result.observations.length}）</summary>

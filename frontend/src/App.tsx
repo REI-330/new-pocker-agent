@@ -11,6 +11,10 @@ import {api, messageOf, type CapabilityMatrix, type Coverage, type GameInfo,
 
 type Route = 'library' | 'design' | 'rules' | 'workspace' | 'replay' | 'settings'
 
+// The backend persists sessions, so remembering which one is open is all the
+// frontend needs to survive a refresh (README promises refresh keeps the game).
+const SESSION_KEY = 'pocker-session-id'
+
 const NAV: Array<{id: Route; label: string; glyph: string}> = [
   {id: 'library', label: '玩法库', glyph: '♠'},
   {id: 'design', label: '新建玩法', glyph: '✦'},
@@ -46,12 +50,25 @@ export function App() {
       .catch(err => setError(messageOf(err)))
   }, [])
   useEffect(refreshGames, [refreshGames])
+
+  // Resume the session this browser had open, and forget it if the server no
+  // longer has it (a restarted backend with a fresh database).
+  useEffect(() => {
+    const saved = localStorage.getItem(SESSION_KEY)
+    if (!saved) return
+    api.getSession(saved)
+      .then(state => { setSession(state); setGameId(state.game_id); setRoute('workspace') })
+      .catch(() => localStorage.removeItem(SESSION_KEY))
+  }, [])
+
   const start = (target?: string) => {
     const id = target ?? gameId
     if (!id) return
     void run('开始试玩', async () => {
       setGameId(id)
-      setSession(await api.createSession(id))
+      const created = await api.createSession(id)
+      localStorage.setItem(SESSION_KEY, created.session_id)
+      setSession(created)
       setRoute('workspace')
       refreshGames()
     })
@@ -123,5 +140,14 @@ export function App() {
           </div>)}
       {route === 'replay' && <ReplayPage state={session} />}
     </section>
+
+    {/* Rendered on small screens only: the sidebar is hidden there, and without
+        this there is no way back out of the workspace. */}
+    <nav className="mobile-nav" aria-label="主导航">
+      {NAV.map(item => <button key={item.id} className={route === item.id ? 'is-active' : ''}
+        onClick={() => setRoute(item.id)}>
+        <span className="nav-glyph">{item.glyph}</span>{item.label}
+      </button>)}
+    </nav>
   </main>
 }

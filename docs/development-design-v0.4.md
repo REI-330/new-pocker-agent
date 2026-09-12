@@ -915,6 +915,8 @@ team             █              1
 - [x] macro 形式化 + 提升规则（`core/macros.py`，`match_turn` 被两个计划真实复用）
 - [x] 长驻进程陈旧检测：`/health` 暴露 `code` 指纹 + `doctor.py --url` + 启动器端口归属提示
 - [x] 轴状态与实现对齐：`Capability.note`（缺口必须说明）+ `stable` 不得建立在占位机制上 + 宏提升欠账为 0
+- [x] 外部审查缺陷批次：坏 plan 不再 500、plan 命名空间/指纹/不可变、session↔plan 绑定、牌 ID 与牌值、`failure` 语义、README/移动端/刷新恢复/测试连接/RulesPage
+- [ ] `contract_check(IR, Plan)` 语义对照 + 流程顺序强制 + 设计会话持久化 + `viewer/seat` 身份
 - [ ] 沙箱隔离协议
 
 ---

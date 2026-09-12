@@ -23,9 +23,9 @@ from typing import Any
 
 from ..storage import connect
 from .interpreter import Interpreter
-from .plan import GamePlan
+from .plan import GamePlan, plan_fingerprint
 from .policy import run_bots
-from .reference import build_plan, ensure_playtested, list_reference_games
+from .reference import REFERENCE_GAMES, build_plan, ensure_playtested, list_reference_games
 from .registry import core_registry
 
 
@@ -55,12 +55,30 @@ class SessionStore:
     # ------------------------------------------------------- plan registry
     def register_plan(self, game_id: str, plan: dict[str, Any], playtest_report: dict[str, Any],
                       title: str = "") -> None:
-        """Register an agent-composed plan. Only a passing playtest may call this."""
+        """Register an agent-composed plan. Only a passing playtest may call this.
+
+        Two rules keep a registration from rewriting history:
+        * the built-in ids are reserved, so an agent game can never shadow a
+          reference game (which would also collide in ``/api/games``);
+        * an existing agent game keeps its plan unless the caller registers the
+          *same* plan again -- a silent replacement would leave running sessions
+          executing one graph while the registry described another.
+        """
         if not playtest_report.get("ok"):
             raise ValueError("plan_not_playtested:" + game_id)
-        GamePlan.model_validate(plan)
+        if game_id in REFERENCE_GAMES:
+            raise ValueError(f"game_id_reserved:{game_id}")
+        validated = GamePlan.model_validate(plan)
+        fingerprint = plan_fingerprint(validated)
         payload = {"plan": plan, "playtest": playtest_report,
-                   "title": title or plan.get("game_kind", game_id)}
+                   "title": title or plan.get("game_kind", game_id),
+                   "fingerprint": fingerprint}
+        existing = self._stored_plans().get(game_id)
+        if existing is not None:
+            # Rows written before fingerprints existed are compared by content.
+            previous = existing.get("fingerprint") or plan_fingerprint(existing["plan"])
+            if previous != fingerprint:
+                raise ValueError(f"plan_already_registered:{game_id}")
         if self.path:
             with connect(self.path) as db:
                 db.execute("INSERT OR REPLACE INTO core_agent_plans VALUES (?, ?)",
@@ -77,7 +95,10 @@ class SessionStore:
 
     def list_games(self) -> list[dict[str, Any]]:
         games = list_reference_games()
+        seen = {game["id"] for game in games}
         for game_id, payload in sorted(self._stored_plans().items()):
+            if game_id in seen:                       # reserved ids cannot shadow
+                continue
             games.append({"id": game_id, "title": payload.get("title", game_id),
                           "kind": payload["plan"].get("game_kind", "unknown"),
                           "playtest": payload["playtest"], "source": "agent_compose"})
@@ -86,7 +107,8 @@ class SessionStore:
     # ------------------------------------------------------------- lifecycle
     def _save(self, session: Session) -> None:
         payload = {"game_id": session.game_id, "revision": session.revision,
-                   "seed": session.seed, "engine": session.interpreter.serialize()}
+                   "seed": session.seed, "engine": session.interpreter.serialize(),
+                   "plan_fingerprint": plan_fingerprint(session.plan)}
         if self.path:
             with connect(self.path) as db:
                 db.execute("INSERT OR REPLACE INTO core_sessions VALUES (?, ?)",
@@ -96,7 +118,7 @@ class SessionStore:
 
     def _resolve_plan(self, game_id: str) -> GamePlan:
         stored = self._stored_plans().get(game_id)
-        if stored:
+        if stored and game_id not in REFERENCE_GAMES:
             return GamePlan.model_validate(stored["plan"])
         report = ensure_playtested(game_id)
         if not report.ok:
@@ -121,7 +143,11 @@ class SessionStore:
             if not row:
                 raise KeyError("session_not_found")
             data = json.loads(row[0])
-            return Session(session_id, data["game_id"], self._resolve_plan(data["game_id"]),
+            plan = self._resolve_plan(data["game_id"])
+            recorded = data.get("plan_fingerprint")
+            if recorded is not None and recorded != plan_fingerprint(plan):
+                raise ValueError("plan_changed: 玩法版本已变化，这一局无法继续")
+            return Session(session_id, data["game_id"], plan,
                            Interpreter.restore(data["engine"], core_registry()),
                            data["revision"], data["seed"])
         if session_id in self.sessions:

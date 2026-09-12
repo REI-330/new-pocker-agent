@@ -100,6 +100,14 @@ class Interpreter:
             raise
         except TypeError as error:
             raise ToolError(f"invalid_tool_args:{action.tool}.{action.operation}") from error
+        # Tools index shared state directly, so a plan that never dealt part of
+        # the state it needs (a poker plan without `current_player`) raises a raw
+        # lookup error here. That is a plan bug and must arrive as a rejectable
+        # contract violation with a rollback, not as a crash that escapes the
+        # playtest gate and surfaces as an HTTP 500.
+        except (KeyError, IndexError, AttributeError) as error:
+            raise ToolError(
+                f"tool_state_missing:{action.tool}.{action.operation}:{error!r}") from error
         if action.result_key:
             self.state[action.result_key] = result
         # Contract enforcement: an operation may only change the state keys it

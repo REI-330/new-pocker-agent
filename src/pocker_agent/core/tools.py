@@ -170,17 +170,31 @@ class ScoreSettleTool:
 
 
 class DeckTool:
-    """Generic deck: deterministic shuffle and deal. Strength = rank order."""
+    """Generic deck: deterministic shuffle and deal.
 
-    def __init__(self, ranks: Any, suits: Any, copies: int = 1) -> None:
+    Rank strength defaults to position in ``ranks`` (so ``("A", "2", ...)`` makes
+    the ace low). A family whose scoring needs a different scale must say so with
+    an explicit ``values`` map: five-card poker compares against an ace-high
+    scale where the wheel (A-2-3-4-5) is a straight, which a positional value
+    cannot express.
+    """
+
+    def __init__(self, ranks: Any, suits: Any, copies: int = 1,
+                 values: dict[str, int] | None = None) -> None:
         self.ranks, self.suits = list(ranks), list(suits)
         self.copies = int(copies)
+        self.values = {str(key): int(value) for key, value in (values or {}).items()}
         if not self.ranks or not self.suits or self.copies < 1:
             raise ToolError("invalid_deck_configuration")
+        unknown = sorted(set(self.values) - set(self.ranks))
+        if unknown:
+            raise ToolError("invalid_deck_values:" + ",".join(unknown))
 
     def catalog(self) -> list[CardRef]:
-        return [CardRef(f"{rank}{suit}", rank, suit, index + 1)
-                for _ in range(self.copies)
+        # Ids stay unique when a deck holds the same card more than once.
+        return [CardRef(f"{rank}{suit}" if copy == 0 else f"{rank}{suit}#{copy + 1}",
+                        rank, suit, self.values.get(rank, index + 1))
+                for copy in range(self.copies)
                 for index, rank in enumerate(self.ranks)
                 for suit in self.suits]
 

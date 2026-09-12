@@ -44,6 +44,9 @@ export const api = {
   getConfig: () => request<ModelConfig>('/api/agent/config'),
   saveConfig: (body: {base_url: string; model: string; api_key: string}) =>
     request<ModelConfig>('/api/agent/config', body),
+  // Sends one real completion so "saved" and "actually reachable" stay distinct.
+  testConnection: (body: {base_url: string; model: string; api_key: string}) =>
+    request<import('./types').ConnectionTest>('/api/agent/test-connection', body),
 }
 
 export const messageOf = (error: unknown) => error instanceof Error ? error.message : '操作失败，请重试'

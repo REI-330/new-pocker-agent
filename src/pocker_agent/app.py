@@ -131,7 +131,9 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
     @app.exception_handler(ValueError)
     async def bad_value(request, error):
         message = str(error)
-        status = 409 if message.startswith("stale_revision") else 422
+        conflict = ("stale_revision", "plan_changed", "plan_already_registered",
+                    "game_id_reserved")
+        status = 409 if message.startswith(conflict) else 422
         return JSONResponse(status_code=status, content={"detail": message})
 
     @app.exception_handler(KeyError)
@@ -187,10 +189,22 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
         result = run_loop(goal, make_model(),
                           history=[message.model_dump() for message in payload.messages],
                           max_steps=payload.max_steps)
+        registered = False
         if result.finalized and result.plan and result.ir:
-            store.register_plan(result.ir["game_id"], result.plan, result.playtest or {},
-                                result.ir.get("title", ""))
-        return result.as_dict()
+            try:
+                store.register_plan(result.ir["game_id"], result.plan, result.playtest or {},
+                                    result.ir.get("title", ""))
+                registered = True
+            except ValueError as error:
+                # The design itself is still valid and worth showing; only the
+                # registration was refused (a reserved or already-used id).
+                body = result.as_dict()
+                body["registered"] = False
+                body["registration_error"] = str(error)
+                return body
+        body = result.as_dict()
+        body["registered"] = registered
+        return body
 
     @app.post("/api/sessions")
     def create_session(payload: SessionInput):

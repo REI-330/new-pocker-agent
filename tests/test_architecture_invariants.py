@@ -12,7 +12,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from pocker_agent.core import core_registry
+import pytest
+
+from pocker_agent.core import ToolError, core_registry
 
 CORE_DIR = Path(__file__).resolve().parents[1] / "src" / "pocker_agent" / "core"
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "pocker_agent" / "app.py"
@@ -96,6 +98,23 @@ def test_every_core_operation_declares_its_contract():
             assert isinstance(operation["params"], list)
             assert isinstance(operation["requires"], list)
             assert isinstance(operation["ensures"], list)
+
+
+def test_failure_mode_is_derived_from_effects_and_cannot_contradict_them():
+    """`reject_only` means "writes nothing", so it must not declare effects."""
+    for tool in core_registry().export():
+        for operation in tool["operations"]:
+            writes = bool(operation["effects"])
+            assert (operation["failure"] == "rollback") is writes, (
+                f"{tool['name']}.{operation['name']} declares "
+                f"failure={operation['failure']} with effects={operation['effects']}")
+
+    from pocker_agent.core.contracts import OperationSpec
+
+    with pytest.raises(ToolError, match="reject_only_must_not_write_state"):
+        OperationSpec("bad", effects=("hands",), failure="reject_only")
+    assert OperationSpec("reader").failure == "reject_only"          # derived
+    assert OperationSpec("writer", effects=("hands",)).failure == "rollback"
 
 
 def test_only_state_tool_may_write_arbitrary_keys():

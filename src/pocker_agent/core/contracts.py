@@ -30,6 +30,20 @@ class Observation:
 
 @dataclass(frozen=True)
 class OperationSpec:
+    """What a plan may ask the host to do, and what it is allowed to change.
+
+    ``failure`` names the operation's failure *mode*:
+
+    * ``rollback`` -- the operation may write state; if it raises, the caller
+      discards every change it made (the interpreter rolls back the whole step).
+    * ``reject_only`` -- the operation is a pure check: it must declare no
+      ``effects``, so there is nothing of its own to undo. Declaring both
+      ``reject_only`` and an ``effects`` list is a contract error, enforced here.
+
+    Either way the interpreter rolls the *step* back on failure, so a rejected
+    action can never leave a half-applied board.
+    """
+
     name: str
     method: str = ""
     params: tuple[str, ...] = ()
@@ -45,6 +59,13 @@ class OperationSpec:
             object.__setattr__(self, "method", self.name)
         if self.failure not in {"rollback", "reject_only"}:
             raise ToolError(f"invalid_failure_semantics:{self.name}")
+        if self.failure == "reject_only" and self.effects:
+            raise ToolError(f"reject_only_must_not_write_state:{self.name}")
+        # An operation that writes nothing has nothing to roll back, so the mode
+        # follows from `effects`. Deriving it stops the two from drifting apart
+        # and keeps the exported contract truthful for readers and validators.
+        if self.failure == "rollback" and not self.effects:
+            object.__setattr__(self, "failure", "reject_only")
 
     def export(self) -> dict[str, Any]:
         return {"name": self.name, "params": list(self.params),

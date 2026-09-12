@@ -141,6 +141,11 @@ def run_loop(goal: str, model, *, history: Any = None, registry: ToolRegistry | 
                 observation = dispatch(tool, args, state, registry, seeds)
             except (ToolError, ValueError) as error:
                 observation = _fail(tool, str(error))
+            except Exception as error:
+                # A bug in a meta-tool or a tool is still a step the model has to
+                # see and repair; leaking it would break the loop's contract and
+                # show the caller a traceback instead of a rejected step.
+                observation = _fail(tool, f"tool_crashed:{type(error).__name__}:{error}")
         state.observations.append({"step": step + 1, **observation})
         messages.append({"role": "assistant", "content": json.dumps(decision, ensure_ascii=False)})
         messages.append({"role": "user", "content": observation_text(observation)})

@@ -1,6 +1,6 @@
 # Pocker Agent — Web demo
 
-通过自然语言澄清规则，生成受约束的纸牌 DSL，确认后模拟、与电脑试玩，导出离线游戏。
+通过自然语言澄清规则，生成受约束的纸牌 DSL，确认后模拟、与电脑试玩。
 
 ## 启动
 
@@ -8,10 +8,17 @@ Windows / Python 3.11+ / Node.js：
 
 ~~~powershell
 uv sync
-uv run uvicorn pocker_agent.api:app --app-dir src --host 127.0.0.1 --port 8000
+uv run python scripts\run_web.py
 ~~~
 
-另一个终端：
+打开 http://127.0.0.1:8000 。这一条命令会构建前端并由后端单端口托管（端口被占用时会自动顺延并打印实际端口）。
+本地单用户 demo；后端只监听回环地址，使用单个 worker。
+
+前端开发模式（热更新）需要两个终端：
+
+~~~powershell
+uv run python -m uvicorn pocker_agent.app:app --host 127.0.0.1 --port 8000
+~~~
 
 ~~~powershell
 cd frontend
@@ -19,7 +26,7 @@ npm ci
 npm run dev -- --host 127.0.0.1
 ~~~
 
-打开 http://127.0.0.1:5173 。本地单用户 demo；后端只监听回环地址，使用单个 worker。
+打开 http://127.0.0.1:5173 。
 
 ## 模型配置
 
@@ -43,13 +50,11 @@ npm run dev -- --host 127.0.0.1
 模型必须对不支持的要求澄清，结构校验拒绝未知字段和动作。
 旧v0.1玩法保留展示所有手牌的演示模式；新版21点隐藏庄家暗牌，接牌隐藏对手手牌。电脑使用确定性合法动作策略，算式模拟使用精确求解器。
 
-## 离线导出
+## 离线导出（未实现）
 
-下载 ZIP，解压后打开 index.html，无需后端、API Key、CDN 或网络。
-游戏采用 seed=7 的固定发牌练习局，合法决策路径由同一个 Python 引擎编译，浏览器只播放已验证状态。
-最多 2000 个决策节点，超过限制会显示原因；在线游戏不受此导出限制。
-牌面、许可证、DSL 都包含在 ZIP 内。
-离线导出目前仅覆盖旧v0.1阶段规则。新版算式、21点和接牌通过本机Web执行并支持保存恢复，界面会明确标记暂不支持离线导出。
+v0.4 **没有**导出功能：仓库里不存在导出 ZIP 或离线 index.html 的实现与入口。
+当前唯一可玩路径是本机 Web（构建产物由后端托管），必须有后端在运行。
+保留本节标题只为明确说明该能力不存在，避免与旧版的说明混淆。
 
 ## 运行 v0.4 应用
 
@@ -86,6 +91,12 @@ uv run python scripts/e2e_smoke.py http://127.0.0.1:8000
 
 ~~~powershell
 uv run python scripts\doctor.py --serve
+~~~
+
+检查一个**已经在运行**的服务是否与当前代码一致（陈旧进程会让前端看起来坏掉）：
+
+~~~powershell
+uv run python scripts\doctor.py --url http://127.0.0.1:8000
 ~~~
 
 前端开发模式：`npm run dev --prefix frontend`，并设置 `VITE_API_URL=http://127.0.0.1:8000`。

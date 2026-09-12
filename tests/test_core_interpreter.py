@@ -18,6 +18,54 @@ from pocker_agent.core.contracts import OperationSpec, ToolRegistry
 RANK_VALUES = {"A": 1, **{str(n): n for n in range(2, 11)}, "J": 11, "Q": 12, "K": 13}
 
 
+def test_a_tool_reading_missing_state_is_a_contract_violation_not_a_crash():
+    """Tools index shared state directly; a missing key must not escape as KeyError.
+
+    A structurally valid plan can still ask a tool for state that was never dealt
+    (a poker plan without `committed`, for instance). That is a plan bug, so it has
+    to arrive as a rejectable ToolError with a rollback -- otherwise it propagates
+    through playtest and out of the agent loop as an HTTP 500.
+    """
+    plan = GamePlan.model_validate({
+        "schema_version": "0.4", "game_kind": "poker", "players": 2,
+        "tools": [{"name": "betting", "config": {"min_raise": 10}}],
+        "initial": {"stacks": [100, 100]},          # no `committed`
+        "entry": "start",
+        "nodes": {"start": {"kind": "wait", "inputs": {"go": "legal"}},
+                  "legal": {"kind": "call", "next": "hold", "action": {
+                      "tool": "betting", "operation": "legal",
+                      "args": {"state": "$state"},
+                      "result_key": "legal_bets"}},
+                  "hold": {"kind": "wait", "inputs": {"poke": "hold"}}},
+        "step_limit": 64})
+    interpreter = Interpreter(plan, core_registry(), seed=0)
+    interpreter.setup()
+    before = copy.deepcopy(interpreter.state)
+    where = interpreter.pc
+    with pytest.raises(ToolError, match="tool_state_missing:betting\\.legal"):
+        interpreter.step("go")
+    assert interpreter.state == before, "a rejected call must roll back fully"
+    assert interpreter.pc == where, "the flow pointer must roll back too"
+
+
+def test_a_crashing_plan_fails_playtest_instead_of_raising():
+    """playtest is the gate, so it must report a bad plan, never explode on it."""
+    plan = GamePlan.model_validate({
+        "schema_version": "0.4", "game_kind": "poker", "players": 2,
+        "tools": [{"name": "betting", "config": {"min_raise": 10}}],
+        "initial": {"stacks": [100, 100]}, "entry": "start",
+        "nodes": {"start": {"kind": "wait", "inputs": {"go": "legal"}},
+                  "legal": {"kind": "call", "next": "hold", "action": {
+                      "tool": "betting", "operation": "legal",
+                      "args": {"state": "$state"},
+                      "result_key": "legal_bets"}},
+                  "hold": {"kind": "wait", "inputs": {"poke": "hold"}}},
+        "step_limit": 64})
+    report = playtest(plan, core_registry(), first_legal, seeds=(0,))
+    assert report.ok is False
+    assert any("tool_state_missing" in failure for failure in report.failures), report.failures
+
+
 def arithmetic(**overrides):
     from pocker_agent.core import arithmetic_plan
 

@@ -220,3 +220,28 @@ def test_the_prompt_advertises_every_family_the_ir_accepts():
     propose = next(tool for tool in TOOL_SCHEMAS if tool["name"] == "propose_ir")
     for kind in REQUIRED_AXES:
         assert kind in propose["description"], kind
+
+
+def test_a_crashing_meta_tool_becomes_an_observation_not_an_exception(monkeypatch):
+    """The loop's contract is "every failure comes back as an observation".
+
+    A host bug inside a meta-tool used to escape as an HTTP 500, which breaks
+    that contract in the worst way: the model never gets to repair, and the
+    caller sees a traceback instead of a rejected step.
+    """
+    from pocker_agent.agent import loop as loop_module
+
+    def explode(tool, args, state, registry, seeds):
+        raise KeyError("current_player")
+
+    monkeypatch.setattr(loop_module, "dispatch", explode)
+    model = ScriptedModel(decision("propose_ir", ir={"kind": "war", "game_id": "boom",
+                                                     "title": "t", "max_rounds": 3}),
+                          decision("finalize"))
+    result = run_loop("做个比大小", model, max_steps=2)   # must not raise
+
+    assert result.kind == "error"
+    assert result.attempts == 2
+    crashed = [observation for observation in result.observations
+               if (observation.get("error") or "").startswith("tool_crashed")]
+    assert crashed and "KeyError" in crashed[0]["error"], result.observations

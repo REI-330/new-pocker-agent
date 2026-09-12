@@ -29,7 +29,8 @@ export function RulesPage({game, coverage, onPlay}: {
           <p>种子 {report.seeds.join(' / ')}<br />wait 覆盖 {report.covered_wait_nodes.join(', ') || '—'}</p></div>
           <Pill tone={report.ok ? 'success' : 'danger'}>{report.failures.length} 失败</Pill></div>
         {corpusGame && <div className="rule-card"><div><h3>需要的能力轴</h3>
-          <p>{corpusGame.required_axes.join('<br />')}</p></div>
+          <ul className="axis-list">{corpusGame.required_axes.map(axis => <li key={axis}>{axis}</li>)}</ul>
+        </div>
           <Pill tone={corpusGame.expressible ? 'success' : 'warning'}>
             {corpusGame.expressible ? '全部 stable' : '存在待开发轴'}</Pill></div>}
       </div>

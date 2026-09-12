@@ -60,6 +60,16 @@ export function SettingsPage() {
     setStatus(saved.configured ? '已保存，可以到「新建玩法」开始对话' : '已保存，但配置不完整')
   })
 
+  // Uses the draft values (including a key typed but not yet saved), so the
+  // answer is "will this work", not "did the last save work".
+  const testConnection = () => void withStatus('测试连接', async () => {
+    const result = await api.testConnection({base_url: baseUrl.trim(), model: model.trim(),
+      api_key: apiKey})
+    setStatus(result.ok
+      ? `连接成功：${result.model || '（未指定模型）'} @ ${result.base_url}`
+      : '连接成功，但模型没有返回内容')
+  })
+
   return <div className="prototype-page">
     <div className="page-heading">
       <div><span className="eyebrow">SETTINGS</span><h1>模型设置</h1>
@@ -88,6 +98,9 @@ export function SettingsPage() {
       <div className="action-buttons">
         <button className="action-secondary" onClick={fetchModels}
           disabled={!!busy || !baseUrl.trim()}>{busy === '获取模型列表' ? '获取中…' : '获取模型列表'}</button>
+        <button className="action-secondary" onClick={testConnection}
+          disabled={!!busy || !baseUrl.trim() || !model.trim()}>
+          {busy === '测试连接' ? '测试中…' : '测试连接'}</button>
       </div>
 
       <label>模型

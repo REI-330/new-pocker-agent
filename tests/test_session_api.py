@@ -205,6 +205,45 @@ def _decision(tool: str, **args) -> str:
     return json.dumps({"tool": tool, "args": args})
 
 
+def test_a_broken_plan_is_reported_over_http_and_never_becomes_a_500(tmp_path):
+    """Structurally valid, semantically broken: the caller must get a result.
+
+    This plan passes GamePlan validation and names real operations, but asks
+    `betting` for state it never dealt. Before the interpreter converted lookup
+    errors into contract violations, this request answered HTTP 500 and the
+    model never learned why.
+    """
+    broken = {"schema_version": "0.4", "game_kind": "poker", "players": 2,
+              "tools": [{"name": "betting", "config": {"min_raise": 10}}],
+              "initial": {"stacks": [100, 100]}, "entry": "start",
+              "nodes": {"start": {"kind": "wait", "inputs": {"go": "legal"}},
+                        "legal": {"kind": "call", "next": "hold", "action": {
+                            "tool": "betting", "operation": "legal",
+                            "args": {"state": "$state"},
+                            "result_key": "legal_bets"}},
+                        "hold": {"kind": "wait", "inputs": {"poke": "hold"}}},
+              "step_limit": 64}
+    model = _ScriptedModel(
+        _decision("propose_ir", ir={"kind": "poker", "game_id": "broken-poker",
+                                     "title": "坏的扑克", "stacks": 100, "min_raise": 10}),
+        _decision("compose_plan", plan=broken),
+        _decision("playtest"),
+    )
+    c = TestClient(create_app(tmp_path / "broken.db", model_factory=lambda: model))
+    response = c.post("/api/agent/loop", json={"message": "做个扑克"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["finalized"] is False
+    playtest_step = next(o for o in body["observations"] if o["tool"] == "playtest")
+    assert playtest_step["ok"] is False
+    # The rejection reaches the model as data it can act on -- whichever policy
+    # the gate used to discover it -- instead of a traceback.
+    assert playtest_step["failures"], playtest_step
+    assert "tool_crashed" not in str(playtest_step), playtest_step
+    assert not any(game["id"] == "broken-poker" for game in c.get("/api/games").json()["games"])
+
+
 def test_agent_composes_a_game_and_it_becomes_playable_over_http(tmp_path):
     model = _ScriptedModel(
         _decision("propose_ir", ir={"kind": "war", "game_id": "agent-war",

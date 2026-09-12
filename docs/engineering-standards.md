@@ -264,6 +264,29 @@ S4             覆盖度量与交付（横切，贯穿始终）
 - 提升规则变成活规则：`promotion_report(PLAN_MACROS, default_macros())` 必须为空，且其结果现在从
   `/api/capabilities.macro_promotion` 暴露，玩法库页「宏提升规则」一栏直接显示（当前：无待提升项）。
 
+**S8 补丁 3：外部审查发现的缺陷（2026-09-11）。**
+
+审查基于 HEAD `073d4eb`，逐条核实后修复：
+
+| 缺陷 | 真相 | 修复 |
+|---|---|---|
+| 结构合法但语义坏的 plan 让 Agent 接口 500 | `betting.legal` 读 `state["current_player"]` 抛裸 `KeyError`，穿过 `playtest` 与 `loop` 直达 HTTP | 解释器把工具抛出的 `KeyError/IndexError/AttributeError` 转为 `tool_state_missing` 契约违规 + 回滚；`loop` 兜底任何异常为 observation（**永不 500**） |
+| agent plan 可覆盖内置玩法 | `INSERT OR REPLACE` + 无 ID 保护；`list_games()` 无命名空间合并 | 内置 ID 保留（`game_id_reserved`）；同 ID 不同 plan 拒绝（`plan_already_registered`）；`list_games()` 去重；两者都作为 `registration_error` 回给 UI，**不丢弃设计结果** |
+| session 恢复重解析 plan | `get()` 按 `game_id` 重取当前 plan | session 存 `plan_fingerprint`，不一致返回 `plan_changed`（409） |
+| `CardRef` ID 在 `copies>1` 时重复 | `f"{rank}{suit}"` 不看副本号 | 第二份起加 `#n` 后缀；单副本 ID 不变（oracle fixture 不受影响） |
+| 牌值与 `hand_rank` 尺度不一致 | 牌堆按位置给值（poker 的 A=13），而 `_score_five` 按 14 尺度判定 → **A-2-3-4-5 被判成 `high_card`**，是同花顺也漏判 | `deck` 新增显式 `values` 映射；poker 全量映射 A=14 → 轮子现在正确判为 `straight` |
+| `failure="reject_only"` 声明但无语义 | 无任何 operation 声明它，字段是装饰 | 定义语义并由 `effects` 推导（无 effects ⇒ `reject_only`）；两者矛盾直接报错 |
+| README 首条命令失效、承诺不存在的功能 | `pocker_agent.api:app` 不存在；离线导出**代码库中根本没有** | 启动改为 `scripts/run_web.py`；离线导出一节明确标为未实现 |
+| 移动端无导航 | ≤720px 隐藏侧栏且无替代 | 新增底部 Tab（≤720px 显示），可进可出工作台 |
+| 刷新丢失牌局 | 前端不保存 session | `localStorage` 存 session id，刷新恢复工作台 |
+| RulesPage 输出字面 `&lt;br /&gt;` | `join('<br />')` | 改为列表渲染 |
+| “测试连接”UI 入口缺失 | 后端有路由，前端无方法也无按钮 | 补 `api.testConnection` + 按钮（用草稿配置发一次真实请求） |
+
+验证：`198 passed`；真实 HTTP e2e `27/27`；headless Chromium 全量前端走查 **45 项全过**（含移动端导航、刷新恢复、真实测试连接）。
+
+**尚未修复（下一阶段）**：`contract_check(IR, Plan)`（IR 与计划无语义对照）、流程顺序强制、
+设计会话持久化、`viewer/seat` 身份、`GamePlan.graph()` 可达性与终止性、IR/plan/tool 三层资源上限。
+
 ## 4. 测试规范
 
 ### 4.1 测试层次（每层证明什么）
@@ -465,6 +488,8 @@ K 默认 2，可在 ADR 中调整。**注册表只能按"被证明的复用"增�
 | 让"暂时保留旧路径"没有 deadline | 双路径永久化 |
 | 长驻进程存活于一次改动之后 | 前端已更新、API 还是旧 schema；"发不出去"被误判为前端 bug |
 | 提示词里的能力清单手工维护 | `SYSTEM_PROMPT` 到 S8 仍写 `kind = arithmetic \| war`，设计对话被带偏到 war 族 |
+| 契约字段声明了却没语义 | `failure="reject_only"` 从未被任何 operation 使用、也未被执行器区分 |
+| 只在结构层校验模型产物 | plan 结构合法但语义坏（缺 `committed`）→ 裸 `KeyError` → HTTP 500，模型拿不到 observation |
 
 **红线（一票否决）**：新增第二执行路径、新增游戏专属引擎、add-only 结构性 PR、未过 playtest 即可玩、让模型自证正确。
 

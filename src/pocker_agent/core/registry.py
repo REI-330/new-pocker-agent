@@ -59,7 +59,7 @@ def core_registry() -> ToolRegistry:
         OperationSpec("call", params=("scores", "winners", "points"), effects=(), returns="scores"),)))
     registry.register(ToolSpec(
         "deck",
-        lambda ranks, suits, copies=1: DeckTool(ranks, suits, copies),
+        lambda ranks, suits, copies=1, values=None: DeckTool(ranks, suits, copies, values),
         (OperationSpec("cards", params=(), effects=(), returns="list[CardRef]"),
          OperationSpec("shuffled", params=("seed",), effects=(), returns="list[CardRef]"),
          OperationSpec("deal", params=("seed", "hands", "cards_each", "kitty"), effects=(),

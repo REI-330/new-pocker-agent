@@ -35,7 +35,7 @@ from .ir import (
 )
 from .macro_library import MATCH_TURN, PLAN_MACROS, default_macros
 from .macros import MacroRegistry, MacroSpec, expand_macro, promotion_report, validate_macro, wire
-from .plan import FlowCase, FlowNode, GamePlan, ToolBinding, ToolCall
+from .plan import ActionDescriptor, ActionInputDescriptor, FlowCase, FlowNode, GamePlan, ToolBinding, ToolCall
 from .plans import (
                      arithmetic_plan,
                      blackjack_plan,
@@ -47,7 +47,7 @@ from .plans import (
                      whist_plan,
 )
 from .playtest import PlaytestReport, boundary_first, card_first, first_legal, playtest, random_legal, resilient_first
-from .policy import bet_first, bot_action, run_bots
+from .policy import bet_first, bot_action, composed_action, run_bots
 from .reference import REFERENCE_GAMES, build_plan, ensure_playtested, list_reference_games
 from .registry import core_registry
 from .rules import (
@@ -81,6 +81,8 @@ __all__ = [
                      "PLAN_MACROS",
                      "REFERENCE_GAMES",
                      "ZONES_KEY",
+                     "ActionDescriptor",
+                     "ActionInputDescriptor",
                      "ArithmeticIR",
                      "BlackjackIR",
                      "Capability",
@@ -129,6 +131,7 @@ __all__ = [
                      "card_first",
                      "check_ir",
                      "compile_composed",
+                     "composed_action",
                      "composition_samples",
                      "core_registry",
                      "coverage_report",

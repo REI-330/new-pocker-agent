@@ -30,6 +30,46 @@ class ToolBinding(_Strict):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
+class ActionInputDescriptor(_Strict):
+    """Plan-data description of one typed input a wait action needs (ADR-0007).
+
+    A composed plan must not leave the *shape* of an action's input implicit in
+    tool code: the host bot and the API both need to know which zone to read,
+    whether it is the acting seat's instance or a shared pile, and how many
+    cards a legal selection holds. ``zone`` is the declared zone id from the
+    rules IR (never a resolved instance), so the same descriptor stays valid
+    across seats and rounds. An empty ``actions`` list is exactly a 0.4 plan.
+    """
+
+    id: str = Field(min_length=1, max_length=32, pattern=r"^[a-z][a-z0-9_]*$")
+    kind: Literal["card_selection"] = "card_selection"
+    zone: str = Field(min_length=1, max_length=64)
+    scope: Literal["actor", "shared"] = "actor"
+    min_count: int = Field(default=1, ge=0, le=12)
+    max_count: int = Field(default=1, ge=0, le=12)
+
+    @model_validator(mode="after")
+    def bounds(self) -> ActionInputDescriptor:
+        if self.max_count < self.min_count:
+            raise ValueError("action_input_bounds_invalid")
+        return self
+
+
+class ActionDescriptor(_Strict):
+    """A wait action offered by a plan, plus the inputs it expects."""
+
+    id: str = Field(min_length=1, max_length=32, pattern=r"^[a-z][a-z0-9_]*$")
+    label: str = Field(default="", max_length=120)
+    inputs: list[ActionInputDescriptor] = Field(default_factory=list, max_length=4)
+
+    @model_validator(mode="after")
+    def unique_inputs(self) -> ActionDescriptor:
+        ids = [item.id for item in self.inputs]
+        if len(ids) != len(set(ids)):
+            raise ValueError("action_input_ids_must_be_unique")
+        return self
+
+
 class FlowCase(_Strict):
     value: Any = None
     target: str
@@ -68,6 +108,9 @@ class GamePlan(_Strict):
     game_kind: str = Field(min_length=1, max_length=64)
     players: int = Field(ge=1, le=12)
     tools: list[ToolBinding] = Field(min_length=1, max_length=64)
+    # 0.5 addition: the typed inputs of the plan's wait actions. A 0.4 plan
+    # serialised before this field existed parses back to ``[]`` unchanged.
+    actions: list[ActionDescriptor] = Field(default_factory=list, max_length=32)
     initial: dict[str, Any] = Field(default_factory=dict)
     entry: str
     nodes: dict[str, FlowNode] = Field(min_length=1, max_length=512)
@@ -78,6 +121,9 @@ class GamePlan(_Strict):
         names = [binding.name for binding in self.tools]
         if len(names) != len(set(names)):
             raise ValueError("plan_duplicate_tool")
+        action_ids = [descriptor.id for descriptor in self.actions]
+        if len(action_ids) != len(set(action_ids)):
+            raise ValueError("plan_duplicate_action")
         if self.entry not in self.nodes:
             raise ValueError("plan_entry_missing")
         for node in self.nodes.values():

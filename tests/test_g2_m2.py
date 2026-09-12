@@ -254,17 +254,21 @@ def test_the_compiler_refuses_to_guess_a_source_clause():
 def test_the_plan_schema_versions_are_distinguishable():
     """ADR-0007: widening to 0.5 must not silently redefine 0.4 fields.
 
-    M2's composed plan has the same field set as 0.4, so the compiler keeps 0.4;
-    a 0.5 plan parses, but its fingerprint differs -- a content hash is not a
-    verification credential.
+    M3's composed plan carries the 0.5 ``actions`` descriptor field, so the
+    compiler stamps it 0.5. A 0.4 plan still parses (no ``actions`` -> ``[]``),
+    and its fingerprint differs -- a content hash is not a verification
+    credential.
     """
     from pocker_agent.core.plan import GamePlan
 
     compiled = compile_composed(parse_design_ir(scenario_a_ir()), core_registry())
-    assert compiled.plan.schema_version == "0.4"
+    assert compiled.plan.schema_version == "0.5"
+    assert compiled.plan.actions, "a composed plan must publish its action shapes"
     migrated = GamePlan.model_validate(
-        {**compiled.plan.model_dump(mode="json"), "schema_version": "0.5"})
-    assert migrated.schema_version == "0.5"
+        {**compiled.plan.model_dump(mode="json"), "schema_version": "0.4",
+         "actions": []})
+    assert migrated.schema_version == "0.4"
+    assert migrated.actions == []
     assert plan_fingerprint(migrated) != plan_fingerprint(compiled.plan)
 
 

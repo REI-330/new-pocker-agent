@@ -14,6 +14,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from .actions import resolve_zone
 from .cards import decode, encode
 from .contracts import ToolError, ToolRegistry
 from .plan import GamePlan
@@ -275,6 +276,35 @@ class Interpreter:
                 "visible": visible}
         return projected
 
+    def action_descriptors(self, viewer: str = "player-1") -> list[dict[str, Any]]:
+        """The plan's wait actions with viewer-filtered candidate values.
+
+        Each declared input is annotated with ``options`` -- the card ids visible
+        to ``viewer`` in the zone the input reads. A hidden or other-owned zone
+        yields an empty list, so the same call is safe to serve to any viewer;
+        the descriptors themselves carry no card identities.
+        """
+        if not self.plan.actions:
+            return []
+        projected = self.project_zones(viewer)
+        result: list[dict[str, Any]] = []
+        for descriptor in self.plan.actions:
+            inputs: list[dict[str, Any]] = []
+            for item in descriptor.inputs:
+                try:
+                    zone_id = resolve_zone(self.state, item)
+                except ToolError:
+                    zone_id = None
+                zone = projected.get(zone_id) if zone_id else None
+                inputs.append({
+                    "id": item.id, "kind": item.kind, "zone": item.zone,
+                    "scope": item.scope, "min_count": item.min_count,
+                    "max_count": item.max_count,
+                    "options": [card["id"] for card in zone["cards"]] if zone else []})
+            result.append({"id": descriptor.id, "label": descriptor.label,
+                           "inputs": inputs})
+        return result
+
     def view(self, viewer: str = "player-1") -> dict[str, Any]:
         state = self.state
         scores = list(state.get("scores", []))
@@ -317,6 +347,9 @@ class Interpreter:
         projected = self.project_zones(viewer)
         if projected:
             result["zones"] = projected
+        actions = self.action_descriptors(viewer)
+        if actions:
+            result["actions"] = actions
         # Extra table state (chips, teams, tricks, pairs) is exposed read-only so
         # a UI can render it without knowing the game family.
         for key in ("pot", "stacks", "committed", "hand_committed", "folded",

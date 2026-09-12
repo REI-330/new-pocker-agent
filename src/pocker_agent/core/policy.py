@@ -6,6 +6,7 @@ host never invents an action that the plan did not offer.
 """
 from __future__ import annotations
 
+from .actions import descriptor_for, payload_for
 from .contracts import ToolError
 from .interpreter import Interpreter
 from .playtest import card_first, resilient_first
@@ -27,17 +28,47 @@ def bet_first(interpreter: Interpreter):
     return (actions[0], {})
 
 
+def composed_action(interpreter: Interpreter):
+    """Generic policy for a composed plan: satisfy each declared input.
+
+    The plan carries :class:`~pocker_agent.core.plan.ActionDescriptor` data, so
+    the host no longer has to guess an action's payload from its name. Each
+    candidate action's payload is built from the live state and probed on a
+    throwaway copy, so a descriptor the state cannot satisfy (for example an
+    empty zone) is treated as "this action is not usable", not as a crash. It is
+    deterministic given the state, which keeps replay byte-exact.
+    """
+    for action in interpreter.legal_actions():
+        descriptor = descriptor_for(interpreter.plan, action)
+        if descriptor is None:
+            continue
+        try:
+            payload = payload_for(interpreter.state, descriptor)
+        except ToolError:
+            continue
+        probe = Interpreter.restore(interpreter.serialize(), interpreter.registry)
+        try:
+            probe.step(action, **payload)
+        except ToolError:
+            continue
+        return (action, payload)
+    return None
+
+
 def bot_action(interpreter: Interpreter):
     """The single policy used by the host for non-human seats.
 
     The plan decides the shape of the turn; the host only picks from what the
-    plan actually offers. Three shapes are covered: a betting round, a card
-    turn, and anything else (probe the actions, take the first the host
-    accepts) so a new family is never silently unplayable.
+    plan actually offers. A composed plan advertises typed action descriptors,
+    so it is driven through those; otherwise three shapes are covered: a betting
+    round, a card turn, and anything else (probe the actions, take the first the
+    host accepts) so a new family is never silently unplayable.
     """
     actions = interpreter.legal_actions()
     if not actions:
         return None
+    if interpreter.plan.actions:
+        return composed_action(interpreter)
     if _BETTING_ACTIONS.intersection(actions):
         return bet_first(interpreter)
     if _CARD_ACTIONS.intersection(actions):

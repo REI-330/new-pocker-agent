@@ -28,7 +28,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from ..contracts import ToolError, ToolRegistry
-from ..plan import GamePlan, plan_fingerprint
+from ..plan import ActionDescriptor, ActionInputDescriptor, GamePlan, plan_fingerprint
 from .composed import (
     MAX_PLAN_NODES,
     MAX_STEP_LIMIT,
@@ -469,6 +469,22 @@ def _tool_bindings(ir: ComposedRulesIR) -> list[dict[str, Any]]:
     return bindings
 
 
+def _action_descriptors(ir: ComposedRulesIR) -> list[ActionDescriptor]:
+    """The plan-data description of each action's typed inputs.
+
+    This is the M3/Plan-0.5 half of the IR: the compiler publishes the input
+    *shape* (zone, scope, bounds) so the host bot and the API can build a legal
+    payload without reading compiled node arguments. The declared zone id and
+    scope are kept verbatim -- ``actor`` resolution happens against the live
+    state, which is what lets one descriptor serve both seats.
+    """
+    return [ActionDescriptor(id=action.id, label="", inputs=[
+        ActionInputDescriptor(id=item.id, kind=item.kind, zone=item.zone,
+                              scope=item.scope, min_count=item.min_count,
+                              max_count=item.max_count)
+        for item in action.inputs]) for action in ir.actions]
+
+
 def build_source_map(ir: ComposedRulesIR, entries: list[dict[str, str]]) -> dict[str, Any]:
     by_node: dict[str, dict[str, str]] = {}
     by_path: dict[str, list[str]] = {}
@@ -515,9 +531,10 @@ def compile_composed(ir: ComposedRulesIR | dict[str, Any],
         raise CompileError("plan_node_budget_exceeded", f"{len(nodes)}>{MAX_PLAN_NODES}",
                            "flow", clause_for(ir, "flow"))
 
-    plan = GamePlan(game_kind="composed", players=ir.players.count,
-                    tools=_tool_bindings(ir), initial={"reveal": False},
-                    entry="setup_seed", nodes=nodes, step_limit=MAX_STEP_LIMIT)
+    plan = GamePlan(schema_version="0.5", game_kind="composed", players=ir.players.count,
+                    tools=_tool_bindings(ir), actions=_action_descriptors(ir),
+                    initial={"reveal": False}, entry="setup_seed", nodes=nodes,
+                    step_limit=MAX_STEP_LIMIT)
     flow = analyse_control_flow(plan, _BOUNDED_NODES)
     if flow["unreachable"]:
         raise CompileError("unreachable_plan_nodes", ",".join(flow["unreachable"]),

@@ -153,6 +153,21 @@ def test_stale_revision_is_a_conflict(tmp_path):
     assert stale.json()["detail"].startswith("stale_revision")
 
 
+def test_a_repeated_request_id_is_not_applied_twice(tmp_path):
+    """A retried submit returns the original response, even at the old revision."""
+    c = client(tmp_path)
+    state = c.post("/api/sessions", json={"game_id": "arithmetic24", "seed": 7}).json()
+    session_id = state["session_id"]
+    body = {"revision": 0, "expression": solve(tuple(state["numbers"])),
+            "request_id": "retry-1"}
+    first = c.post(action_path(session_id, "submit_expression"), json=body)
+    assert first.status_code == 200
+    second = c.post(action_path(session_id, "submit_expression"), json=body)
+    assert second.status_code == 200
+    assert second.json() == first.json()
+    assert c.get(f"/api/sessions/{session_id}").json()["revision"] == 1
+
+
 def test_session_survives_an_app_restart(tmp_path):
     database = tmp_path / "persist.db"
     first = TestClient(create_app(database))

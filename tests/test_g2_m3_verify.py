@@ -218,3 +218,39 @@ def test_verify_plan_reports_an_uncovered_wait_instead_of_raising():
     result = verify_plan(plan, core_registry())
     assert result.ok is False
     assert any("wait_nodes_uncovered:wait_b" in failure for failure in result.failures)
+
+
+# ------------------------------------------------------------ idempotent commits
+def test_a_repeated_request_id_returns_the_original_response(tmp_path):
+    from pocker_agent.core.actions import descriptor_for, payload_for
+
+    store = SessionStore(tmp_path / "dedup.db")
+    store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="对局")
+    session = store.create("duel", seed=3)
+    descriptor = descriptor_for(session.plan, "play")
+    payload = payload_for(session.interpreter.state, descriptor)
+    first = store.act(session.id, "play", 0, request_id="retry-1", **payload)
+    # the same key at the now-stale revision must replay, not re-apply
+    second = store.act(session.id, "play", 0, request_id="retry-1", **payload)
+    assert second == first
+    assert store.get(session.id).revision == 1
+    # a *different* key at the stale revision is still a conflict
+    with pytest.raises(ValueError, match="stale_revision"):
+        store.act(session.id, "play", 0, request_id="retry-2", **payload)
+
+
+def test_processed_request_ids_survive_a_reload(tmp_path):
+    from pocker_agent.core.actions import descriptor_for, payload_for
+
+    path = tmp_path / "dedup.db"
+    store = SessionStore(path)
+    store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="对局")
+    session = store.create("duel", seed=3)
+    descriptor = descriptor_for(session.plan, "play")
+    payload = payload_for(session.interpreter.state, descriptor)
+    first = store.act(session.id, "play", 0, request_id="retry-1", **payload)
+
+    reopened = SessionStore(path)
+    replay = reopened.act(session.id, "play", 0, request_id="retry-1", **payload)
+    assert replay == first
+    assert reopened.get(session.id).revision == 1

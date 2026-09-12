@@ -23,7 +23,8 @@ import json
 import secrets
 import threading
 import uuid
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,10 @@ from .reference import REFERENCE_GAMES, build_plan, ensure_playtested, list_refe
 from .registry import core_registry
 from .verify import VERIFICATION_SEEDS, VERIFICATION_STRATEGIES, publish_composed
 
+# How many recent idempotency keys a session remembers. Enough for a retry
+# window without letting a long game grow the persisted payload without bound.
+MAX_PROCESSED_REQUESTS = 16
+
 
 @dataclass
 class Session:
@@ -46,6 +51,7 @@ class Session:
     revision: int = 0
     seed: int = 0
     version: int | None = None
+    processed: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class SessionStore:
@@ -228,6 +234,7 @@ class SessionStore:
     def _save(self, session: Session) -> None:
         payload = {"game_id": session.game_id, "revision": session.revision,
                    "seed": session.seed, "version": session.version,
+                   "processed": session.processed,
                    "engine": session.interpreter.serialize(),
                    "plan_fingerprint": plan_fingerprint(session.plan)}
         if self.path:
@@ -278,20 +285,26 @@ class SessionStore:
                 raise ValueError("plan_changed: 玩法版本已变化，这一局无法继续")
             return Session(session_id, data["game_id"], plan,
                            Interpreter.restore(data["engine"], core_registry()),
-                           data["revision"], data["seed"], data.get("version"))
+                           data["revision"], data["seed"], data.get("version"),
+                           data.get("processed", {}))
         if session_id in self.sessions:
             return self.sessions[session_id]
         raise KeyError("session_not_found")
 
-    def act(self, session_id: str, action: str, revision: int, **payload: Any) -> dict[str, Any]:
+    def act(self, session_id: str, action: str, revision: int,
+            request_id: str | None = None, **payload: Any) -> dict[str, Any]:
         """One human action plus the bot batch, as a single atomic commit.
 
         If the human step or a bot step raises, the interpreter is rolled back to
         the committed state and ``revision`` is unchanged, so a bot failure never
-        leaves a half-advanced game (M3 exit criterion 9).
+        leaves a half-advanced game (M3 exit criterion 9). A repeated
+        ``request_id`` returns the original response instead of applying the
+        action twice.
         """
         with self.lock:
             session = self.get(session_id)
+            if request_id and request_id in session.processed:
+                return deepcopy(session.processed[request_id])
             if session.revision != revision:
                 raise ValueError("stale_revision: 牌局已经更新，请刷新牌局")
             start = len(session.interpreter.events)
@@ -303,10 +316,15 @@ class SessionStore:
                 session.interpreter = Interpreter.restore(snapshot, session.interpreter.registry)
                 raise
             session.revision += 1
+            response = {"event": event,
+                        "new_events": session.interpreter.events[start:],
+                        "state": self.snapshot(session)}
+            if request_id:
+                session.processed[request_id] = deepcopy(response)
+                for stale in list(session.processed)[:-MAX_PROCESSED_REQUESTS]:
+                    session.processed.pop(stale, None)
             self._save(session)
-            return {"event": event,
-                    "new_events": session.interpreter.events[start:],
-                    "state": self.snapshot(session)}
+            return response
 
     def snapshot(self, session: Session, viewer: str = "player-1") -> dict[str, Any]:
         view = session.interpreter.view(viewer)

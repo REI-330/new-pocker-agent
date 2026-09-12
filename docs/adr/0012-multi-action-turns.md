@@ -76,6 +76,16 @@ FlowSpec
 | 被 skip 的座位计入 `action_count` | 「行动数 == 独立逐动作统计」监测器拒绝 |
 | 把 trigger 效果排到终局闸门之前 | 阶段顺序监测器拒绝 |
 
+## 实现补充（M3g-guard，`docs/adr/0012` 实施记录）
+
+第 8 条的闭合语法在实现时做了一处收窄与一处扩展，均保持「无动态路径、无任意函数」：
+
+- **收窄**：`match(top(zone), <card-expr>)` 的 `<card-expr>` 若为**本动作输入**，则它在 guard 求值时尚未产生（guard 先于 `wait`），无法作为回合内候选动作的判据。场景 B 的「有合法牌」因此用**有界** `has_match(zone, top(other))` 表达：它只扫描一个已声明牌区（≤ `MAX_SELECTION` 的单次查询），语义等同 `pattern.choices` 后取 `count > 0`，复用既有 `pattern.choices`，不引入集合量化或动态路径。
+- **扩展**：`zone_count(<zone>)`（读一个已声明牌区的张数）用于「牌堆是否为空」这类有界条件。
+- **空区域**：`top(...)` 在布尔语境返回 `false`（编译成 `zones.count_zone` + 分支，空区写入 null 卡），数值语境 `top(...).value` 是编译错误。
+- **新增宿主操作**：`zones.cards(state, zone)`（纯读，返回该区牌列表），供 `has_match` 使用；它使 `registry.contract_hash()` 变化，旧 composed 验证凭据按 ADR-0008 失效并需重新验证。
+- **指纹**：不含顶牌引用的单动作 guard 仍编译为 `pre_turn`/`guard_branch`，M2 指纹不变；含顶牌引用的 guard 会先发宿主调用再求值，指纹变化属预期。
+
 ## 迁移与删除
 
 - `round_action` 保持必填；`turn_actions` 为空即单动作，行为与 plan 指纹不变（回归测试锁定）。

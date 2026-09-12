@@ -41,6 +41,11 @@ class ZonesTool:
         return {"zone": zone, "id": card.id, "rank": card.rank,
                 "suit": card.suit, "value": card.value}
 
+    def cards(self, state: dict[str, Any], zone: Any) -> dict[str, Any]:
+        """The zone's cards, in order; a pure read for bounded zone scans."""
+        cards = zone_cards(zone_table(state), zone)
+        return {"zone": zone, "cards": list(cards), "count": len(cards)}
+
     def count(self, state: dict[str, Any]) -> dict[str, Any]:
         """Card counts for every zone, with no optional branch in the shape."""
         zones = zone_table(state)

@@ -31,7 +31,7 @@ from .composed import (
     RemovePairsEffect,
     SelectEffect,
 )
-from .expr import refs_in
+from .expr import guard_mechanisms, refs_in
 
 # Interaction input kinds the host can currently compile and validate.
 SUPPORTED_INPUT_KINDS = frozenset({"card_selection"})
@@ -118,6 +118,9 @@ def derive_requirements(ir: ComposedRulesIR) -> tuple[Requirement, ...]:
         base = f"actions.{action.id}"
         if action.guard is not None:
             _expr_requirements(ir, action.guard, f"{base}.guard", found)
+            for mechanism in sorted(guard_mechanisms(action.guard)):
+                found.append(Requirement("operation", mechanism, f"{base}.guard",
+                                         _clause(ir, f"{base}.guard")))
         for item in action.inputs:
             if item.kind not in SUPPORTED_INPUT_KINDS:
                 found.append(Requirement("input", item.kind, f"{base}.inputs.{item.id}",
@@ -193,6 +196,9 @@ def features_for(ir: ComposedRulesIR) -> tuple[str, ...]:
     if any(isinstance(effect, RemovePairsEffect)
            for action in ir.actions for effect in action.effects):
         features.add("scoring")
+    if any("pattern.choices" in guard_mechanisms(action.guard)
+           for action in ir.actions if action.guard is not None):
+        features.add("matching")
     return tuple(sorted(features))
 
 

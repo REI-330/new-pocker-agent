@@ -89,11 +89,49 @@ class JoinExpr(_Strict):
     items: list[Expr] = Field(min_length=1, max_length=8)
 
 
+# ------------------------------------------------------------------ guard-only
+# ADR-0012 section 8: a guard may read the *top* of a declared zone through a
+# closed grammar. There is no dynamic path and no function call -- a ``top``
+# reference names one declared zone and one fixed field, and the compiler lowers
+# it to declared ``zones`` operations (with an emptiness guard, so an empty zone
+# is false in boolean context rather than a runtime error). The bounded
+# ``has_match`` predicate is the guard form of ``pattern.match`` over a whole
+# zone: it reuses ``pattern.choices`` semantics and scans one declared zone.
+_ZONE_PATTERN = r"^[a-z][a-z0-9_-]*$"
+
+
+class TopExpr(_Strict):
+    op: Literal["top"]
+    zone: str = Field(min_length=1, max_length=32, pattern=_ZONE_PATTERN)
+    field: Literal["rank", "suit", "value"] = "rank"
+
+
+class HasMatchExpr(_Strict):
+    """True when any card in ``zone`` matches the top of ``top.zone``.
+
+    Bounded: one declared zone is scanned, using the same same-suit/same-rank
+    rule as ``pattern.match``. It never reads an undeclared path and never
+    quantifies over the whole state.
+    """
+
+    op: Literal["has_match"]
+    zone: str = Field(min_length=1, max_length=32, pattern=_ZONE_PATTERN)
+    top: TopExpr
+
+
+class ZoneCountExpr(_Strict):
+    op: Literal["zone_count"]
+    zone: str = Field(min_length=1, max_length=32, pattern=_ZONE_PATTERN)
+
+
 Expr = Annotated[
-    LiteralExpr | RefExpr | NotExpr | BinaryExpr | BoolExpr | CountExpr | JoinExpr,
+    LiteralExpr | RefExpr | NotExpr | BinaryExpr | BoolExpr | CountExpr | JoinExpr
+    | TopExpr | HasMatchExpr | ZoneCountExpr,
     Field(discriminator="op"),
 ]
 EXPR_ADAPTER: Any = _TypeAdapter(Expr)
+
+_GUARD_ONLY_OPS = ("top", "has_match", "zone_count")
 
 
 def expression_depth(expr: Any) -> int:
@@ -101,8 +139,10 @@ def expression_depth(expr: Any) -> int:
     if not isinstance(expr, BaseModel):
         return 1
     op = getattr(expr, "op", None)
-    if op == "lit" or op == "ref":
+    if op == "lit" or op == "ref" or op == "top" or op == "zone_count":
         return 1
+    if op == "has_match":
+        return 2
     if op == "not" or op == "count":
         return 1 + expression_depth(expr.operand)
     if op in _ARITHMETIC or op in _COMPARISONS:
@@ -125,7 +165,7 @@ def refs_in(expr: Any) -> list[str]:
     if not isinstance(expr, BaseModel):
         return []
     op = getattr(expr, "op", None)
-    if op == "lit":
+    if op == "lit" or op in _GUARD_ONLY_OPS:
         return []
     if op == "ref":
         return [expr.path]
@@ -157,6 +197,95 @@ def validate_expression(expr: Any, declared_variables: frozenset[str]) -> None:
             name = path[len("variables."):]
             if name not in declared_variables:
                 raise ToolError(f"expression_unknown_variable:{name}")
+
+
+def guard_mechanisms(expr: Any) -> set[str]:
+    """The host operations a guard's top/count references lower to.
+
+    Used by requirement derivation and plan binding selection, so a guard that
+    reads a zone top cannot silently compile without the operation it needs.
+    """
+    found: set[str] = set()
+    if not isinstance(expr, BaseModel):
+        return found
+    op = getattr(expr, "op", None)
+    if op == "top":
+        found |= {"zones.count_zone", "zones.top"}
+    elif op == "has_match":
+        found |= {"zones.cards", "pattern.choices"}
+    elif op == "zone_count":
+        found |= {"zones.count_zone"}
+    elif op == "not" or op == "count":
+        found |= guard_mechanisms(expr.operand)
+    elif op in _ARITHMETIC or op in _COMPARISONS:
+        found |= guard_mechanisms(expr.left) | guard_mechanisms(expr.right)
+    else:
+        for item in getattr(expr, "items", []):
+            found |= guard_mechanisms(item)
+    return found
+
+
+def guard_zones(expr: Any) -> set[str]:
+    """Every declared zone a guard references, for existence validation."""
+    found: set[str] = set()
+    if not isinstance(expr, BaseModel):
+        return found
+    op = getattr(expr, "op", None)
+    if op == "top":
+        found.add(expr.zone)
+    elif op == "has_match":
+        found |= {expr.zone, expr.top.zone}
+    elif op == "zone_count":
+        found.add(expr.zone)
+    elif op == "not" or op == "count":
+        found |= guard_zones(expr.operand)
+    elif op in _ARITHMETIC or op in _COMPARISONS:
+        found |= guard_zones(expr.left) | guard_zones(expr.right)
+    else:
+        for item in getattr(expr, "items", []):
+            found |= guard_zones(item)
+    return found
+
+
+def uses_guard_mechanism(expr: Any, mechanism: str) -> bool:
+    return mechanism in guard_mechanisms(expr)
+
+
+def validate_guard(expr: Any, declared_zones: frozenset[str]) -> None:
+    """Reject a guard that names an undeclared zone or reads a numeric top.
+
+    ADR-0012: an empty zone makes ``top(...)`` false in boolean context, which is
+    safe, but ``top(...).value`` used numerically would need a runtime error, so
+    it is a compile error (``guard_top_requires_cards``).
+    """
+    from ..contracts import ToolError
+
+    if not isinstance(expr, BaseModel):
+        raise ToolError("expression_must_be_a_typed_node")
+    if expression_depth(expr) > MAX_EXPR_DEPTH:
+        raise ToolError(f"expression_depth_exceeded:{MAX_EXPR_DEPTH}")
+    unknown = sorted(guard_zones(expr) - declared_zones)
+    if unknown:
+        raise ToolError(f"expression_unknown_zone:{unknown[0]}")
+    for node in _walk(expr):
+        if getattr(node, "op", None) == "top" and node.field == "value":
+            raise ToolError("guard_top_requires_cards")
+
+
+def _walk(expr: Any):
+    """Yield every node in an expression tree (leaves included)."""
+    if not isinstance(expr, BaseModel):
+        return
+    yield expr
+    op = getattr(expr, "op", None)
+    if op == "not" or op == "count":
+        yield from _walk(expr.operand)
+    elif op in _ARITHMETIC or op in _COMPARISONS:
+        yield from _walk(expr.left)
+        yield from _walk(expr.right)
+    else:
+        for item in getattr(expr, "items", []):
+            yield from _walk(item)
 
 
 # Static expression types. ``any`` is the honest answer when a value's type is
@@ -215,6 +344,12 @@ def infer_type(expr: Any, variable_types: dict[str, str] | None = None) -> str:
         return _literal_type(expr.value)
     if op == "ref":
         return _ref_type(expr.path, types)
+    if op == "top":
+        return INTEGER if expr.field == "value" else STRING
+    if op == "has_match":
+        return BOOLEAN
+    if op == "zone_count":
+        return INTEGER
     if op == "not":
         operand = infer_type(expr.operand, types)
         if operand not in {BOOLEAN, ANY_TYPE}:
@@ -268,6 +403,10 @@ def compile_expression(expr: Any) -> Any:
         return expr.value
     if op == "ref":
         return "$state." + _path_to_state(expr.path)
+    if op in _GUARD_ONLY_OPS:
+        # These need declared host calls and a working state; only the composed
+        # compiler's guard lowering may emit them.
+        raise ToolError(f"guard_only_expression:{op}")
     if op == "not":
         return {"not": [compile_expression(expr.operand)]}
     if op in _ARITHMETIC or op in _COMPARISONS:

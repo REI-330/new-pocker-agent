@@ -24,6 +24,7 @@ from .expr import (
     check_assignable,
     infer_type,
     validate_expression,
+    validate_guard,
 )
 
 # Budgets (development-plan-phase2 section 7). Raising one is an architecture
@@ -358,9 +359,11 @@ class ComposedRulesIR(_Strict):
         ids = [action.id for action in self.actions]
         if len(set(ids)) != len(ids):
             raise ValueError("action_ids_must_be_unique")
+        zone_ids = frozenset(zone.id for zone in self.zones)
         for action in self.actions:
             if action.guard is not None:
                 validate_expression(action.guard, self.variable_names)
+                validate_guard(action.guard, zone_ids)
                 guard_type = infer_type(action.guard, self.variable_types())
                 if guard_type not in {BOOLEAN, ANY_TYPE}:
                     raise ValueError(

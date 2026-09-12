@@ -42,7 +42,7 @@ from .composed import (
     RemovePairsEffect,
     SelectEffect,
 )
-from .expr import compile_expression
+from .expr import compile_expression, guard_mechanisms
 from .requirements import CompositionReport, clause_for, resolve_composition
 from .structure import analyse_control_flow
 
@@ -108,6 +108,137 @@ def _safe(zone_id: str) -> str:
     return zone_id.replace("-", "_")
 
 
+class _GuardBuilder:
+    """Lower a guard's closed top/zone references into declared host calls.
+
+    ADR-0012 section 8. The builder emits a straight-line sequence of nodes; a
+    ``top`` reference additionally emits an emptiness branch, so an empty zone
+    yields a null card (falsey in an equality) instead of a runtime error. The
+    caller appends one ``logic.evaluate`` node that stores the final boolean, so
+    the guard stays a typed expression over ``$state`` values and the turn loop
+    can branch on it unchanged.
+    """
+
+    _BINARY_OPS = ("eq", "lt", "le", "gt", "ge", "add", "sub", "mul", "mod")
+
+    def __init__(self, compiler: _Compiler, path: str) -> None:
+        self.c = compiler
+        self.path = path
+        self.first: str | None = None
+        self.dangling: list[str] = []
+
+    def _fresh(self) -> int:
+        self.c._guard_seq += 1
+        return self.c._guard_seq
+
+    def _add(self, node_id: str, node: dict[str, Any]) -> None:
+        self.c._add(node_id, node, self.path)
+        if self.first is None:
+            self.first = node_id
+
+    def _consume(self, node_id: str) -> None:
+        """Point every currently-dangling node at ``node_id``."""
+        for pending in self.dangling:
+            self.c.nodes[pending]["next"] = node_id
+        self.dangling = [node_id]
+
+    def _call(self, node_id: str, tool: str, operation: str, args: dict[str, Any],
+              next_id: str, result_key: str | None = None) -> None:
+        action: dict[str, Any] = {"tool": tool, "operation": operation, "args": args}
+        if result_key is not None:
+            action["result_key"] = result_key
+        self._add(node_id, {"kind": "call", "next": next_id, "action": action})
+
+    def emit(self, expr: Any) -> Any:
+        op = getattr(expr, "op", None)
+        if op == "lit":
+            return expr.value
+        if op == "ref":
+            return compile_expression(expr)
+        if op == "not":
+            return {"not": [self.emit(expr.operand)]}
+        if op in self._BINARY_OPS:
+            return {op: [self.emit(expr.left), self.emit(expr.right)]}
+        if op in ("all", "any"):
+            return {op: [self.emit(item) for item in expr.items]}
+        if op == "count":
+            return {"count": [self.emit(expr.operand)]}
+        if op == "join":
+            return {"join": [self.emit(item) for item in expr.items]}
+        if op == "zone_count":
+            return self._zone_count(expr.zone)
+        if op == "top":
+            return self._top(expr.zone, expr.field)
+        if op == "has_match":
+            return self._has_match(expr.zone, expr.top.zone)
+        raise ToolError(f"unsupported_guard_expression:{op}")
+
+    def _zone_count(self, zone_id: str) -> str:
+        n = self._fresh()
+        key = f"g{n}_count"
+        self._call(key, "zones", "count_zone",
+                   {"state": "$state", "zone": self.c._zone_arg(zone_id)},
+                   "PENDING", result_key=key)
+        self._consume(key)
+        return f"$state.{key}.count"
+
+    def _top(self, zone_id: str, field: str) -> str:
+        n = self._fresh()
+        count, has, top, empty, branch = (f"g{n}_count", f"g{n}_has", f"g{n}_top",
+                                          f"g{n}_empty", f"g{n}_branch")
+        zone_arg = self.c._zone_arg(zone_id)
+        self._call(count, "zones", "count_zone", {"state": "$state", "zone": zone_arg},
+                   has, result_key=count)
+        self._consume(count)
+        self._call(has, "logic", "evaluate",
+                   {"expression": {"gt": [f"$state.{count}.count", 0]}},
+                   branch, result_key=has)
+        self._consume(has)
+        # Both arms produce ``g{n}_card``: the real top, or a null card so an
+        # empty zone is false in a comparison rather than a runtime error (B3).
+        self._call(top, "zones", "top", {"state": "$state", "zone": zone_arg},
+                   "PENDING", result_key=f"g{n}_card")
+        self._call(empty, "state", "update",
+                   {"state": "$state", "values": {f"g{n}_card": {
+                       "rank": None, "suit": None, "value": None}}}, "PENDING")
+        self._add(branch, {"kind": "branch", "value": f"$state.{has}",
+                           "cases": [{"value": True, "target": top}], "next": empty})
+        self.dangling = [top, empty]
+        return f"$state.g{n}_card.{field}"
+
+    def _has_match(self, zone_id: str, top_zone_id: str) -> str:
+        n = self._fresh()
+        zone, topzone, choices, boolean = (f"g{n}_zone", f"g{n}_topzone",
+                                           f"g{n}_choices", f"g{n}_bool")
+        self._call(zone, "zones", "cards",
+                   {"state": "$state", "zone": self.c._zone_arg(zone_id)},
+                   topzone, result_key=zone)
+        self._consume(zone)
+        self._call(topzone, "zones", "cards",
+                   {"state": "$state", "zone": self.c._zone_arg(top_zone_id)},
+                   choices, result_key=topzone)
+        self._consume(topzone)
+        self._call(choices, "pattern", "choices",
+                   {"cards": f"$state.{zone}.cards", "top": f"$state.{topzone}.cards"},
+                   boolean, result_key=choices)
+        self._consume(choices)
+        self._call(boolean, "logic", "evaluate",
+                   {"expression": {"gt": [{"count": [f"$state.{choices}"]}, 0]}},
+                   "PENDING", result_key=boolean)
+        self._consume(boolean)
+        return f"$state.{boolean}"
+
+    def finish(self, payload: Any, result_key: str, next_id: str,
+               plain_node_id: str) -> None:
+        node_id = plain_node_id if self.first is None else f"g{self._fresh()}_eval"
+        self._add(node_id, {"kind": "call", "next": next_id,
+                            "action": {"tool": "logic", "operation": "evaluate",
+                                       "args": {"expression": payload},
+                                       "result_key": result_key}})
+        self._consume(node_id)
+        self.dangling = []
+
+
 class _Compiler:
     def __init__(self, ir: ComposedRulesIR) -> None:
         self.ir = ir
@@ -122,6 +253,7 @@ class _Compiler:
         self._shared_deals = [deal for deal in ir.setup.deals if not deal.per_seat]
         self._zone_entry: str | None = None
         self._turn_entry: str | None = None
+        self._guard_seq = 0
 
     # --------------------------------------------------------------- plumbing
     def _add(self, node_id: str, node: dict[str, Any], path: str) -> None:
@@ -282,12 +414,12 @@ class _Compiler:
                       f"actions.{action.id}")
             if action.guard is None:
                 return "turn"
-            self._eval("pre_turn", compile_expression(action.guard), "guard_ok",
-                       "guard_branch", f"actions.{action.id}.guard")
+            path = f"actions.{action.id}.guard"
+            guard_entry = self._lower_guard(action.guard, "guard_ok", "guard_branch",
+                                            path, plain_node_id="pre_turn")
             self._branch("guard_branch", "$state.guard_ok",
-                         [{"value": True, "target": "turn"}], "bump_turn",
-                         f"actions.{action.id}.guard")
-            return "pre_turn"
+                         [{"value": True, "target": "turn"}], "bump_turn", path)
+            return guard_entry
         entry: str | None = None
         for action in reversed(self.actions):
             wait_id = f"turn_{action.id}"
@@ -297,13 +429,27 @@ class _Compiler:
                 entry = wait_id
                 continue
             guard_id, branch_id = f"guard_{action.id}", f"guard_{action.id}_branch"
-            self._eval(guard_id, compile_expression(action.guard), f"guard_ok_{action.id}",
-                       branch_id, f"actions.{action.id}.guard")
+            path = f"actions.{action.id}.guard"
+            guard_entry = self._lower_guard(action.guard, f"guard_ok_{action.id}",
+                                            branch_id, path, plain_node_id=guard_id)
             self._branch(branch_id, f"$state.guard_ok_{action.id}",
-                         [{"value": True, "target": wait_id}], entry or "bump_turn",
-                         f"actions.{action.id}.guard")
-            entry = guard_id
+                         [{"value": True, "target": wait_id}], entry or "bump_turn", path)
+            entry = guard_entry
         return entry or "bump_turn"
+
+    def _lower_guard(self, expr: Any, result_key: str, next_id: str, path: str,
+                     plain_node_id: str) -> str:
+        """Emit a guard expression, returning the entry node of its chain.
+
+        A guard with no top/zone references compiles to one evaluate node whose
+        id is ``plain_node_id``, so single-action plans keep their M2 names and
+        fingerprint. A guard that reads a zone top emits the extra host calls in
+        front of that node (ADR-0012 section 8).
+        """
+        builder = _GuardBuilder(self, path)
+        builder.finish(builder.emit(expr), result_key, next_id, plain_node_id)
+        assert builder.first is not None
+        return builder.first
 
     def _compile_action(self, action: Any) -> str:
         if not action.effects:
@@ -632,6 +778,9 @@ def _tool_bindings(ir: ComposedRulesIR) -> list[dict[str, Any]]:
     bindings.append({"name": "deck", "config": deck_config})
     if any(isinstance(effect, CompareEffect) for effect in ir.flow.resolve):
         bindings.append({"name": "rank_compare"})
+    if any("pattern.choices" in guard_mechanisms(action.guard)
+           for action in ir.actions if action.guard is not None):
+        bindings.append({"name": "pattern"})
     return bindings
 
 

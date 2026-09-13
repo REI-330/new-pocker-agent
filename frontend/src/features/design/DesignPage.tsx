@@ -45,7 +45,7 @@ export function DesignPage({onPlay}: {onPlay: (gameId: string, version?: number 
   const [notice, setNotice] = useState('')
   const [result, setResult] = useState<DesignResult | null>(null)
   const [run, setRun] = useState<DesignRun | null>(null)
-  const pending = useRef<{message: string; request_id: string} | null>(null)
+  const pending = useRef<{message: string; revision: number; request_id: string} | null>(null)
   const polling = useRef(false)
 
   const loadDesign = useCallback(async (id: string) => {
@@ -109,9 +109,13 @@ export function DesignPage({onPlay}: {onPlay: (gameId: string, version?: number 
     setError(''); setNotice(''); setBusy('发送中')
     try {
       active = await ensureSession(message)
+      // Reuse the id only for a retry of the very same turn (same message at the
+      // same revision). A changed revision — e.g. after a 409 refresh — is a new
+      // request and gets a new id.
       const requestId = pending.current?.message === message
+        && pending.current.revision === active.revision
         ? pending.current.request_id : newRequestId()
-      pending.current = {message, request_id: requestId}
+      pending.current = {message, revision: active.revision, request_id: requestId}
       const data = await api.designMessages(active.session_id, {
         message, expected_revision: active.revision, request_id: requestId,
       })

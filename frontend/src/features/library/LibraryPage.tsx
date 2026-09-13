@@ -21,7 +21,8 @@ export function LibraryPage({games, coverage, matrix, macroPromotion, onOpen}: {
       {games.map(game => <button className="library-row" key={game.id} onClick={() => onOpen(game.id)}>
         <span className="stacked-cards"><i>♠</i><i>♥</i><i>♦</i></span>
         <span className="library-name"><strong>{game.title}</strong>
-          <small>{game.kind} · 种子 {game.playtest.seeds.join('/')} · {game.playtest.checks.length} 项检查</small></span>
+          <small>{game.kind}{game.version ? ` · v${game.version}` : ''} · 种子
+            {(game.playtest.seeds ?? []).join('/') || '—'} · {(game.playtest.checks ?? []).length} 项检查</small></span>
         <Pill tone={game.playtest.ok ? 'success' : 'danger'}>{game.playtest.ok ? '已验证' : '未通过'}</Pill>
         <span className="row-arrow">→</span>
       </button>)}

@@ -17,6 +17,29 @@ type Route = 'library' | 'design' | 'rules' | 'workspace' | 'replay' | 'settings
 const SESSION_KEY = 'pocker-session'
 const LEGACY_SESSION_KEY = 'pocker-session-id'
 const cursorKey = (sessionId: string) => `pocker-cursor:${sessionId}`
+const eventsKey = (sessionId: string) => `pocker-events:${sessionId}`
+const MAX_STORED_EVENTS = 400
+type StoredEvents = {cursor: number; events: GameEvent[]}
+
+function readStoredEvents(sessionId: string): StoredEvents | null {
+  const raw = localStorage.getItem(eventsKey(sessionId))
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredEvents>
+    if (Array.isArray(parsed?.events) && typeof parsed?.cursor === 'number') {
+      return {cursor: parsed.cursor, events: parsed.events}
+    }
+  } catch { /* a corrupt cache is rebuilt from the server */ }
+  return null
+}
+
+// The cursor and the events already on screen are persisted together, so a
+// reload resumes the delta *and* keeps the history it displayed. Resuming from
+// a bare cursor would show an empty timeline that starts mid-game.
+function writeStoredEvents(sessionId: string, cursor: number, events: GameEvent[]) {
+  localStorage.setItem(eventsKey(sessionId),
+    JSON.stringify({cursor, events: events.slice(-MAX_STORED_EVENTS)}))
+}
 
 const NAV: Array<{id: Route; label: string; glyph: string}> = [
   {id: 'library', label: '玩法库', glyph: '♠'},
@@ -59,6 +82,7 @@ export function App() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const cursorRef = useRef(0)
+  const eventsRef = useRef<GameEvent[]>([])
   const pendingAct = useRef<{key: string; request_id: string} | null>(null)
 
   const currentGame = games.find(game => game.id === gameId) ?? null
@@ -83,27 +107,41 @@ export function App() {
     localStorage.removeItem(LEGACY_SESSION_KEY)
   }, [])
 
-  // Bounded, cursor-based read. ``after`` is the interpreter's own event index,
-  // so a reconnect resumes exactly where it stopped.
-  const loadEvents = useCallback(async (sessionId: string, after: number, append: boolean) => {
-    let cursor = after
-    const collected: GameEvent[] = []
-    for (let page = 0; page < 50; page += 1) {
+  // One place writes the cursor, the on-screen events and the cache together, so
+  // the three can never disagree about what has already been shown.
+  const commitEvents = useCallback((sessionId: string, cursor: number, next: GameEvent[]) => {
+    cursorRef.current = cursor
+    eventsRef.current = next
+    writeStoredEvents(sessionId, cursor, next)
+    setEvents(next)
+  }, [])
+
+  // Append everything the cursor has not seen yet. If the cached cursor is past
+  // this session's log (a stale cache), rebuild from zero instead of silently
+  // skipping the events in between.
+  const syncEvents = useCallback(async (sessionId: string) => {
+    let cursor = cursorRef.current
+    let collected = eventsRef.current
+    for (let page = 0; page < 100; page += 1) {
       const data = await api.events(sessionId, cursor)
-      collected.push(...data.events)
+      if (page === 0 && data.total < cursor) {
+        cursor = 0; collected = []; continue
+      }
+      collected = [...collected, ...data.events]
       cursor = data.cursor
       if (!data.has_more) break
     }
-    cursorRef.current = cursor
-    localStorage.setItem(cursorKey(sessionId), String(cursor))
-    setEvents(previous => append ? [...previous, ...collected] : collected)
-  }, [])
+    commitEvents(sessionId, cursor, collected)
+  }, [commitEvents])
 
   const clearSession = useCallback((sessionId?: string) => {
     localStorage.removeItem(SESSION_KEY)
     localStorage.removeItem(LEGACY_SESSION_KEY)
-    if (sessionId) localStorage.removeItem(cursorKey(sessionId))
-    setSession(null); setEvents([]); cursorRef.current = 0
+    if (sessionId) {
+      localStorage.removeItem(cursorKey(sessionId))
+      localStorage.removeItem(eventsKey(sessionId))
+    }
+    setSession(null); setEvents([]); cursorRef.current = 0; eventsRef.current = []
   }, [])
 
   // Resume the session this browser had open. A transient failure keeps the
@@ -114,8 +152,9 @@ export function App() {
     api.getSession(stored.session_id)
       .then(async state => {
         setSession(state); setGameId(state.game_id); persistRef(state); setRoute('workspace')
-        const saved = Number(localStorage.getItem(cursorKey(state.session_id)) ?? '0') || 0
-        await loadEvents(state.session_id, saved, saved > 0)
+        const cached = readStoredEvents(state.session_id)
+        commitEvents(state.session_id, cached?.cursor ?? 0, cached?.events ?? [])
+        await syncEvents(state.session_id)
       })
       .catch(err => {
         if (err instanceof ApiError && err.isMissing) clearSession(stored.session_id)
@@ -133,17 +172,19 @@ export function App() {
       const created = await api.createSession(id, undefined, version ?? null)
       persistRef(created)
       setSession(created)
-      cursorRef.current = 0
-      localStorage.setItem(cursorKey(created.session_id), '0')
-      setEvents([])
-      await loadEvents(created.session_id, 0, false)
+      localStorage.removeItem(eventsKey(created.session_id))
+      commitEvents(created.session_id, 0, [])
+      await syncEvents(created.session_id)
       setRoute('workspace')
       refreshGames()
     })
-  }, [gameId, run, persistRef, loadEvents, refreshGames])
+  }, [gameId, run, persistRef, commitEvents, syncEvents, refreshGames])
 
   const act = (actionId: string, inputValues: Record<string, unknown>) => {
     if (!session) return
+    // A request_id is reused only for a retry of the *same* request: the key
+    // includes the action, its inputs and the revision, so changing any of them
+    // (or a refreshed revision after a conflict) mints a fresh id.
     const key = JSON.stringify({actionId, inputValues, revision: session.revision})
     const requestId = pendingAct.current?.key === key
       ? pendingAct.current.request_id : newRequestId()
@@ -156,21 +197,22 @@ export function App() {
         })
         pendingAct.current = null
         setSession(data.state)
-        setEvents(previous => [...previous, ...(data.new_events ?? [])])
-        cursorRef.current += data.new_events?.length ?? 0
-        localStorage.setItem(cursorKey(session.session_id), String(cursorRef.current))
+        const delta = data.new_events ?? []
+        commitEvents(session.session_id, cursorRef.current + delta.length,
+          [...eventsRef.current, ...delta])
       } catch (err) {
         if (err instanceof ApiError && err.isMissing) {
+          pendingAct.current = null
           clearSession(session.session_id)
           setError('这一局已不存在，请重新开始。')
           return
         }
         if (err instanceof ApiError && err.isConflictPrefix) {
           // Conflict is recoverable: refetch the authoritative state, keep the
-          // session id, and catch up the event cursor.
+          // session id, and catch the cursor up with the other writer's events.
           const fresh = await api.getSession(session.session_id)
           setSession(fresh)
-          await loadEvents(session.session_id, cursorRef.current, true)
+          await syncEvents(session.session_id)
           setNotice('局面已更新（409），已刷新到最新状态，请重新选择动作。')
           return
         }
@@ -183,7 +225,7 @@ export function App() {
     if (!session) return
     void run('刷新状态', async () => {
       setSession(await api.getSession(session.session_id))
-      await loadEvents(session.session_id, cursorRef.current, true)
+      await syncEvents(session.session_id)
     })
   }
 

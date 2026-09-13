@@ -24,9 +24,15 @@ export type Coverage = {
   missing_histogram: Record<string, number>; games: CoverageGame[]
 }
 
+// A reference game returns a full playtest report; a composed artifact only
+// reports ``ok`` and omits the rest, so every list here is optional.
 export type Playtest = {
-  ok: boolean; seeds: number[]; event_counts: Record<string, number>
-  failures: string[]; checks: string[]; covered_wait_nodes: string[]
+  ok: boolean
+  seeds?: number[]
+  event_counts?: Record<string, number>
+  failures?: string[]
+  checks?: string[]
+  covered_wait_nodes?: string[]
 }
 export type GameInfo = {
   id: string; title: string; kind: string; playtest: Playtest

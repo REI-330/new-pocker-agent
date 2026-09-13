@@ -18,8 +18,13 @@
 | 运行 | 命令 | 结果 |
 |---|---|---|
 | ScriptedModel 流程 | `… --scripted` | 2/8 通过独立 evaluator、2/2 反例；其余 6 条因预期不符被 evaluator 拒绝（证明 evaluator 有效） |
-| 真实模型盲测 | `… --base-url http://127.0.0.1:8000` | **未通过**：反例 2/2；可表达组合 0/8（模型 `propose_ir` 的 ComposedRulesIR 未通过校验） |
-| 浏览器 smoke | `… --base-url … --browser` | 仅对成功注册的产物运行；当前无成功产物 |
+| 真实模型盲测（修复评测器前） | `… --base-url …` | 0/8；失败集中在 `output_too_long` 与 `invalid_ir`（15 个字段错误） |
+| 真实模型盲测（修复协议后） | `… --base-url http://127.0.0.1:8000 --browser` | **0/8**：反例 2/2；可表达组合 0/8，全部 `generation_budget`。模型把 12/12 次决策花在 `describe_mechanism` 上（多次 `unknown_tool:*` / `unknown_operation:*`），从未提交 `propose_ir` |
+| 浏览器 smoke | `… --browser` | 仅对成功注册的产物运行；当前无成功产物，跳过 |
+
+### 当前阻塞（模型协议，不是判定器）
+
+`deepseek-v4-flash`（经该中转地址）在本协议下**不足以完成设计工具调用**：它会反复用错误的参数探测 `describe_mechanism`，耗尽决策/修复预算，而不是产出 `propose_ir` 的 ComposedRulesIR。这不是玩法专属代码问题，也不是宿主缺陷；ADR-0020 已将其诚实记录为 `generation_budget`，G2 陌生组合成功率仍为 **未达标**。
 
 ## 已修复的判定器与证据问题（本轮）
 
@@ -37,6 +42,8 @@
 
 ## 下一步（按 ADR-0020 顺序）
 
-1. 改进模型协议：给 `propose_ir` 更强的 ComposedRulesIR 结构提示，并在 repair observation 中回传首批校验错误；
-2. 重跑 8 正例 + 2 反例（含 `--browser`）；
+1. 换用/配置一个**工具调用遵循度更高**的模型（本机或云端）后，重跑 8 正例 + 2 反例（含 `--browser`）；
+2. 若继续用当前模型，需要在其之上加一层受限的决策解析/重试策略，但这属于模型适配，不能改玩法机制；
 3. 归档可追溯的真实运行证据，再判断 G2 准出。
+
+判定器与证据完整性已修复；M6 不通过的原因现在是模型侧的协议遵循，而不是评测口径。

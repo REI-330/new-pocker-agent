@@ -79,6 +79,8 @@ export type SessionState = {
   version: number | null
   kind: string; round: number; max_rounds: number; phase: string; flow_node: string
   execution_mode: string
+  // The executed-action counter the terminal/`max_actor_actions` uses (ADR-0012).
+  action_count: number
   current_player: string; finished: boolean; winners: string[]; legal_actions: string[]
   players: Player[]; scores: number[]; table: Card[]
   numbers: number[]; target: number | null; reveal: boolean; solution: string | null

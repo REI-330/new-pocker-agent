@@ -1,51 +1,67 @@
 [
   {
     "id": "blind-01",
-    "goal": "两人对局。牌为 2 到 8、S/H 两花色，单副。每人发 2 张公开手牌，其余留牌堆。每轮双方各从手牌选一张放入公共区，牌点大者得 1 分，相同则都不加分。共 3 轮，最高分获胜，平分并列。",
+    "goal": "两人对局。牌为 2 到 8、S/H 两花色，单副。每人发 3 张公开手牌，其余留牌堆。每轮双方依次各从手牌选一张放入公共区（不补牌），牌点大者得 1 分，相同则都不加分。共 3 轮，最高分获胜，平分并列。player-1 先手。",
     "expect": "composed",
-    "evidence": {"min_actions": 2, "terminal": "highest_score", "zones": ["hand", "table"]}
+    "evidence": {"players": 2, "hidden": false, "public_zones_min": 1,
+                 "scoring_rules_min": 1, "terminal": "highest_score", "max_rounds": 3,
+                 "min_actions": 4}
   },
   {
     "id": "blind-02",
-    "goal": "两人对局。牌为 2 到 9、S/H 两花色。每人 3 张隐藏手牌，发 1 张起始牌到公共弃牌区。玩家轮流出牌，牌的规则与弃牌区最新一张同花色即可。出牌得 1 分，先到 5 分者立即获胜。",
+    "goal": "两人对局。牌为 2 到 9、S/H 两花色。每人 3 张隐藏手牌，发 1 张起始牌到公共弃牌区。玩家轮流出牌，只要与弃牌区最新一张同花色即可。出牌得 1 分，先到 5 分者立即获胜。",
     "expect": "composed",
-    "evidence": {"min_actions": 2, "terminal": "score_reaches", "hidden": true}
+    "evidence": {"players": 2, "hidden": true, "hidden_count": 3, "public_zones_min": 1,
+                 "scoring_rules_min": 1, "terminal": "score_reaches", "score_reaches": 5,
+                 "min_actions": 2}
   },
   {
     "id": "blind-03",
     "goal": "两人对局。牌为 2 到 9、S/H 两花色，单副。每人 2 张公开手牌，市场 2 张公开牌。每回合用一张手牌与一张市场牌交换，然后从手牌中移除全部同点数对子到收集区，每移除一对得 1 分。共 8 个行动回合，最高分获胜，平分并列。",
     "expect": "composed",
-    "evidence": {"min_actions": 2, "terminal": "actor_action_budget", "zones": ["hand", "market"]}
+    "evidence": {"players": 2, "hidden": false, "public_zones_min": 2,
+                 "scoring_rules_min": 1, "terminal": "actor_action_budget",
+                 "max_actor_actions": 8, "min_actions": 4}
   },
   {
     "id": "blind-04",
     "goal": "两人对局。牌为 2 到 9、S/H 两花色。每人发 4 张公开手牌，不补牌。每轮双方依次各出一张牌比较：点数相同则两人各得 1 分，否则点数大者得 2 分。共 4 轮，最高分获胜。",
     "expect": "composed",
-    "evidence": {"min_actions": 2, "terminal": "highest_score", "zones": ["hand", "table"]}
+    "evidence": {"players": 2, "hidden": false, "public_zones_min": 1,
+                 "scoring_rules_min": 1, "terminal": "highest_score", "max_rounds": 4,
+                 "min_actions": 4}
   },
   {
     "id": "blind-05",
     "goal": "两人对局。牌为 2 到 9、S/H 两花色。每人 4 张隐藏手牌，发一张起始牌到弃牌区。出牌必须与弃牌区最新一张点数相同。出黑桃得 2 分、出红桃得 1 分。任何人达到 6 分立即结束。",
     "expect": "composed",
-    "evidence": {"min_actions": 2, "terminal": "score_reaches", "hidden": true}
+    "evidence": {"players": 2, "hidden": true, "hidden_count": 4, "public_zones_min": 1,
+                 "scoring_rules_min": 1, "terminal": "score_reaches", "score_reaches": 6,
+                 "min_actions": 2}
   },
   {
     "id": "blind-06",
-    "goal": "两人对局。牌为 2 到 9、S/H 两花色，单副。每人 3 张公开手牌，牌堆其余。每回合从手牌选一张放入公共区，点数最大的一张得 3 分。共 3 轮，最高分获胜，平分并列。",
+    "goal": "两人对局。牌为 2 到 9、S/H 两花色，单副。每人 3 张公开手牌，牌堆其余。每回合双方依次从手牌选一张放入公共区，点数最大的一张得 3 分。共 3 轮，最高分获胜，平分并列。",
     "expect": "composed",
-    "evidence": {"min_actions": 2, "terminal": "highest_score", "zones": ["hand", "table"]}
+    "evidence": {"players": 2, "hidden": false, "public_zones_min": 1,
+                 "scoring_rules_min": 1, "terminal": "highest_score", "max_rounds": 3,
+                 "min_actions": 4}
   },
   {
     "id": "blind-07",
     "goal": "两人对局。牌为 2 到 9、S/H 两花色。每人 5 张隐藏手牌，发一张起始牌到弃牌区。轮流出牌，只要与弃牌区最新一张同点数或同花色即可。无牌可出时摸一张牌并结束本回合，牌堆空时跳过本回合。共 12 个行动回合后最高分获胜，平分并列。",
     "expect": "composed",
-    "evidence": {"min_actions": 2, "terminal": "actor_action_budget", "hidden": true}
+    "evidence": {"players": 2, "hidden": true, "hidden_count": 5, "public_zones_min": 1,
+                 "scoring_rules_min": 1, "terminal": "actor_action_budget",
+                 "max_actor_actions": 12, "min_actions": 6}
   },
   {
     "id": "blind-08",
     "goal": "两人对局。牌为 2 到 9、S/H 两花色，单副。每人 2 张公开手牌与 2 张市场公开牌。每回合用手牌换一张市场牌，然后移除手牌中的全部同点数对子并把它们移到收集区，每对得 2 分。共 10 个行动回合，最高分获胜。",
     "expect": "composed",
-    "evidence": {"min_actions": 2, "terminal": "actor_action_budget", "zones": ["hand", "market"]}
+    "evidence": {"players": 2, "hidden": false, "public_zones_min": 2,
+                 "scoring_rules_min": 1, "terminal": "actor_action_budget",
+                 "max_actor_actions": 10, "min_actions": 4}
   },
   {
     "id": "blind-neg-01",

@@ -332,6 +332,9 @@ class Interpreter:
             "kind": self.plan.game_kind, "execution_mode": self.execution_mode,
             "flow_node": self.pc, "round": state.get("round", 1),
             "max_rounds": state.get("max_rounds", 1), "phase": state.get("phase", self.pc),
+            # The executed-action counter the terminal/`max_actor_actions` uses
+            # (ADR-0012); exposed read-only so a client can verify a run.
+            "action_count": int(state.get("action_count", 0)),
             "current_player": f"player-{int(state.get('current_player', 0)) + 1}",
             "finished": bool(state.get("finished")), "winners": [
                 f"player-{int(i) + 1}" for i in state.get("winners", [])],

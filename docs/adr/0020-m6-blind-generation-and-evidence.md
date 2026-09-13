@@ -17,9 +17,10 @@ G2 的主张是：**不修改任何专属代码**，用真实模型把自然语�
 
 ### 1. 冻结面与指纹
 
-- 盲测运行前记录一组**冻结文件**的内容哈希：通用机制（`core/` 下工具、`zones/matching/scoring/terminal` 等）、编译器（`core/rules/`）、设计提示词与工具表（`agent/design_loop.py`、`agent/design_service.py`、`agent/meta_tools.py`）。
-- 运行期间这些文件**不得改动**；报告写入冻结指纹。任一哈希变化即视为「不是同一冻结面」，该次盲测作废。
-- 盲测用例与预期结果**不与实现同处**：`benchmarks/g2_blind_cases.json` 只含自然语言目标、事先判定的可表达性、以及独立预期（动作/终局），不含 IR、Plan 或答案字段。
+- 盲测运行前记录**完整依赖闭包**的内容哈希：通用机制（`core/` 下工具、`zones/matching/scoring/terminal`、`capability`、`registry`、`artifacts`）、编译器（`core/rules/*`）、验证器（`core/verify/*`）、设计提示词与工具表（`agent/design_loop.py`、`agent/design_service.py`、`agent/meta_tools.py`）。
+- 另记 `DESIGN_SYSTEM_PROMPT`、`DESIGN_TOOL_SCHEMAS` 与用例文件三者的独立指纹。
+- 运行**开始前**与**结束后**各计算一次并比较；列出变化文件。任一文件缺失、或任一指纹变化，该次运行标为 `frozen_surface_unchanged=false`，目标不成立。
+- 盲测用例与预期结果**不与实现同处**：`benchmarks/g2_blind_cases.json` 只含自然语言目标、事先判定的可表达性、以及独立预期（结构、终局、行动/轮次预算、隐藏投影），不含 IR、Plan 或答案字段。用例集在运行前做严格 schema 校验（正好 8 条 composed、≥2 条 unsupported、ID 唯一、`expect` 合法、每条 composed 的 `evidence` 完整），校验失败直接拒绝运行。
 
 ### 2. 用例格式
 
@@ -43,8 +44,9 @@ G2 的主张是：**不修改任何专属代码**，用真实模型把自然语�
 
 1. `POST /api/designs` 建会话，`POST /messages` 让真实模型驱动到终态（`finalized/unsupported/error/budget_exhausted`），超过预算或轮数即停；模型只提问时允许**一次**自动澄清（"信息已足够，请直接完成"），仍只提问则记 `interpretation`；
 2. `finalized` → `verify`（宿主门槛）→ 用户 `confirm` → `publish` 注册不可变版本；
-3. 用注册版本开局，走通用 `POST /actions` 打到 `finished`，并断言不少于独立预期的行动数；
-4. 记录 provider/model、提示指纹、预算与 `used`（decisions/tokens/seconds）、artifact/IR 哈希、`verification_id`、失败分类。
+3. 用注册版本开局，走通用 `POST /actions` 打到 `finished`；记录 `runtime_playable`（HTTP 可玩），并在 `--browser` 下对每个已注册产物跑一次真实浏览器 smoke（玩法库 → 版本详情 → 建局 → 动态动作 → 刷新恢复 → 终局），单独记录 `browser_playable`；两者不得混为一谈；
+4. 由**独立 evaluator**（`scripts/m6_evidence.py`）按用例自己的预期核对产物与运行轨迹，命名为 `evidence_verified`。evaluator 不信任 `finalized`：它检查牌区结构与可见性、终局类型与阈值、`action_count` 是否真正达到预算、隐藏牌视角投影、`generation_source`、以及 IR/Plan/verification 的哈希绑定；`finalized` 不再等于成功；
+5. 记录 provider/model、提示与工具指纹、预算与 `used`（decisions/tokens/seconds；tokens 为循环估算，标注非 provider usage）、artifact/IR/plan 哈希、`verification_id`、失败分类。
 
 `--scripted` 模式用注入的 ScriptedModel 在进程内跑同一段代码，仅用于证明工具本身可用，**不计入生成能力成绩**（计划 §M6.4）。
 
@@ -59,7 +61,8 @@ G2 的主张是：**不修改任何专属代码**，用真实模型把自然语�
 | `composition` | 组合/编译阶段失败（`compiler_error`、结构错误） |
 | `validation` | 生成的 IR 未通过正式门槛，或 confirm/publish 被拒 |
 | `generation_budget` | 达到决策/token/时间预算 |
-| `UI` | 已注册但浏览器/对局无法打到正常结束 |
+| `transport` | 与运行中的服务连接/超时/JSON 错误（宿主/传输层，单条用例独立捕获） |
+| `UI` | 已注册但浏览器/对局无法打到正常结束，或独立 evidence 的运行时投影不成立 |
 
 分类不允许「一律归因模型」；宿主侧问题（工具、编译、验证、UI）用对应分类。
 
@@ -74,7 +77,7 @@ G2 的主张是：**不修改任何专属代码**，用真实模型把自然语�
 
 ### 6. 证据归档
 
-每次运行写出 `artifacts/g2/<git-rev>/<run-id>/`：
+每次运行写出 `artifacts/g2/<git-rev>/<run-id>/`（`run-id` 为 UUID，且 `mkdir(exist_ok=false)`，重复运行不覆盖）：
 
 - `report.json`：逐用例记录、分类、用量、哈希、`verification_id`；
 - `summary.md`：阈值判定、失败清单、模型信息、启动命令、解释器路径与 code fingerprint；

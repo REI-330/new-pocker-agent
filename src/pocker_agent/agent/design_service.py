@@ -17,6 +17,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from ..core.artifacts import VerificationResult, build_artifact
 from ..core.capability import capability_matrix
 from ..core.contracts import ToolError
 from ..core.interpreter import Interpreter
@@ -424,7 +425,75 @@ class DesignService:
         except Exception:
             return None
 
+    # ------------------------------------------------------------- finalize
+    def _tool_finalize(self, args: dict[str, Any], request_id: str | None):
+        session = self.session()
+        if not session.ir:
+            return _fail("finalize", "propose_ir_first")
+        stored = session.context.get("verification")
+        if not stored:
+            return _fail("finalize", "verification_required")
+        if not stored.get("ok"):
+            return _fail("finalize", "verification_failed")
+        try:
+            parsed, plan, summary, source_map = self._compile_current(session)
+        except Exception as error:
+            return _fail("finalize", f"invalid_ir:{_first_line(error)}")
+        if (stored.get("ir_hash") != summary["ir_hash"]
+                or stored.get("plan_hash") != summary["plan_hash"]):
+            return _fail("finalize", "verification_stale: 当前证据不绑定当前规则")
+        verification = VerificationResult.from_dict(stored)
+        title = _title_of(parsed, session.game_id)
+        try:
+            artifact = build_artifact(
+                game_id=session.game_id, version=1, title=title, plan=plan,
+                verification=verification, generation_source=summary["generation_source"],
+                ir=session.ir, source_map=source_map)
+        except ValueError as error:
+            return _fail("finalize", str(error))
+        artifact_summary = {"game_id": artifact.game_id, "version": artifact.version,
+                            "title": artifact.title, "plan_hash": artifact.plan_hash,
+                            "verification_id": artifact.verification_id,
+                            "ir_hash": artifact.ir_hash,
+                            "registry_contract_hash": artifact.registry_contract_hash,
+                            "generation_source": artifact.generation_source}
+        updated = self._commit(session, event="finalize", status="finalized",
+                               context={"artifact": artifact_summary, "failure": None})
+        return _ok("finalize", finalized=True, registered=False, artifact=artifact_summary,
+                   revision=updated.revision)
+
+    def _tool_ask_user(self, args: dict[str, Any], request_id: str | None):
+        question = str(args.get("question", "")).strip()
+        if not question:
+            return _fail("ask_user", "question_required")
+        missing = [str(item) for item in args.get("missing", []) if str(item).strip()]
+        session = self.session()
+        asked = [*session.context.get("questions", []), question]
+        updated = self._commit(session, event="ask_user", request_id=request_id,
+                               context={"questions": asked})
+        return _ok("ask_user", kind="question", question=question, missing=missing,
+                   revision=updated.revision)
+
+    def _tool_unsupported(self, args: dict[str, Any], request_id: str | None):
+        message = str(args.get("message", "")).strip()
+        if not message:
+            return _fail("unsupported", "message_required")
+        missing = [str(item) for item in args.get("missing", []) if str(item).strip()]
+        session = self.session()
+        failure = {"kind": "unsupported", "stage": "unsupported", "message": message,
+                   "missing": missing}
+        updated = self._commit(session, event="unsupported", request_id=request_id,
+                               status="failed", diagnosis={"ok": False, **failure},
+                               context={"failure": failure})
+        return _ok("unsupported", kind="unsupported", message=message, missing=missing,
+                   revision=updated.revision)
+
     # ------------------------------------------------------------- helpers
+
+def _title_of(parsed: Any, fallback: str) -> str:
+    meta = getattr(parsed, "meta", None)
+    return getattr(meta, "title", None) or getattr(parsed, "title", None) or fallback
+
 
 def _first_line(error: Exception) -> str:
     return str(error).splitlines()[0] if str(error) else type(error).__name__

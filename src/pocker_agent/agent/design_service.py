@@ -113,6 +113,11 @@ class DesignService:
         return self.store.commit(self.session_id, session.revision,
                                  request_id=request_id, event=event, **changes)
 
+    def record(self, *, event: str = "recorded", request_id: str | None = None,
+               **changes: Any):
+        """Persist non-tool state (chat, budget usage) through the same lock."""
+        return self._commit(self.session(), event=event, request_id=request_id, **changes)
+
     def dispatch(self, tool: str, args: dict[str, Any] | None = None, *,
                  request_id: str | None = None) -> dict[str, Any]:
         """Run one design tool and return its observation. Never raises on input."""

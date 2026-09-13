@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .agent import DESIGN_TOOL_SCHEMAS, TOOL_SCHEMAS, DesignStore, run_loop
+from .agent import DESIGN_TOOL_SCHEMAS, TOOL_SCHEMAS, DesignService, DesignStore, run_design_loop, run_loop
 from .configuration import ConfigInput, ConfigStore
 from .core import (
     PLAN_MACROS,
@@ -108,6 +108,14 @@ class ChatTurn(BaseModel):
     content: str = Field(max_length=4000)
 
 
+class DesignMessageInput(BaseModel):
+    """A natural-language design turn against one durable design session."""
+
+    message: str = Field(max_length=4000)
+    expected_revision: int | None = Field(default=None, ge=0)
+    max_steps: int | None = Field(default=None, ge=1, le=24)
+
+
 class ActionInput(BaseModel):
     revision: int = Field(ge=0)
     card_index: int = Field(default=0, ge=0)
@@ -122,6 +130,9 @@ class LoopInput(BaseModel):
     goal: str = Field(default="", max_length=4000)          # kept for older clients
     messages: list[ChatTurn] = Field(default_factory=list, max_length=60)
     max_steps: int = Field(default=12, ge=1, le=24)
+    design_id: str | None = Field(default=None, max_length=64)
+    session_id: str | None = Field(default=None, max_length=64)  # legacy alias
+    expected_revision: int | None = Field(default=None, ge=0)
 
 
 def create_app(path: Path | None = None, vault=None, model_factory=None) -> FastAPI:
@@ -213,6 +224,26 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
                               request_id=payload.request_id, event=payload.event,
                               **changes).as_dict()
 
+    @app.post("/api/designs/{session_id}/messages")
+    def design_messages(session_id: str, payload: DesignMessageInput):
+        """One design turn against an existing session (M4-7)."""
+        message = payload.message.strip()
+        if not message:
+            raise ValueError("请输入玩法描述")
+        current = designs.get(session_id)                    # KeyError -> 404
+        if (payload.expected_revision is not None
+                and payload.expected_revision != current.revision):
+            raise ValueError(
+                f"stale_revision: 设计会话已更新（当前 {current.revision}，"
+                f"期望 {payload.expected_revision}）")
+        service = DesignService(designs, session_id)
+        budget = {"max_decisions": payload.max_steps} if payload.max_steps else None
+        result = run_design_loop(service, session_id, message, make_model(), budget)
+        body = result.as_dict()
+        body["registered"] = False
+        body["session"] = designs.get(session_id).as_dict()
+        return body
+
     @app.get("/api/agent/tools")
     def agent_tools():
         return {"meta_tools": TOOL_SCHEMAS, "game_tools": core_registry().export()}
@@ -248,6 +279,22 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
         goal = (payload.message or payload.goal).strip()
         if not goal:
             raise ValueError("请输入玩法描述")
+        design_id = payload.design_id or payload.session_id
+        if design_id:
+            # M4-7: route to the design-session loop. The legacy known-family
+            # loop below is unchanged when neither id is given.
+            current = designs.get(design_id)                 # KeyError -> 404
+            if (payload.expected_revision is not None
+                    and payload.expected_revision != current.revision):
+                raise ValueError(
+                    f"stale_revision: 设计会话已更新（当前 {current.revision}，"
+                    f"期望 {payload.expected_revision}）")
+            service = DesignService(designs, design_id)
+            result = run_design_loop(service, design_id, goal, make_model(),
+                                     {"max_decisions": payload.max_steps})
+            body = result.as_dict()
+            body["registered"] = False
+            return body
         result = run_loop(goal, make_model(),
                           history=[message.model_dump() for message in payload.messages],
                           max_steps=payload.max_steps)

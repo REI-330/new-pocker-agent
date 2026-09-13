@@ -1,0 +1,197 @@
+"""M4-7: the bounded, host-controlled design conversation loop.
+
+Like the known-family loop, this is decide -> host tool -> observation -> decide.
+The differences are deliberate:
+
+* the tools are the design-service tools, and every mutation goes through the
+  design store's optimistic lock;
+* the loop owns the budget (model decisions, repairs, estimated tokens, wall
+  clock and per-step output size) and stores the usage in the session context;
+* a recoverable failure is re-fed to the model as an observation, while a host
+  failure (transport, a crashed tool, or a stale revision from a concurrent
+  writer) stops the turn instead of asking the model to repair the host;
+* a turn can only end with a question, an explicit "unsupported", a finalized
+  candidate, or an error/budget stop -- never with a silent success.
+
+Nothing here can run a game or register a version: the loop only sees the design
+service, whose ``finalize`` produces a candidate artifact (ADR-0008).
+"""
+from __future__ import annotations
+
+import json
+import time
+from dataclasses import dataclass, field
+from typing import Any
+
+from .design_service import DESIGN_TOOL_SCHEMAS, DesignService
+from .loop import clean_history, parse_decision
+from .meta_tools import observation_text
+
+#: Section 7 of the phase-2 plan: one automatic design turn stays under these.
+DEFAULT_DESIGN_BUDGET: dict[str, Any] = {
+    "max_decisions": 24,
+    "max_repairs": 4,
+    "max_tokens": 48000,
+    "max_seconds": 180,
+    "max_output_chars": 8000,
+}
+
+#: Failures the model can see and repair, versus host errors that end the turn.
+HOST_ERROR_PREFIXES = ("tool_crashed", "stale_revision", "request_id_conflict")
+
+DESIGN_SYSTEM_PROMPT = f"""你是 Pocker Agent 的规则设计服务。你只能调用下面的设计元工具；不要执行游戏、不要写代码、不要返回解释性文字。
+
+规则：
+1. 每次只返回一个 JSON 对象：{{"tool": "<name>", "args": {{...}}}}。
+2. 先用 list_capabilities / describe_mechanism 查询宿主能力，再用 propose_ir 提交规则。
+3. 信息不足时用 ask_user 一次问清；表达不了时用 unsupported 说明缺口。
+4. 修改规则用 patch_ir，不得删除用户已确认的需求条款。
+5. compose_plan 之后用 validate_plan / simulate 诊断；正式门槛是 verify_game。
+6. verify_game 失败时用 inspect_failure 定位，再修复重试。
+7. 只有 verify_game 通过后 finalize 才会成功；finalize 只生成候选产物，不能注册、不能自确认。
+
+设计元工具：
+{json.dumps(DESIGN_TOOL_SCHEMAS, ensure_ascii=False)}
+"""
+
+
+@dataclass
+class DesignResult:
+    kind: str
+    message: str
+    session_id: str
+    revision: int = 0
+    status: str = "draft"
+    artifact: dict[str, Any] | None = None
+    verification: dict[str, Any] | None = None
+    observations: list[dict[str, Any]] = field(default_factory=list)
+    messages: list[dict[str, str]] = field(default_factory=list)
+    attempts: int = 0
+    used: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"kind": self.kind, "message": self.message,
+                "session_id": self.session_id, "revision": self.revision,
+                "status": self.status, "artifact": self.artifact,
+                "verification": self.verification, "attempts": self.attempts,
+                "observations": self.observations, "messages": self.messages,
+                "used": self.used}
+
+
+def normalize_budget(budget: dict[str, Any] | None) -> dict[str, Any]:
+    merged = dict(DEFAULT_DESIGN_BUDGET)
+    if budget:
+        merged.update({key: value for key, value in budget.items() if value is not None})
+    return merged
+
+
+def _usage() -> dict[str, Any]:
+    return {"decisions": 0, "repairs": 0, "tokens": 0, "seconds": 0.0,
+            "output_chars": 0}
+
+
+def run_design_loop(service: DesignService, session_id: str, message: str, model,
+                    budget: dict[str, Any] | None = None, *,
+                    history: Any = None) -> DesignResult:
+    """One bounded design turn, persisted through ``service``.
+
+    ``history`` overrides the stored chat (used when a caller supplies the thread
+    explicitly); otherwise the session's own chat is the source of truth.
+    """
+    limits = normalize_budget(budget)
+    session = service.session()
+    prior = history if history is not None else session.context.get("chat")
+    chat: list[dict[str, str]] = [*clean_history(prior),
+                                  {"role": "user", "content": message}]
+    session = service.record(event="user_turn", context={"chat": chat, "budget": limits})
+    messages: list[dict[str, str]] = [{"role": "system", "content": DESIGN_SYSTEM_PROMPT},
+                                      *chat]
+    observations: list[dict[str, Any]] = []
+    used = _usage()
+    started = time.monotonic()
+
+    def finish(kind: str, text: str, *, artifact: dict[str, Any] | None = None,
+               verification: dict[str, Any] | None = None,
+               assistant: str | None = None) -> DesignResult:
+        if assistant is not None:
+            chat.append({"role": "assistant", "content": assistant})
+        used["seconds"] = round(time.monotonic() - started, 3)
+        latest = service.record(event="turn_end",
+                                context={"chat": chat, "used": used})
+        return DesignResult(kind, text, session_id, revision=latest.revision,
+                            status=latest.status, artifact=artifact,
+                            verification=verification or latest.context.get("verification"),
+                            observations=observations, messages=chat,
+                            attempts=used["decisions"], used=used)
+
+    for _ in range(int(limits["max_decisions"])):
+        if time.monotonic() - started > limits["max_seconds"]:
+            return finish("budget_exhausted", "budget_exhausted: 达到墙钟时间上限")
+        if used["tokens"] > limits["max_tokens"]:
+            return finish("budget_exhausted", "budget_exhausted: 达到 token 上限")
+        try:
+            raw = model.complete(messages)
+        except Exception as error:                          # transport/credential
+            return finish("error", f"model_failed:{error}")
+
+        used["decisions"] += 1
+        text = raw if isinstance(raw, str) else ""
+        used["output_chars"] += len(text)
+        used["tokens"] += max(1, len(text) // 4)
+
+        if len(text) > limits["max_output_chars"]:
+            used["repairs"] += 1
+            observation = {"ok": False, "tool": None, "error": "output_too_long"}
+            observations.append({"step": used["decisions"], **observation})
+            messages.append({"role": "assistant",
+                             "content": text[: int(limits["max_output_chars"])]})
+            messages.append({"role": "user", "content": observation_text(observation)})
+            if used["repairs"] > limits["max_repairs"]:
+                return finish("error", "repair_budget_exhausted: 输出过长次数过多")
+            continue
+
+        try:
+            decision = parse_decision(text)
+        except RuntimeError as error:
+            used["repairs"] += 1
+            observation = {"ok": False, "tool": None, "error": str(error)}
+            observations.append({"step": used["decisions"], **observation})
+            messages.append({"role": "assistant", "content": text})
+            messages.append({"role": "user", "content": observation_text(observation)})
+            if used["repairs"] > limits["max_repairs"]:
+                return finish("error", "repair_budget_exhausted: 无法解析模型输出")
+            continue
+
+        tool = decision.get("tool")
+        args = decision.get("args") or {}
+        if not isinstance(tool, str):
+            observation = {"ok": False, "tool": "", "error": "tool_required"}
+        else:
+            observation = service.dispatch(tool, args)
+        observations.append({"step": used["decisions"], **observation})
+        messages.append({"role": "assistant",
+                         "content": json.dumps(decision, ensure_ascii=False)})
+        messages.append({"role": "user", "content": observation_text(observation)})
+
+        error = str(observation.get("error") or "")
+        if error.startswith(HOST_ERROR_PREFIXES):
+            return finish("error", f"host_error:{error}")
+
+        if observation.get("kind") == "question":
+            return finish("question", observation["question"],
+                          assistant=observation["question"])
+        if observation.get("kind") == "unsupported":
+            return finish("unsupported", observation["message"],
+                          assistant=observation["message"])
+        if tool == "finalize" and observation.get("ok"):
+            artifact = observation.get("artifact")
+            text_message = "已生成候选产物：" + json.dumps(artifact, ensure_ascii=False)
+            return finish("finalized", text_message, artifact=artifact,
+                          assistant=text_message)
+
+        if not observation.get("ok"):
+            used["repairs"] += 1
+            if used["repairs"] > limits["max_repairs"]:
+                return finish("error", "repair_budget_exhausted: 自动修复次数达到上限")
+
+    return finish("budget_exhausted", "budget_exhausted: 达到决策步数上限")

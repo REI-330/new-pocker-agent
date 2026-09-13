@@ -43,7 +43,7 @@ jobs:
           tests/test_m4_design_store.py tests/test_m4_design_api.py
           tests/test_m4_design_service.py tests/test_m4_design_rules.py
           tests/test_m4_design_compile.py tests/test_m4_design_verify.py
-          tests/test_m4_design_finalize.py
+          tests/test_m4_design_finalize.py tests/test_m4_design_loop.py
 
       - name: Architecture invariants (blocking)
         run: uv run --frozen pytest tests/test_architecture_invariants.py -q

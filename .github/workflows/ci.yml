@@ -27,6 +27,7 @@ jobs:
         run: >
           uvx ruff check src/pocker_agent/core src/pocker_agent/agent src/pocker_agent/app.py
           scripts/e2e_smoke.py scripts/benchmark_generation.py scripts/doctor.py scripts/run_web.py
+          scripts/m5_acceptance.py scripts/m5_acceptance_fixtures.py
           tests/test_core_interpreter.py tests/test_capability.py tests/test_session_api.py
           tests/test_architecture_invariants.py tests/test_oracle_fixtures.py
           tests/test_ir_and_war.py tests/test_agent_loop.py tests/test_s2_axes.py
@@ -46,6 +47,7 @@ jobs:
           tests/test_m4_design_finalize.py tests/test_m4_design_loop.py
           tests/test_m5_design_lifecycle.py tests/test_m5_version_api.py
           tests/test_m5_session_runtime.py tests/test_m5_model_url_safety.py
+          tests/test_m5_game_summary_dto.py
 
       - name: Architecture invariants (blocking)
         run: uv run --frozen pytest tests/test_architecture_invariants.py -q
@@ -69,3 +71,31 @@ jobs:
         run: npm ci
       - name: Build (tsc + vite)
         run: npm run build
+
+  # The repeatable browser acceptance (ADR-0019): real Chromium, Firefox and
+  # WebKit drive the built app through the design lifecycle, conflicts,
+  # abnormal recovery and multi-tab races. Kept separate from the unit jobs
+  # because it downloads browsers and starts real servers.
+  browser:
+    runs-on: ubuntu-latest
+    needs: [python, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Python (frozen lock)
+        run: uv sync --frozen --all-groups
+      - name: Install frontend (locked)
+        run: npm ci
+        working-directory: frontend
+      - name: Install browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+        working-directory: frontend
+      - name: Browser acceptance
+        run: uv run --frozen python scripts/m5_acceptance.py --browsers chromium,firefox,webkit

@@ -172,8 +172,9 @@ function ReferenceDetail({game, corpusGame, report, onPlay}: {
         <p>kind {game.kind}<br />单一 Interpreter · 无模型参与运行时</p></div>
         <Pill tone="success">core</Pill></div>
       <div className="rule-card"><div><h3>验证证据</h3>
-        <p>种子 {(report.seeds ?? []).join(' / ') || '—'}<br />wait 覆盖 {(report.covered_wait_nodes ?? []).join(', ') || '—'}</p></div>
-        <Pill tone={report.ok ? 'success' : 'danger'}>{(report.failures ?? []).length} 失败</Pill></div>
+        <p>证据来源 {report.evidence}<br />种子 {report.seeds.join(' / ') || '—'}<br />
+          wait 覆盖 {report.covered_wait_nodes.join(', ') || '—'}</p></div>
+        <Pill tone={report.ok ? 'success' : 'danger'}>{report.failures.length} 失败</Pill></div>
       {corpusGame && <div className="rule-card"><div><h3>需要的能力轴</h3>
         <ul className="axis-list">{corpusGame.required_axes.map(axis => <li key={axis}>{axis}</li>)}</ul>
       </div>
@@ -185,8 +186,8 @@ function ReferenceDetail({game, corpusGame, report, onPlay}: {
       <span className="eyebrow">PLAYTEST REPORT</span>
       <h2>逐项检查</h2>
       <ul className="check-list">
-        {(report.checks ?? []).map(check => <li key={check}><span>✓</span>{check}</li>)}
-        {(report.failures ?? []).map(failure => <li key={failure}><span>✗</span>{failure}</li>)}
+        {report.checks.map(check => <li key={check}><span>✓</span>{check}</li>)}
+        {report.failures.map(failure => <li key={failure}><span>✗</span>{failure}</li>)}
       </ul>
       <button className="action-primary" onClick={onPlay}>开始试玩 <span>↗</span></button>
     </div>

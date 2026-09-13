@@ -24,19 +24,26 @@ export type Coverage = {
   missing_histogram: Record<string, number>; games: CoverageGame[]
 }
 
-// A reference game returns a full playtest report; a composed artifact only
-// reports ``ok`` and omits the rest, so every list here is optional.
+// The backend returns one complete playtest shape for every game (ADR-0019);
+// ``evidence`` says which host record produced it.
+export type PlaytestEvidence = 'reference' | 'verification' | 'agent_playtest'
 export type Playtest = {
   ok: boolean
-  seeds?: number[]
-  event_counts?: Record<string, number>
-  failures?: string[]
-  checks?: string[]
-  covered_wait_nodes?: string[]
+  seeds: number[]
+  checks: string[]
+  failures: string[]
+  covered_wait_nodes: string[]
+  event_counts: Record<string, number>
+  evidence: PlaytestEvidence
 }
 export type GameInfo = {
-  id: string; title: string; kind: string; playtest: Playtest
-  version?: number; verification_id?: string; source?: string
+  id: string
+  title: string
+  kind: string
+  playtest: Playtest
+  version: number | null
+  verification_id: string | null
+  source: string | null
 }
 
 // ------------------------------------------------------ generic session state

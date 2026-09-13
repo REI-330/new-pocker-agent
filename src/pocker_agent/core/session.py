@@ -53,6 +53,24 @@ MAX_EVENT_WINDOW = 500
 _EVENT_SECRET_KEYS = ("seed", "args", "state", "hand", "cards", "secret", "solution")
 
 
+#: The canonical, always-complete playtest summary returned for every game
+#: (ADR-0019). A reference game carries a full host playtest report; a published
+#: artifact only stored a host verification credential, so its summary is rebuilt
+#: from that credential; an agent-registered plan carries the host playtest report
+#: recorded when it was registered. ``evidence`` names the origin so a missing
+#: block can never be mistaken for an empty-but-valid report.
+def _playtest_summary(source: Any, evidence: str) -> dict[str, Any]:
+    """A complete playtest summary from any of the three evidence shapes."""
+    report = source if isinstance(source, dict) else {}
+    return {"ok": bool(report.get("ok", False)),
+            "seeds": list(report.get("seeds", [])),
+            "checks": list(report.get("checks", [])),
+            "failures": list(report.get("failures", [])),
+            "covered_wait_nodes": list(report.get("covered_wait_nodes", [])),
+            "event_counts": dict(report.get("event_counts") or {}),
+            "evidence": evidence}
+
+
 def _request_fingerprint(action: str, payload: dict[str, Any]) -> str:
     """Content identity of a human request, independent of when it arrives."""
     canonical = json.dumps({"action": action, "payload": payload}, sort_keys=True,
@@ -333,7 +351,8 @@ class SessionStore:
         return None
 
     def list_games(self) -> list[dict[str, Any]]:
-        games = list_reference_games()
+        games = [{**game, "playtest": _playtest_summary(game["playtest"], "reference")}
+                 for game in list_reference_games()]
         seen = {game["id"] for game in games}
         artifacts = self._stored_artifacts()
         for game_id in sorted({gid for gid, _ in artifacts}):
@@ -341,18 +360,21 @@ class SessionStore:
                 continue
             seen.add(game_id)
             payload = artifacts[(game_id, max(v for g, v in artifacts if g == game_id))]
+            credential = self.get_verification(payload["verification_id"])
             games.append({"id": game_id, "title": payload.get("title", game_id),
                           "kind": payload["plan"].get("game_kind", "unknown"),
                           "version": payload["version"],
                           "verification_id": payload["verification_id"],
-                          "playtest": {"ok": True},
+                          "playtest": _playtest_summary(credential, "verification"),
                           "source": payload["generation_source"]})
         for game_id, payload in sorted(self._stored_plans().items()):
             if game_id in seen:                       # reserved ids cannot shadow
                 continue
             games.append({"id": game_id, "title": payload.get("title", game_id),
                           "kind": payload["plan"].get("game_kind", "unknown"),
-                          "playtest": payload["playtest"], "source": "agent_compose"})
+                          "playtest": _playtest_summary(payload["playtest"],
+                                                        "agent_playtest"),
+                          "source": "agent_compose"})
         return games
 
     # ------------------------------------------------------------- lifecycle

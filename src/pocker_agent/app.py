@@ -215,6 +215,40 @@ class LoopInput(BaseModel):
     expected_revision: int | None = Field(default=None, ge=0)
 
 
+class PlaytestDTO(BaseModel):
+    """The one playtest shape every game exposes (ADR-0019).
+
+    ``extra="forbid"`` makes an accidental field drift a hard error instead of
+    a silently ignored key, which is what let the frontend paper over the old
+    two-shape response with optional fields. Every list is always present.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    seeds: list[int] = Field(default_factory=list)
+    checks: list[str] = Field(default_factory=list)
+    failures: list[str] = Field(default_factory=list)
+    covered_wait_nodes: list[str] = Field(default_factory=list)
+    event_counts: dict[str, int] = Field(default_factory=dict)
+    #: Which host record the summary came from; a reader must never have to guess.
+    evidence: Literal["reference", "verification", "agent_playtest"]
+
+
+class GameSummaryDTO(BaseModel):
+    """The ``/api/games`` list item. Optional artifact fields are explicit nulls."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+    kind: str
+    playtest: PlaytestDTO
+    version: int | None = None
+    verification_id: str | None = None
+    source: str | None = None
+
+
 def create_app(path: Path | None = None, vault=None, model_factory=None) -> FastAPI:
     app = FastAPI(title="Pocker Agent", version="0.4.0")
     app.add_middleware(
@@ -287,7 +321,9 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
 
     @app.get("/api/games")
     def games():
-        return {"games": store.list_games(), "coverage": coverage_report()}
+        return {"games": [GameSummaryDTO.model_validate(item).model_dump()
+                          for item in store.list_games()],
+                "coverage": coverage_report()}
 
     @app.get("/api/games/{game_id}/versions")
     def list_game_versions(game_id: str):

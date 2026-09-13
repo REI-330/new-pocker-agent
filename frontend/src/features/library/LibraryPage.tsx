@@ -22,7 +22,8 @@ export function LibraryPage({games, coverage, matrix, macroPromotion, onOpen}: {
         <span className="stacked-cards"><i>♠</i><i>♥</i><i>♦</i></span>
         <span className="library-name"><strong>{game.title}</strong>
           <small>{game.kind}{game.version ? ` · v${game.version}` : ''} · 种子
-            {(game.playtest.seeds ?? []).join('/') || '—'} · {(game.playtest.checks ?? []).length} 项检查</small></span>
+            {game.playtest.seeds.join('/') || '—'} · {game.playtest.checks.length} 项检查
+            {game.source ? ` · ${game.source}` : ''}</small></span>
         <Pill tone={game.playtest.ok ? 'success' : 'danger'}>{game.playtest.ok ? '已验证' : '未通过'}</Pill>
         <span className="row-arrow">→</span>
       </button>)}

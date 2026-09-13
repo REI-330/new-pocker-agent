@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .agent import TOOL_SCHEMAS, run_loop
+from .agent import TOOL_SCHEMAS, DesignStore, run_loop
 from .configuration import ConfigInput, ConfigStore
 from .core import (
     PLAN_MACROS,
@@ -78,6 +78,28 @@ class SessionInput(BaseModel):
     seed: int | None = None
 
 
+class DesignCreateInput(BaseModel):
+    game_id: str = Field(min_length=1, max_length=64)
+    description: str = Field(default="", max_length=8000)
+
+
+class DesignUpdateInput(BaseModel):
+    """An optimistic-locked write to a design session (M4-1).
+
+    ``expected_revision`` is mandatory: a write without it cannot be checked
+    against the stored revision, so the schema refuses it rather than guessing.
+    Only the fields present are changed; ``request_id`` makes a retry idempotent.
+    """
+
+    expected_revision: int = Field(ge=0)
+    request_id: str | None = Field(default=None, max_length=64)
+    event: str = Field(default="updated", max_length=64)
+    description: str | None = Field(default=None, max_length=8000)
+    ir: dict | None = None
+    diagnosis: dict | None = None
+    status: str | None = Field(default=None, max_length=16)
+
+
 class ChatTurn(BaseModel):
     """One prior chat turn, so a design conversation can span requests."""
 
@@ -111,7 +133,9 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
     database = path or data_path()
     config = ConfigStore(database, vault)
     store = SessionStore(database)
+    designs = DesignStore(database)
     app.state.session_store = store
+    app.state.design_store = designs
     app.state.config_store = config
 
     def default_model():
@@ -139,7 +163,9 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
 
     @app.exception_handler(KeyError)
     async def not_found(request, error):
-        return JSONResponse(status_code=404, content={"detail": "牌局不存在，请重新开始"})
+        key = error.args[0] if error.args else ""
+        message = "设计会话不存在" if str(key).startswith("design_") else "牌局不存在，请重新开始"
+        return JSONResponse(status_code=404, content={"detail": message})
 
     @app.get("/health")
     def health():
@@ -156,6 +182,33 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
     @app.get("/api/games")
     def games():
         return {"games": store.list_games(), "coverage": coverage_report()}
+
+    @app.post("/api/designs")
+    def create_design(payload: DesignCreateInput):
+        return designs.create(payload.game_id, payload.description).as_dict()
+
+    @app.get("/api/designs")
+    def list_designs():
+        return {"designs": designs.list_sessions()}
+
+    @app.get("/api/designs/{session_id}")
+    def get_design(session_id: str):
+        return designs.get(session_id).as_dict()
+
+    @app.post("/api/designs/{session_id}/update")
+    def update_design(session_id: str, payload: DesignUpdateInput):
+        changes: dict[str, object] = {}
+        if payload.description is not None:
+            changes["description"] = payload.description
+        if payload.ir is not None:
+            changes["ir"] = payload.ir
+        if payload.diagnosis is not None:
+            changes["diagnosis"] = payload.diagnosis
+        if payload.status is not None:
+            changes["status"] = payload.status
+        return designs.commit(session_id, payload.expected_revision,
+                              request_id=payload.request_id, event=payload.event,
+                              **changes).as_dict()
 
     @app.get("/api/agent/tools")
     def agent_tools():

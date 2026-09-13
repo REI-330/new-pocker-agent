@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import socket
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -13,6 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from .storage import connect, data_path
 
+#: Opt-in for local/private model servers (e.g. Ollama). Off by default so a
+#: user-supplied URL cannot be turned into an SSRF probe against the LAN or a
+#: cloud metadata endpoint (ADR-0017).
+ALLOW_PRIVATE_URLS_ENV = "POCKER_AGENT_ALLOW_PRIVATE_MODEL_URLS"
+_BLOCKED_HOSTNAMES = {"localhost", "metadata", "metadata.google.internal",
+                      "metadata.google", "instance-data"}
+
 
 class ConfigInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -21,10 +30,66 @@ class ConfigInput(BaseModel):
     api_key: SecretStr = Field(default_factory=lambda: SecretStr(""))
 
 
+class BlockedModelHost(ValueError):
+    """A model URL points at a non-public address and private use is not allowed."""
+
+
+def private_model_urls_allowed() -> bool:
+    return os.getenv(ALLOW_PRIVATE_URLS_ENV, "").strip().lower() in {
+        "1", "true", "yes", "on"}
+
+
+def _resolved_addresses(hostname: str) -> list[ipaddress._BaseAddress]:
+    """Every IP a hostname resolves to, or the literal itself.
+
+    A literal IP is parsed directly so an IPv6 link-local address is checked
+    without depending on ``getaddrinfo`` scope handling.
+    """
+    host = hostname.strip().strip("[]")
+    try:
+        return [ipaddress.ip_address(host)]
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as error:
+        raise BlockedModelHost(f"无法解析模型地址：{hostname}") from error
+    return [ipaddress.ip_address(info[4][0]) for info in infos]
+
+
+def _is_blocked_address(address: ipaddress._BaseAddress) -> bool:
+    return bool(address.is_private or address.is_loopback or address.is_link_local
+                or address.is_reserved or address.is_multicast or address.is_unspecified)
+
+
+def validate_model_host(hostname: str | None) -> None:
+    """Refuse loopback, private, link-local, reserved and metadata addresses.
+
+    The check runs on *every* resolved IPv4/IPv6 address, so a name that returns
+    a mix of public and private records is still refused. Redirect hops are
+    re-checked by the HTTP transport, not only the originally saved base URL.
+    """
+    if private_model_urls_allowed():
+        return
+    if not hostname:
+        raise BlockedModelHost("模型地址缺少主机名")
+    lowered = hostname.strip().lower().rstrip(".")
+    if lowered in _BLOCKED_HOSTNAMES or lowered.endswith(".localhost"):
+        raise BlockedModelHost(_PRIVATE_HINT)
+    for address in _resolved_addresses(hostname):
+        if _is_blocked_address(address):
+            raise BlockedModelHost(_PRIVATE_HINT)
+
+
+_PRIVATE_HINT = ("模型地址指向本机/内网，已拒绝；本机模型请设置 "
+                 f"{ALLOW_PRIVATE_URLS_ENV}=1")
+
+
 def normalize_url(value: str) -> str:
     parts = urlsplit(value.strip())
     if parts.scheme not in {"https", "http"} or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
         raise ValueError("Base URL 必须是 http(s) API 地址，不能包含账号、查询参数或片段")
+    validate_model_host(parts.hostname)
     path = parts.path.rstrip("/")
     for endpoint in ("/chat/completions", "/models"):
         if path.endswith(endpoint):

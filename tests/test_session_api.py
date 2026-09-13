@@ -203,6 +203,21 @@ def test_unknown_game_and_missing_session_are_reported(tmp_path):
     assert c.get("/api/sessions/deadbeef").status_code == 404
 
 
+def test_an_in_memory_session_read_is_a_copy():
+    """A caller cannot mutate a stored in-memory session through ``get``."""
+    from pocker_agent.core import SessionStore
+
+    store = SessionStore()
+    session = store.create("arithmetic24", seed=7)
+    fetched = store.get(session.id)
+    fetched.revision = 999
+    fetched.processed["x"] = {"y": 1}
+    fetched.interpreter.state["injected"] = True
+    again = store.get(session.id)
+    assert again.revision == 0 and again.processed == {}
+    assert "injected" not in again.interpreter.state
+
+
 def test_playtest_gate_blocks_a_failing_game(tmp_path, monkeypatch):
     """A game whose gate fails must not become playable."""
     import pocker_agent.core.session as session_module

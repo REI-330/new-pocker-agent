@@ -167,6 +167,33 @@ def test_an_in_memory_store_has_the_same_locking_contract():
     assert store.get(session.session_id).revision == 1
 
 
+def test_context_bounds_text_width_and_depth(tmp_path):
+    from pocker_agent.agent.design_store import MAX_CONTEXT_ITEMS, MAX_CONTEXT_TEXT
+
+    store = _store(tmp_path)
+    session = store.create("g")
+    deep = current = {}
+    for _ in range(40):
+        current["next"] = {}
+        current = current["next"]
+    updated = store.commit(session.session_id, 0, context={
+        "custom": {"text": "x" * (MAX_CONTEXT_TEXT + 500),
+                   "wide": {f"k{index}": index for index in range(MAX_CONTEXT_ITEMS + 50)},
+                   "deep": deep}})
+    custom = updated.context["custom"]
+    assert len(custom["text"]) == MAX_CONTEXT_TEXT
+    assert len(custom["wide"]) == MAX_CONTEXT_ITEMS
+    assert "<truncated>" in str(custom["deep"])
+
+
+def test_context_evidence_keys_keep_their_structure(tmp_path):
+    store = _store(tmp_path)
+    session = store.create("g")
+    verification = {"ok": True, "contract": {"checks": ["x" * 100] * 200}}
+    updated = store.commit(session.session_id, 0, context={"verification": verification})
+    assert updated.context["verification"] == verification
+
+
 def test_a_design_session_is_not_a_playable_game(tmp_path):
     """Saving a design never registers a runnable version (ADR-0008)."""
     designs = DesignStore(tmp_path / "design.db")

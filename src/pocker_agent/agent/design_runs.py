@@ -35,6 +35,26 @@ MAX_RUN_OBSERVATIONS = 64
 MAX_RUN_MESSAGE = 4000
 #: A run left ``running`` for longer than this was orphaned by a crash/restart.
 DEFAULT_RUN_STALE_SECONDS = 900
+#: Bounds on one stored observation, so a verbose tool result cannot bloat a run.
+MAX_OBSERVATION_DEPTH = 6
+MAX_OBSERVATION_TEXT = 2000
+MAX_OBSERVATION_ITEMS = 64
+
+
+def bounded_observation(value: Any, depth: int = 0) -> Any:
+    """A finite copy of a tool observation: capped depth, string size and width."""
+    if depth >= MAX_OBSERVATION_DEPTH:
+        return "<truncated>"
+    if isinstance(value, str):
+        return value[:MAX_OBSERVATION_TEXT]
+    if isinstance(value, dict):
+        items = list(value.items())[:MAX_OBSERVATION_ITEMS]
+        return {str(key)[:128]: bounded_observation(item, depth + 1)
+                for key, item in items}
+    if isinstance(value, (list, tuple)):
+        return [bounded_observation(item, depth + 1)
+                for item in list(value)[:MAX_OBSERVATION_ITEMS]]
+    return value
 
 #: ``running`` while the turn is in flight, then a terminal state. ``kind`` keeps
 #: the finer design result (question / finalized / unsupported / error / ...).
@@ -210,7 +230,8 @@ class DesignRunStore:
             if used is not None:
                 run.used = deepcopy(used)
             if observations is not None:
-                run.observations = deepcopy(observations[-MAX_RUN_OBSERVATIONS:])
+                run.observations = [bounded_observation(item)
+                                    for item in observations[-MAX_RUN_OBSERVATIONS:]]
             run.artifact = deepcopy(artifact)
             run.verification = deepcopy(verification)
             run.error = error

@@ -1,7 +1,9 @@
 # ADR-0014: 设计会话的持久化与乐观锁（M4-1）
 
+> 注：`status` 词表已由 [ADR-0017](0017-m5-state-machine-and-hardening.md) 取代（`finalized` → `awaiting_confirmation`/`registered`）。本文其余契约仍然有效。
+
 - 日期：2026-09-14
-- 状态：accepted（**实现状态：已实现**，M4-1）
+- 状态：accepted（**实现状态：已实现**，M4-1；状态词表部分被 ADR-0017 取代）
 - 决策者：架构 owner
 - 关联：ADR-0008（证据与版本绑定）、ADR-0013、`docs/development-plan-phase2.md` §M4
 

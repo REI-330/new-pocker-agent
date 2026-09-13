@@ -25,6 +25,7 @@ from .agent import (
     DesignRunStore,
     DesignService,
     DesignStore,
+    bounded_observation,
     normalize_budget,
     run_design_loop,
     run_loop,
@@ -375,6 +376,8 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
                         error=f"turn_failed:{type(error).__name__}")
             raise
         body = result.as_dict()
+        body["observations"] = [bounded_observation(item)
+                                for item in body["observations"]]
         body["registered"] = False
         body["run_id"] = run.run_id
         body["session"] = designs.get(session_id).as_dict()
@@ -413,28 +416,38 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
                 f"期望 {payload.expected_revision}）")
         service = DesignService(designs, session_id)
         observation = service.dispatch("verify_game", {}, request_id=payload.request_id)
+        error = str(observation.get("error") or "")
+        if error.startswith(("stale_revision", "request_id_conflict")):
+            raise ValueError(error)          # a conflict is a 409, never a 200 observation
         session = designs.get(session_id)
         return {"ok": bool(observation.get("ok")), "observation": observation,
                 "revision": session.revision, "session": session.as_dict()}
 
     @app.post("/api/designs/{session_id}/confirm")
     def confirm_design(session_id: str, payload: DesignConfirmInput):
-        """Record the user's confirmation of one exact rule version (M5-1)."""
+        """Record the user's confirmation of one exact, *verified* rule version.
+
+        A confirmation is the user's approval of rules the host has already
+        verified, so it cannot succeed before the evidence binds the current IR.
+        That keeps ``confirmed`` from ever meaning "confirmed but unverifiable"
+        (ADR-0017).
+        """
         current = designs.get(session_id)                    # KeyError -> 404
         if not current.ir or not current.ir_hash:
             raise ValueError("propose_ir_first")
         if payload.ir_hash != current.ir_hash:
             raise ValueError("approval_mismatch: 确认的规则版本与当前草案不一致")
         verification = current.context.get("verification") or {}
-        confirmation = {
-            "ir_hash": current.ir_hash, "revision": current.revision,
-            "verified": bool(verification.get("ok"))
-            and verification.get("ir_hash") == current.ir_hash,
-            "verification_id": verification.get("verification_id")}
+        if not (verification.get("ok")
+                and verification.get("ir_hash") == current.ir_hash):
+            raise ValueError("verification_required: 请先对当前规则运行正式验证")
+        confirmation = {"ir_hash": current.ir_hash, "revision": current.revision,
+                        "verification_id": verification.get("verification_id")}
         updated = designs.commit(session_id, payload.expected_revision
                                  if payload.expected_revision is not None
                                  else current.revision,
                                  request_id=payload.request_id, event="confirmed",
+                                 status="awaiting_confirmation",
                                  context={"confirmation": confirmation})
         return {"confirmed": True, "confirmation": confirmation,
                 "session": updated.as_dict()}
@@ -484,7 +497,7 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
                                  if payload.expected_revision is not None
                                  else current.revision,
                                  request_id=payload.request_id, event="published",
-                                 status="finalized", context={"published": summary})
+                                 status="registered", context={"published": summary})
         return {"published": True, "idempotent": idempotent, "artifact": summary,
                 "session": updated.as_dict()}
 

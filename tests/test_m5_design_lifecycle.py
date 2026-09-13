@@ -197,10 +197,82 @@ def test_publish_requires_a_bound_verification(tmp_path):
     session_id = _design(client)["session_id"]
     _with_rules(client, session_id)
     ir_hash = client.get(f"/api/designs/{session_id}").json()["ir_hash"]
-    client.post(f"/api/designs/{session_id}/confirm", json={"ir_hash": ir_hash})
-    rejected = client.post(f"/api/designs/{session_id}/publish", json={})
+    # Confirmation is the user approving *verified* rules, so it is refused
+    # before any evidence binds the current IR (ADR-0017).
+    rejected = client.post(f"/api/designs/{session_id}/confirm",
+                           json={"ir_hash": ir_hash})
     assert rejected.status_code == 422
     assert "verification_required" in rejected.json()["detail"]
+    # Without a confirmation, publish is refused in turn.
+    publish = client.post(f"/api/designs/{session_id}/publish", json={})
+    assert publish.status_code == 422
+    assert "confirmation_required" in publish.json()["detail"]
+
+
+def test_the_design_status_follows_the_frozen_lifecycle(tmp_path):
+    client = _client(tmp_path)
+    session_id = _design(client)["session_id"]
+    assert client.get(f"/api/designs/{session_id}").json()["status"] == "draft"
+    _with_rules(client, session_id)
+    verified = client.post(f"/api/designs/{session_id}/verify", json={})
+    assert verified.status_code == 200 and verified.json()["ok"]
+    assert verified.json()["session"]["status"] == "verified"
+    ir_hash = verified.json()["session"]["ir_hash"]
+    confirmed = client.post(f"/api/designs/{session_id}/confirm",
+                            json={"ir_hash": ir_hash})
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["session"]["status"] == "awaiting_confirmation"
+    published = client.post(f"/api/designs/{session_id}/publish", json={})
+    assert published.status_code == 200, published.text
+    assert published.json()["session"]["status"] == "registered"
+
+
+def test_verify_is_idempotent_for_the_same_request_id(tmp_path):
+    client = _client(tmp_path)
+    session_id = _design(client)["session_id"]
+    _with_rules(client, session_id)
+    body = {"request_id": "verify-1"}
+    first = client.post(f"/api/designs/{session_id}/verify", json=body)
+    assert first.status_code == 200 and first.json()["ok"] is True
+    revision = first.json()["revision"]
+    second = client.post(f"/api/designs/{session_id}/verify", json=body)
+    assert second.status_code == 200
+    assert second.json() == first.json()
+    assert client.get(f"/api/designs/{session_id}").json()["revision"] == revision
+
+
+def test_verify_request_id_conflicts_after_the_rules_change(tmp_path):
+    client = _client(tmp_path)
+    session_id = _design(client)["session_id"]
+    _with_rules(client, session_id)
+    first = client.post(f"/api/designs/{session_id}/verify", json={"request_id": "verify-1"})
+    assert first.status_code == 200 and first.json()["ok"] is True
+    current = client.get(f"/api/designs/{session_id}").json()
+    changed = copy.deepcopy(current["ir"])
+    changed["terminal"]["max_rounds"] = 2
+    client.post(f"/api/designs/{session_id}/update",
+                json={"expected_revision": current["revision"], "ir": changed})
+    conflict = client.post(f"/api/designs/{session_id}/verify",
+                           json={"request_id": "verify-1"})
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"].startswith("request_id_conflict")
+
+
+def test_a_failed_verification_is_replayable(tmp_path):
+    from test_g2_m3_scenario_b import scenario_b_ir
+
+    client = _client(tmp_path)
+    session_id = _design(client)["session_id"]
+    client.post(f"/api/designs/{session_id}/update",
+                json={"expected_revision": 0, "ir": scenario_b_ir()})
+    body = {"request_id": "verify-fail"}
+    first = client.post(f"/api/designs/{session_id}/verify", json=body)
+    assert first.status_code == 200 and first.json()["ok"] is False
+    revision = first.json()["revision"]
+    second = client.post(f"/api/designs/{session_id}/verify", json=body)
+    assert second.status_code == 200
+    assert second.json() == first.json()
+    assert client.get(f"/api/designs/{session_id}").json()["revision"] == revision
 
 
 def test_confirming_a_different_hash_is_refused(tmp_path):
@@ -254,6 +326,25 @@ def test_the_run_store_keeps_only_the_newest_observations(tmp_path):
                             observations=[{"step": index} for index in range(200)])
     assert len(finished.observations) == MAX_RUN_OBSERVATIONS
     assert finished.observations[-1]["step"] == 199
+
+
+def test_run_observations_are_bounded_in_size_and_depth(tmp_path):
+    from pocker_agent.agent.design_runs import MAX_OBSERVATION_TEXT, bounded_observation
+
+    store = DesignRunStore(tmp_path / "runs.db")
+    run = store.start("s1", "消息")
+    deep: dict = {}
+    current = deep
+    for _ in range(30):
+        current["next"] = {}
+        current = current["next"]
+    finished = store.finish(run.run_id, status="completed", kind="question",
+                            observations=[{"text": "x" * (MAX_OBSERVATION_TEXT + 500),
+                                           "deep": deep}])
+    observation = finished.observations[0]
+    assert len(observation["text"]) == MAX_OBSERVATION_TEXT
+    assert "<truncated>" in str(observation["deep"])
+    assert bounded_observation({"a": [{"b": 1}]}) == {"a": [{"b": 1}]}
 
 
 def test_the_run_store_works_without_a_path():

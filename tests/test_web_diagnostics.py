@@ -52,6 +52,19 @@ def test_health_identifies_this_app_and_nothing_else():
     assert run_web.health(free_port(), timeout=0.5) is None
 
 
+def test_the_reported_version_matches_package_and_page_metadata():
+    """One product version across the API, the Python package and the frontend."""
+    import json
+
+    from pocker_agent import __version__
+    from pocker_agent.app import VERSION
+
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    page = json.loads((ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
+    assert __version__ == VERSION == page["version"]
+    assert f'version = "{VERSION}"' in pyproject
+
+
 @pytest.fixture
 def live_server(tmp_path):
     import uvicorn

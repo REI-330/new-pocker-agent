@@ -47,7 +47,7 @@ def test_finalize_builds_a_candidate_but_never_registers(tmp_path):
     assert result["registered"] is False
     artifact = result["artifact"]
     session = service.session()
-    assert session.status == "finalized"
+    assert session.status == "awaiting_confirmation"
     assert session.context["artifact"] == artifact
     assert artifact["plan_hash"] == session.context["compiled"]["plan_hash"]
     assert artifact["verification_id"] == session.context["verification"]["verification_id"]
@@ -56,7 +56,7 @@ def test_finalize_builds_a_candidate_but_never_registers(tmp_path):
     # The design store has no registration path: no runnable version exists yet.
     sessions = SessionStore(tmp_path / "design.db")
     assert sessions.list_versions("design-only") == []
-    assert store.get(session.session_id).status == "finalized"
+    assert store.get(session.session_id).status == "awaiting_confirmation"
 
 
 def test_finalize_refuses_evidence_that_does_not_bind_the_current_rules(tmp_path):

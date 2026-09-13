@@ -76,6 +76,9 @@ DESIGN_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
 
 DESIGN_TOOL_NAMES: tuple[str, ...] = tuple(schema["name"] for schema in DESIGN_TOOL_SCHEMAS)
 
+#: How many recent verify requests a design session remembers for replay.
+MAX_VERIFY_REQUESTS = 8
+
 
 def _ok(tool: str, /, **payload: Any) -> dict[str, Any]:
     return {"ok": True, "tool": tool, **payload}
@@ -350,10 +353,42 @@ class DesignService:
                    game_kind=plan.game_kind, state=summarize(interpreter.state))
 
     # -------------------------------------------------------------- verify
+    def _cached_verification(self, session, request_id: str | None):
+        """A previously stored verify observation for an idempotency key.
+
+        The key is bound to the current ``ir_hash``: the same key on changed
+        rules is a conflict, not a silent replay of stale evidence.
+        """
+        if not request_id:
+            return None
+        entry = (session.context.get("verify_requests") or {}).get(request_id)
+        if not isinstance(entry, dict):
+            return None
+        if entry.get("ir_hash") != session.ir_hash:
+            return _fail("verify_game",
+                         "request_id_conflict: 相同 request_id 已在不同规则上使用")
+        observation = entry.get("observation")
+        return deepcopy(observation) if isinstance(observation, dict) else None
+
+    @staticmethod
+    def _remember_verification(session, request_id: str | None, observation: dict,
+                               context: dict[str, Any]) -> dict[str, Any]:
+        """Add a bounded replay entry to a verify commit's context changes."""
+        if not request_id:
+            return context
+        requests = dict(session.context.get("verify_requests") or {})
+        requests[request_id] = {"ir_hash": session.ir_hash,
+                                "observation": deepcopy(observation)}
+        return {**context,
+                "verify_requests": dict(list(requests.items())[-MAX_VERIFY_REQUESTS:])}
+
     def _tool_verify_game(self, args: dict[str, Any], request_id: str | None):
         session = self.session()
         if not session.ir:
             return _fail("verify_game", "propose_ir_first")
+        cached = self._cached_verification(session, request_id)
+        if cached is not None:
+            return cached
         try:
             parsed, plan, summary, _ = self._compile_current(session)
         except CompileError as error:
@@ -377,25 +412,36 @@ class DesignService:
                                  strategies=self.strategies, seeds=self.seeds)
         verification = result.as_dict()
         if result.ok:
-            updated = self._commit(session, event="verify_game", status="verified",
-                                   diagnosis={"ok": True, "verification_id": result.verification_id},
-                                   context={"verification": verification, "failure": None,
-                                            "compiled": summary})
-            return _ok("verify_game", verified=True, verification_id=result.verification_id,
-                       seeds=list(result.seeds), strategies=list(result.strategies),
-                       covered_wait_nodes=list(result.covered_wait_nodes),
-                       revision=updated.revision)
-        failure = {"kind": "verification_error", "stage": "verify",
-                   "failures": list(result.failures),
-                   "verification_id": result.verification_id,
-                   "ir_hash": result.ir_hash, "plan_hash": result.plan_hash}
-        updated = self._commit(session, event="verify_game", status="failed",
-                               diagnosis={"ok": False, "failures": list(result.failures)},
-                               context={"verification": verification, "failure": failure,
-                                        "compiled": summary})
-        return _fail("verify_game", "verification_failed:" + "; ".join(result.failures[:3]),
-                     verified=False, verification_id=result.verification_id,
-                     failures=list(result.failures), revision=updated.revision)
+            observation = _ok(
+                "verify_game", verified=True, verification_id=result.verification_id,
+                seeds=list(result.seeds), strategies=list(result.strategies),
+                covered_wait_nodes=list(result.covered_wait_nodes))
+            context = {"verification": verification, "failure": None,
+                       "compiled": summary}
+            status, diagnosis = "verified", {"ok": True,
+                                             "verification_id": result.verification_id}
+        else:
+            observation = _fail(
+                "verify_game",
+                "verification_failed:" + "; ".join(result.failures[:3]),
+                verified=False, verification_id=result.verification_id,
+                failures=list(result.failures))
+            failure = {"kind": "verification_error", "stage": "verify",
+                       "failures": list(result.failures),
+                       "verification_id": result.verification_id,
+                       "ir_hash": result.ir_hash, "plan_hash": result.plan_hash}
+            context = {"verification": verification, "failure": failure,
+                       "compiled": summary}
+            status, diagnosis = "failed", {"ok": False,
+                                           "failures": list(result.failures)}
+        # The commit advances exactly one revision (the request is not a replay at
+        # this point), so the stored observation carries the same revision the
+        # caller sees, and a retry can replay it byte for byte.
+        observation["revision"] = session.revision + 1
+        context = self._remember_verification(session, request_id, observation, context)
+        self._commit(session, event="verify_game", status=status, diagnosis=diagnosis,
+                     request_id=request_id, context=context)
+        return observation
 
     def _tool_inspect_failure(self, args: dict[str, Any], request_id: str | None):
         session = self.session()
@@ -469,7 +515,7 @@ class DesignService:
                             "ir_hash": artifact.ir_hash,
                             "registry_contract_hash": artifact.registry_contract_hash,
                             "generation_source": artifact.generation_source}
-        updated = self._commit(session, event="finalize", status="finalized",
+        updated = self._commit(session, event="finalize", status="awaiting_confirmation",
                                context={"artifact": artifact_summary, "failure": None})
         return _ok("finalize", finalized=True, registered=False, artifact=artifact_summary,
                    revision=updated.revision)

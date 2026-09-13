@@ -1,6 +1,6 @@
 [project]
 name = "pocker-agent"
-version = "0.1.0"
+version = "0.4.0"
 description = "Natural-language agent framework for designing and playing poker games"
 readme = "README.md"
 requires-python = ">=3.11"

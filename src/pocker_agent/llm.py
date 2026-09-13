@@ -3,9 +3,25 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+import httpx
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
 
-from .configuration import ModelConfig
+from .configuration import BlockedModelHost, ModelConfig, validate_model_host
+
+
+def _guard_model_request(request: httpx.Request) -> None:
+    """Re-check every hop, including redirects, before a model request leaves.
+
+    ``normalize_url`` already validates the saved base URL; this hook covers the
+    case where a gateway answers with a redirect to a private/metadata address.
+    """
+    validate_model_host(request.url.host)
+
+
+def guarded_http_client(timeout: float) -> httpx.Client:
+    """An httpx client that refuses private/metadata hosts on every request."""
+    return httpx.Client(timeout=timeout, follow_redirects=True,
+                        event_hooks={"request": [_guard_model_request]})
 
 
 class ModelClient(Protocol):
@@ -26,9 +42,12 @@ class OpenAICompatibleClient:
     def _sdk(self) -> OpenAI:
         if not self.api_key:
             raise RuntimeError("请先保存模型配置")
-        return OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout_seconds, max_retries=0)
+        return OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout_seconds,
+                      max_retries=0, http_client=guarded_http_client(self.timeout_seconds))
 
     def _failure(self, error: Exception) -> RuntimeError:
+        if isinstance(error, BlockedModelHost):
+            return RuntimeError(str(error))
         if isinstance(error, APIStatusError):
             # Redact before truncation so the length cap cannot reveal a key prefix.
             detail = str(error.body).replace(self.api_key, "[REDACTED]")[:500]
@@ -36,6 +55,9 @@ class OpenAICompatibleClient:
         if isinstance(error, APITimeoutError):
             return RuntimeError("模型服务超时，请稍后重试")
         if isinstance(error, APIConnectionError):
+            cause = error.__cause__
+            if isinstance(cause, BlockedModelHost):
+                return RuntimeError(str(cause))
             return RuntimeError("无法连接模型服务，请检查 API 地址和网络")
         return RuntimeError("模型服务返回了无效响应，请检查 API 地址是否指向兼容 API")
 

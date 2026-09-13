@@ -36,9 +36,12 @@ from pydantic import BaseModel
 
 from ..storage import connect
 
-#: The design lifecycle. ``finalized`` means the design service produced a valid
-#: artifact; it still never runs without ``publish_composed``.
-DESIGN_STATUSES = ("draft", "diagnosed", "compiled", "verified", "finalized", "failed")
+#: The design lifecycle (ADR-0017). ``awaiting_confirmation`` is the state after
+#: a candidate is frozen or the user has confirmed it; ``registered`` means an
+#: immutable version exists. ``failed`` is a verification/unsupported stop that a
+#: later ``propose_ir``/``patch_ir`` can repair back to ``draft``.
+DESIGN_STATUSES = ("draft", "diagnosed", "compiled", "verified",
+                   "awaiting_confirmation", "registered", "failed")
 
 #: The fields a caller may change through :meth:`DesignStore.commit`.
 CHANGE_KEYS = ("description", "ir", "diagnosis", "status", "context")
@@ -50,8 +53,13 @@ MAX_DESCRIPTION = 8000
 #: the front, so the *most recent* turns/tool results survive a long session.
 MAX_CONTEXT_ITEMS = 64
 MAX_CONTEXT_CHAT = 60
+MAX_CONTEXT_KEYS = 32
+MAX_CONTEXT_DEPTH = 8
+MAX_CONTEXT_TEXT = 8000
 CONTEXT_LIST_KEYS = ("chat", "observations", "questions", "macros", "requirements")
-CONTEXT_TEXT_KEYS = ("failure", "compiled", "verification", "artifact", "budget", "used")
+#: Host-produced evidence whose full structure is needed to re-validate or replay.
+CONTEXT_EVIDENCE_KEYS = ("verification", "compiled", "artifact", "published",
+                         "confirmation", "verify_requests")
 
 
 def _canonical(payload: Any) -> str:
@@ -68,6 +76,25 @@ def design_ir_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()[:16]
 
 
+def _bounded_value(value: Any, depth: int = 0) -> Any:
+    """A finite copy of an arbitrary JSON value: capped depth, size and width.
+
+    Applied to the free-form parts of the design context and to run observations,
+    so neither can grow without bound or carry an arbitrarily deep structure.
+    Host-produced evidence keys bypass this (see :data:`CONTEXT_EVIDENCE_KEYS`).
+    """
+    if depth >= MAX_CONTEXT_DEPTH:
+        return "<truncated>"
+    if isinstance(value, str):
+        return value[:MAX_CONTEXT_TEXT]
+    if isinstance(value, dict):
+        items = list(value.items())[:MAX_CONTEXT_ITEMS]
+        return {str(key)[:128]: _bounded_value(item, depth + 1) for key, item in items}
+    if isinstance(value, (list, tuple)):
+        return [_bounded_value(item, depth + 1) for item in list(value)[:MAX_CONTEXT_ITEMS]]
+    return value
+
+
 def _bounded_context(context: Any) -> dict[str, Any]:
     """A finite copy of the design context, so a long session cannot grow forever."""
     if not isinstance(context, dict):
@@ -77,11 +104,14 @@ def _bounded_context(context: Any) -> dict[str, Any]:
         if key in CONTEXT_LIST_KEYS:
             items = list(value) if isinstance(value, (list, tuple)) else []
             limit = MAX_CONTEXT_CHAT if key == "chat" else MAX_CONTEXT_ITEMS
-            bounded[key] = deepcopy(items[-limit:])
-        elif key in CONTEXT_TEXT_KEYS:
+            bounded[key] = [_bounded_value(item) for item in items[-limit:]]
+        elif key in CONTEXT_EVIDENCE_KEYS:
             bounded[key] = deepcopy(value)
         else:
-            bounded[key] = deepcopy(value)
+            bounded[key] = _bounded_value(value)
+    if len(bounded) > MAX_CONTEXT_KEYS:
+        # ``{**old, **new}`` keeps insertion order, so the newest keys are at the end.
+        bounded = dict(list(bounded.items())[-MAX_CONTEXT_KEYS:])
     return bounded
 
 

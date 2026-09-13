@@ -53,7 +53,7 @@ def test_a_scripted_turn_reaches_a_finalized_candidate_without_registering(tmp_p
     ])
     result = run_design_loop(service, service.session_id, "做一个三轮比大小", model)
     assert result.kind == "finalized"
-    assert result.status == "finalized"
+    assert result.status == "awaiting_confirmation"
     assert result.artifact and result.artifact["plan_hash"]
     assert result.used["decisions"] == 4
     assert result.session_id == service.session_id
@@ -154,7 +154,7 @@ def test_the_messages_endpoint_runs_a_design_turn_over_http(tmp_path):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["kind"] == "finalized" and body["registered"] is False
-    assert body["session"]["status"] == "finalized"
+    assert body["session"]["status"] == "awaiting_confirmation"
     assert body["session"]["revision"] > 0
 
 

@@ -412,9 +412,24 @@ class SessionStore:
                            Interpreter.restore(data["engine"], core_registry()),
                            data["revision"], data["seed"], data.get("version"),
                            data.get("processed", {}))
-        if session_id in self.sessions:
-            return self.sessions[session_id]
-        raise KeyError("session_not_found")
+        session = self.sessions.get(session_id)
+        if session is None:
+            raise KeyError("session_not_found")
+        return self._copy_session(session)
+
+    @staticmethod
+    def _copy_session(session: Session) -> Session:
+        """A copy of a live session, so a caller cannot mutate stored state.
+
+        The interpreter is rebuilt from its serialized form (sharing the
+        immutable registry) rather than deep-copied, so the tool registry is not
+        duplicated on every read.
+        """
+        return Session(session.id, session.game_id, session.plan,
+                       Interpreter.restore(session.interpreter.serialize(),
+                                           session.interpreter.registry),
+                       session.revision, session.seed, session.version,
+                       deepcopy(session.processed))
 
     def act(self, session_id: str, action: str, revision: int,
             request_id: str | None = None, **payload: Any) -> dict[str, Any]:

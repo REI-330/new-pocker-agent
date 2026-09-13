@@ -14,9 +14,11 @@ is no dispatch on a game name, ``game_id`` or description anywhere in this file.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from ..core.capability import AXIS_BY_ID, capability_matrix
+from ..core.ir import parse_design_ir
 from ..core.registry import core_registry
 
 #: The tools the design model may call. This is a *separate* table from
@@ -140,7 +142,112 @@ class DesignService:
             return _fail("describe_mechanism", f"unknown_operation:{operation}")
         return _ok("describe_mechanism", count=len(matches), matches=matches)
 
+    # --------------------------------------------------------------- rules IR
+    def _tool_propose_ir(self, args: dict[str, Any], request_id: str | None):
+        payload = args.get("ir", args)
+        try:
+            parsed = parse_design_ir(payload)
+        except Exception as error:                          # pydantic ValidationError
+            return _fail("propose_ir", f"invalid_ir:{_first_line(error)}")
+        normalized = parsed.model_dump(mode="json")
+        requirements = _requirement_ids(parsed)
+        session = self.session()
+        updated = self._commit(
+            session, event="propose_ir", request_id=request_id, ir=normalized,
+            status="draft", diagnosis=None,
+            context={"compiled": None, "verification": None, "failure": None,
+                     "requirements": requirements, "macros": []})
+        return _ok("propose_ir", kind=parsed.kind, ir_hash=updated.ir_hash,
+                   revision=updated.revision, requirements=requirements)
+
+    def _tool_patch_ir(self, args: dict[str, Any], request_id: str | None):
+        values = args.get("values", args.get("patch"))
+        if not isinstance(values, dict):
+            return _fail("patch_ir", "values_must_be_object")
+        session = self.session()
+        if not session.ir:
+            return _fail("patch_ir", "propose_ir_first")
+        merged = deepcopy(session.ir)
+        path = args.get("path")
+        try:
+            if path:
+                _merge_at_path(merged, str(path), values)
+            else:
+                merged.update(values)
+            parsed = parse_design_ir(merged)
+        except Exception as error:
+            return _fail("patch_ir", f"invalid_ir:{_first_line(error)}")
+        normalized = parsed.model_dump(mode="json")
+        previous = list(session.context.get("requirements", []))
+        current = _requirement_ids(parsed)
+        allowed = args.get("allow_requirement_removal")
+        removed = [clause for clause in previous if clause not in current]
+        if removed and allowed is not True:
+            still_open = [clause for clause in removed
+                          if not (isinstance(allowed, list) and clause in allowed)]
+            if still_open:
+                return _fail("patch_ir", f"requirement_removed:{still_open[0]}")
+        updated = self._commit(
+            session, event="patch_ir", request_id=request_id, ir=normalized,
+            status="draft", diagnosis=None,
+            context={"compiled": None, "verification": None, "failure": None,
+                     "requirements": current})
+        return _ok("patch_ir", kind=parsed.kind, ir_hash=updated.ir_hash,
+                   revision=updated.revision, requirements=current, removed=removed)
+
     # ------------------------------------------------------------- helpers
     def _axis_status(self, axis_id: str) -> str:
         capability = AXIS_BY_ID.get(axis_id)
         return capability.status if capability is not None else "planned"
+
+
+def _first_line(error: Exception) -> str:
+    return str(error).splitlines()[0] if str(error) else type(error).__name__
+
+
+def _requirement_ids(ir: Any) -> list[str]:
+    clauses = getattr(ir, "requirements", None) or []
+    return [clause.id for clause in clauses]
+
+
+def _merge_at_path(root: dict[str, Any], path: str, values: dict[str, Any]) -> None:
+    """Merge ``values`` into the container named by a dotted IR ``path``.
+
+    Numeric segments index lists, so a caller can patch one action or effect
+    without re-sending the whole rule (``actions.1.guard``). The path must exist;
+    ``patch_ir`` repairs a known IR, it does not invent structure.
+    """
+    parts = [part for part in path.split(".") if part]
+    if not parts:
+        root.update(values)
+        return
+    node: Any = root
+    for part in parts[:-1]:
+        node = _child(node, part)
+    last = parts[-1]
+    if isinstance(node, list):
+        if not last.isdigit() or int(last) >= len(node):
+            raise ValueError(f"patch_path_not_found:{last}")
+        existing = node[int(last)]
+        if isinstance(existing, dict):
+            existing.update(values)
+        else:
+            node[int(last)] = values
+        return
+    if not isinstance(node, dict) or last not in node:
+        raise ValueError(f"patch_path_not_found:{last}")
+    existing = node[last]
+    if isinstance(existing, dict):
+        existing.update(values)
+    else:
+        node[last] = values
+
+
+def _child(node: Any, part: str) -> Any:
+    if isinstance(node, list):
+        if not part.isdigit() or int(part) >= len(node):
+            raise ValueError(f"patch_path_not_found:{part}")
+        return node[int(part)]
+    if not isinstance(node, dict) or part not in node:
+        raise ValueError(f"patch_path_not_found:{part}")
+    return node[part]

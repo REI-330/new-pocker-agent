@@ -41,7 +41,7 @@ jobs:
           tests/test_g2_m3_draw_pass.py tests/test_g2_m3_scenario_b.py
           tests/test_g2_m3_review_fixes.py
           tests/test_m4_design_store.py tests/test_m4_design_api.py
-          tests/test_m4_design_service.py
+          tests/test_m4_design_service.py tests/test_m4_design_rules.py
 
       - name: Architecture invariants (blocking)
         run: uv run --frozen pytest tests/test_architecture_invariants.py -q

@@ -189,7 +189,7 @@ class DesignService:
         try:
             parsed = parse_design_ir(payload)
         except Exception as error:                          # pydantic ValidationError
-            return _fail("propose_ir", f"invalid_ir:{_first_line(error)}")
+            return _fail("propose_ir", f"invalid_ir:{_ir_errors(error)}")
         normalized = parsed.model_dump(mode="json")
         requirements = _requirement_ids(parsed)
         session = self.session()
@@ -217,7 +217,7 @@ class DesignService:
                 merged.update(values)
             parsed = parse_design_ir(merged)
         except Exception as error:
-            return _fail("patch_ir", f"invalid_ir:{_first_line(error)}")
+            return _fail("patch_ir", f"invalid_ir:{_ir_errors(error)}")
         normalized = parsed.model_dump(mode="json")
         previous = list(session.context.get("requirements", []))
         current = _requirement_ids(parsed)
@@ -551,6 +551,27 @@ class DesignService:
 def _title_of(parsed: Any, fallback: str) -> str:
     meta = getattr(parsed, "meta", None)
     return getattr(meta, "title", None) or getattr(parsed, "title", None) or fallback
+
+
+def _ir_errors(error: Exception, limit: int = 8) -> str:
+    """The first field-level validation errors, so the model can repair them.
+
+    A bare "15 validation errors for tagged-union[...]" does not tell the model
+    which field is wrong; a repair loop needs the paths and messages.
+    """
+    errors = getattr(error, "errors", None)
+    if callable(errors):
+        try:
+            items = errors()
+        except Exception:
+            items = []
+        parts = []
+        for item in items[:limit]:
+            loc = ".".join(str(part) for part in item.get("loc", ()) if part != "composed")
+            parts.append(f"{loc or '<root>'}: {item.get('msg', '')}")
+        if parts:
+            return "; ".join(parts)
+    return _first_line(error)
 
 
 def _first_line(error: Exception) -> str:

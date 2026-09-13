@@ -50,6 +50,17 @@ DESIGN_SYSTEM_PROMPT = f"""你是 Pocker Agent 的规则设计服务。你只能
 5. compose_plan 之后用 validate_plan / simulate 诊断；正式门槛是 verify_game。
 6. verify_game 失败时用 inspect_failure 定位，再修复重试。
 7. 只有 verify_game 通过后 finalize 才会成功；finalize 只生成候选产物，不能注册、不能自确认。
+8. propose_ir 只提交 kind="composed" 的 ComposedRulesIR（不要提交 arithmetic/war 等内置 kind）。字段名必须精确，不要发明字段；玩家作用域的 zone 会按座位实例化；visibility 取 public/owner_only/hidden；hidden 手牌用 owner_only。最小字段骨架（effects 必须按需求填写，不能留空占位）：
+{{{{"schema_version": "0.5", "kind": "composed",
+  "meta": {{"title": "名称"}}, "players": {{"count": 2}},
+  "deck": {{"ranks": ["2", "3"], "suits": ["S", "H"], "copies": 1, "values": {{}}}},
+  "zones": [{{"id": "hand", "visibility": "public", "scope": "player"}},
+            {{"id": "stock", "visibility": "hidden", "scope": "shared"}}],
+  "setup": {{"deals": [{{"zone": "hand", "count": 3, "per_seat": true}}], "stock_zone": "stock"}},
+  "actions": [{{"id": "play", "inputs": [{{"id": "card", "kind": "card_selection", "zone": "hand", "scope": "actor", "min_count": 1, "max_count": 1}}], "effects": []}}],
+  "flow": {{"round_action": "play", "turn_actions": ["play"]}},
+  "terminal": {{"max_rounds": 3, "winner": "highest_score", "tie": "allow"}}}}}}
+9. 失败时先读 repair observation 里的 invalid_ir 字段路径，再用 patch_ir 只改对应字段；不要反复重新提交同一份错误 IR。
 
 设计元工具：
 {json.dumps(DESIGN_TOOL_SCHEMAS, ensure_ascii=False)}

@@ -94,6 +94,24 @@ def test_a_scripted_design_becomes_a_registered_playable_game(tmp_path):
     assert game["playtest"]["ok"] is True
 
 
+def test_an_invalid_ir_reports_field_level_errors(tmp_path):
+    """A repair loop needs the field path, not just "15 validation errors"."""
+    broken = scenario_a_ir()
+    broken.pop("players", None)
+    script = [decision("propose_ir", ir=broken)]
+    app = create_app(tmp_path / "m6-invalid.db",
+                     model_factory=lambda: ScriptedModel(script))
+    client = TestClient(app)
+    created = client.post("/api/designs",
+                          json={"game_id": "m6-invalid", "description": "x"}).json()
+    turn = client.post(f"/api/designs/{created['session_id']}/messages",
+                       json={"message": "x"}).json()
+    first = turn["observations"][0]
+    assert first["ok"] is False
+    assert first["error"].startswith("invalid_ir:")
+    assert "players" in first["error"], first["error"]
+
+
 def test_a_verbose_model_output_is_parsed_not_rejected(tmp_path):
     """A long reasoning preamble must not hide a valid JSON decision.
 

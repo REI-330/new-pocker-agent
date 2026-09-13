@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .agent import TOOL_SCHEMAS, DesignStore, run_loop
+from .agent import DESIGN_TOOL_SCHEMAS, TOOL_SCHEMAS, DesignStore, run_loop
 from .configuration import ConfigInput, ConfigStore
 from .core import (
     PLAN_MACROS,
@@ -98,6 +98,7 @@ class DesignUpdateInput(BaseModel):
     ir: dict | None = None
     diagnosis: dict | None = None
     status: str | None = Field(default=None, max_length=16)
+    context: dict | None = None
 
 
 class ChatTurn(BaseModel):
@@ -206,6 +207,8 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
             changes["diagnosis"] = payload.diagnosis
         if payload.status is not None:
             changes["status"] = payload.status
+        if payload.context is not None:
+            changes["context"] = payload.context
         return designs.commit(session_id, payload.expected_revision,
                               request_id=payload.request_id, event=payload.event,
                               **changes).as_dict()
@@ -213,6 +216,11 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
     @app.get("/api/agent/tools")
     def agent_tools():
         return {"meta_tools": TOOL_SCHEMAS, "game_tools": core_registry().export()}
+
+    @app.get("/api/agent/design-tools")
+    def agent_design_tools():
+        """The design-session tool table (separate from the legacy loop's)."""
+        return {"design_tools": DESIGN_TOOL_SCHEMAS}
 
     @app.get("/api/agent/config")
     def get_config():

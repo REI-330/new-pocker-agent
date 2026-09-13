@@ -115,3 +115,12 @@ def test_a_restarted_app_restores_design_sessions(tmp_path):
     assert restored["status"] == "diagnosed"
     assert restored["ir"]["kind"] == "composed"
     assert restored["diagnosis"] == {"ok": True}
+
+
+def test_the_design_tool_table_is_exposed_over_http(tmp_path):
+    client = _client(tmp_path)
+    response = client.get("/api/agent/design-tools")
+    assert response.status_code == 200
+    names = {tool["name"] for tool in response.json()["design_tools"]}
+    assert {"list_capabilities", "describe_mechanism", "propose_ir", "finalize"} <= names
+    assert not any("macro" in name for name in names)

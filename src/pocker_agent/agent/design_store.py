@@ -41,11 +41,17 @@ from ..storage import connect
 DESIGN_STATUSES = ("draft", "diagnosed", "compiled", "verified", "finalized", "failed")
 
 #: The fields a caller may change through :meth:`DesignStore.commit`.
-CHANGE_KEYS = ("description", "ir", "diagnosis", "status")
+CHANGE_KEYS = ("description", "ir", "diagnosis", "status", "context")
 
 MAX_HISTORY = 256
 MAX_PROCESSED_REQUESTS = 16
 MAX_DESCRIPTION = 8000
+#: Bounds on the design ``context`` map. Every list-valued key is trimmed from
+#: the front, so the *most recent* turns/tool results survive a long session.
+MAX_CONTEXT_ITEMS = 64
+MAX_CONTEXT_CHAT = 60
+CONTEXT_LIST_KEYS = ("chat", "observations", "questions", "macros", "requirements")
+CONTEXT_TEXT_KEYS = ("failure", "compiled", "verification", "artifact", "budget", "used")
 
 
 def _canonical(payload: Any) -> str:
@@ -60,6 +66,23 @@ def _fingerprint(payload: Any) -> str:
 def design_ir_hash(payload: dict[str, Any]) -> str:
     """Content identity of a normalised design IR (not a verification credential)."""
     return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()[:16]
+
+
+def _bounded_context(context: Any) -> dict[str, Any]:
+    """A finite copy of the design context, so a long session cannot grow forever."""
+    if not isinstance(context, dict):
+        raise ValueError("design_context_must_be_object")
+    bounded: dict[str, Any] = {}
+    for key, value in context.items():
+        if key in CONTEXT_LIST_KEYS:
+            items = list(value) if isinstance(value, (list, tuple)) else []
+            limit = MAX_CONTEXT_CHAT if key == "chat" else MAX_CONTEXT_ITEMS
+            bounded[key] = deepcopy(items[-limit:])
+        elif key in CONTEXT_TEXT_KEYS:
+            bounded[key] = deepcopy(value)
+        else:
+            bounded[key] = deepcopy(value)
+    return bounded
 
 
 def _normalize_ir(ir: Any) -> dict[str, Any]:
@@ -95,6 +118,7 @@ class DesignSession:
     diagnosis: dict[str, Any] | None = None
     revision: int = 0
     status: str = "draft"
+    context: dict[str, Any] = field(default_factory=dict)
     history: list[dict[str, Any]] = field(default_factory=list)
     processed: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -105,6 +129,7 @@ class DesignSession:
             "description": self.description, "ir": deepcopy(self.ir),
             "ir_hash": self.ir_hash, "diagnosis": deepcopy(self.diagnosis),
             "revision": self.revision, "status": self.status,
+            "context": deepcopy(self.context),
             "history": deepcopy(self.history), "processed": deepcopy(self.processed),
         }
 
@@ -117,7 +142,8 @@ class DesignSession:
     def summary(self) -> dict[str, Any]:
         return {"session_id": self.session_id, "game_id": self.game_id,
                 "revision": self.revision, "status": self.status,
-                "ir_hash": self.ir_hash, "events": len(self.history)}
+                "ir_hash": self.ir_hash, "events": len(self.history),
+                "messages": len(self.context.get("chat", []))}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DesignSession:
@@ -126,6 +152,7 @@ class DesignSession:
             description=data.get("description", ""), ir=deepcopy(data.get("ir")),
             ir_hash=data.get("ir_hash"), diagnosis=deepcopy(data.get("diagnosis")),
             revision=int(data.get("revision", 0)), status=data.get("status", "draft"),
+            context=deepcopy(data.get("context", {})),
             history=deepcopy(data.get("history", [])),
             processed=deepcopy(data.get("processed", {})))
 
@@ -232,6 +259,13 @@ class DesignStore:
             if changes["status"] not in DESIGN_STATUSES:
                 raise ValueError(f"design_status_unknown:{changes['status']}")
             updated.status = changes["status"]
+        if "context" in changes:
+            if not isinstance(changes["context"], dict):
+                raise ValueError("design_context_must_be_object")
+            # A partial update merges at the top level, so a caller can change one
+            # key (``chat``/``compiled``) without re-sending the whole map.
+            merged = {**updated.context, **deepcopy(changes["context"])}
+            updated.context = _bounded_context(merged)
 
         updated.revision = current.revision + 1
         updated.history = [*updated.history, {"seq": len(updated.history), "event": event,

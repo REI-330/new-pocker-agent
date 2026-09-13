@@ -17,7 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .agent import (
     DESIGN_TOOL_SCHEMAS,
@@ -86,11 +86,16 @@ def dist_assets() -> list[str]:
 
 
 class SessionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     game_id: str = Field(min_length=1, max_length=64)
     seed: int | None = None
+    version: int | None = Field(default=None, ge=1)
 
 
 class DesignCreateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     game_id: str = Field(min_length=1, max_length=64)
     description: str = Field(default="", max_length=8000)
 
@@ -102,6 +107,8 @@ class DesignUpdateInput(BaseModel):
     against the stored revision, so the schema refuses it rather than guessing.
     Only the fields present are changed; ``request_id`` makes a retry idempotent.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     expected_revision: int = Field(ge=0)
     request_id: str | None = Field(default=None, max_length=64)
@@ -116,6 +123,8 @@ class DesignUpdateInput(BaseModel):
 class ChatTurn(BaseModel):
     """One prior chat turn, so a design conversation can span requests."""
 
+    model_config = ConfigDict(extra="forbid")
+
     role: Literal["user", "assistant"]
     content: str = Field(max_length=4000)
 
@@ -123,13 +132,18 @@ class ChatTurn(BaseModel):
 class DesignMessageInput(BaseModel):
     """A natural-language design turn against one durable design session."""
 
+    model_config = ConfigDict(extra="forbid")
+
     message: str = Field(max_length=4000)
     expected_revision: int | None = Field(default=None, ge=0)
     max_steps: int | None = Field(default=None, ge=1, le=24)
+    request_id: str | None = Field(default=None, max_length=64)
 
 
 class DesignVerifyInput(BaseModel):
     """Host-run formal verification of the session's current rules (M5-1)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     expected_revision: int | None = Field(default=None, ge=0)
     request_id: str | None = Field(default=None, max_length=64)
@@ -142,6 +156,8 @@ class DesignConfirmInput(BaseModel):
     can propose rules but only a user can confirm them (ADR-0008/0015).
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     ir_hash: str = Field(min_length=1, max_length=64)
     expected_revision: int | None = Field(default=None, ge=0)
     request_id: str | None = Field(default=None, max_length=64)
@@ -150,6 +166,8 @@ class DesignConfirmInput(BaseModel):
 class DesignPublishInput(BaseModel):
     """Register an immutable version once confirmation and evidence bind."""
 
+    model_config = ConfigDict(extra="forbid")
+
     expected_revision: int | None = Field(default=None, ge=0)
     request_id: str | None = Field(default=None, max_length=64)
     title: str | None = Field(default=None, max_length=128)
@@ -157,6 +175,10 @@ class DesignPublishInput(BaseModel):
 
 
 class ActionInput(BaseModel):
+    """The legacy per-action payload (kept as a thin adapter, ADR-0007)."""
+
+    model_config = ConfigDict(extra="forbid")
+
     revision: int = Field(ge=0)
     card_index: int = Field(default=0, ge=0)
     expression: str = Field(default="", max_length=256)
@@ -165,7 +187,24 @@ class ActionInput(BaseModel):
     request_id: str | None = Field(default=None, max_length=64)
 
 
+class ActionRequest(BaseModel):
+    """A generic, descriptor-driven action (M5-2).
+
+    ``input_values`` is keyed by the input ids the plan declares in ``view()``;
+    the store validates them and the interpreter remains the final authority.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    action_id: str = Field(min_length=1, max_length=64)
+    input_values: dict = Field(default_factory=dict)
+    revision: int = Field(ge=0)
+    request_id: str | None = Field(default=None, max_length=64)
+
+
 class LoopInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     message: str = Field(default="", max_length=4000)
     goal: str = Field(default="", max_length=4000)          # kept for older clients
     messages: list[ChatTurn] = Field(default_factory=list, max_length=60)
@@ -191,6 +230,8 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
     app.state.design_store = designs
     app.state.design_run_store = runs
     app.state.config_store = config
+    # A crash can leave a run marked ``running``; reap it now that we are back.
+    runs.recover_stale()
 
     def default_model():
         saved = config.read()
@@ -210,6 +251,8 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
     @app.exception_handler(ValueError)
     async def bad_value(request, error):
         message = str(error)
+        if message.startswith("version_not_found"):
+            return JSONResponse(status_code=404, content={"detail": "游戏版本不存在"})
         conflict = ("stale_revision", "plan_changed", "plan_already_registered",
                     "game_id_reserved", "request_id_conflict",
                     "artifact_version_conflict")
@@ -301,6 +344,13 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
         if not message:
             raise ValueError("请输入玩法描述")
         current = designs.get(session_id)                    # KeyError -> 404
+        if payload.request_id:
+            prior = runs.find_by_request(session_id, payload.request_id)
+            if prior is not None:
+                if prior.status == "running":
+                    raise ValueError("request_id_conflict: 相同 request_id 的请求正在处理中")
+                if prior.response is not None:
+                    return prior.response            # a retried turn replays verbatim
         if (payload.expected_revision is not None
                 and payload.expected_revision != current.revision):
             raise ValueError(
@@ -308,7 +358,7 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
                 f"期望 {payload.expected_revision}）")
         budget = {"max_decisions": payload.max_steps} if payload.max_steps else None
         run = runs.start(session_id, message, revision=current.revision,
-                         budget=normalize_budget(budget))
+                         budget=normalize_budget(budget), request_id=payload.request_id)
         service = DesignService(designs, session_id)
         try:
             result = run_design_loop(service, session_id, message, make_model(), budget,
@@ -319,6 +369,11 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
             runs.finish(run.run_id, status="failed", kind="error",
                         revision=designs.get(session_id).revision, error=str(error))
             raise
+        except Exception as error:                # never leave a run ``running``
+            runs.finish(run.run_id, status="failed", kind="error",
+                        revision=designs.get(session_id).revision,
+                        error=f"turn_failed:{type(error).__name__}")
+            raise
         body = result.as_dict()
         body["registered"] = False
         body["run_id"] = run.run_id
@@ -326,7 +381,7 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
         runs.finish(run.run_id, status=run_status_for(result.kind), kind=result.kind,
                     revision=result.revision, attempts=result.attempts, used=result.used,
                     observations=result.observations, artifact=result.artifact,
-                    verification=result.verification)
+                    verification=result.verification, response=body)
         return body
 
     @app.get("/api/designs/{session_id}/runs")
@@ -410,18 +465,27 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
         parsed = parse_design_ir(current.ir)
         if not isinstance(parsed, ComposedRulesIR):
             raise ValueError("publish_requires_composed_ir: 仅组合规则可注册新版本")
-        version = payload.version or store.next_version(current.game_id)
-        title = payload.title or _design_title(current)
-        artifact = store.verify_and_register(
-            parsed, game_id=current.game_id, version=version, title=title,
-            approval_ir_hash=current.ir_hash)
-        summary = _artifact_summary(artifact.as_dict())
+        # Idempotency across a crash between the artifact write and this commit:
+        # if these exact rules already have a version, reuse it instead of
+        # registering a second one.
+        existing = store.find_artifact_by_ir(current.game_id, current.ir_hash)
+        if existing is not None:
+            summary = _artifact_summary(existing)
+            idempotent = True
+        else:
+            version = payload.version or store.next_version(current.game_id)
+            title = payload.title or _design_title(current)
+            artifact = store.verify_and_register(
+                parsed, game_id=current.game_id, version=version, title=title,
+                approval_ir_hash=current.ir_hash)
+            summary = _artifact_summary(artifact.as_dict())
+            idempotent = False
         updated = designs.commit(session_id, payload.expected_revision
                                  if payload.expected_revision is not None
                                  else current.revision,
                                  request_id=payload.request_id, event="published",
                                  status="finalized", context={"published": summary})
-        return {"published": True, "idempotent": False, "artifact": summary,
+        return {"published": True, "idempotent": idempotent, "artifact": summary,
                 "session": updated.as_dict()}
 
     @app.get("/api/agent/tools")
@@ -501,18 +565,36 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
 
     @app.post("/api/sessions")
     def create_session(payload: SessionInput):
-        return store.snapshot(store.create(payload.game_id, payload.seed))
+        return store.snapshot(store.create(payload.game_id, payload.seed, payload.version))
 
     @app.get("/api/sessions/{session_id}")
     def get_session(session_id: str):
         return store.snapshot(store.get(session_id))
 
+    @app.post("/api/sessions/{session_id}/actions")
+    def act_generic(session_id: str, payload: ActionRequest):
+        """The generic, descriptor-driven action endpoint (M5-2)."""
+        body = store.act_generic(session_id, payload.action_id, payload.input_values,
+                                 payload.revision, request_id=payload.request_id)
+        body["action_id"] = payload.action_id
+        return body
+
+    @app.get("/api/sessions/{session_id}/events")
+    def session_events(session_id: str, after: int = 0, viewer: str = "player-1",
+                       limit: int = 200):
+        """A bounded, cursor-based incremental event read (M5-2)."""
+        return store.events(session_id, after=after, viewer=viewer, limit=limit)
+
     @app.post("/api/sessions/{session_id}/actions/{action}")
     def act(session_id: str, action: str, payload: ActionInput):
-        return store.act(session_id, action, payload.revision,
-                         request_id=payload.request_id,
-                         card_index=payload.card_index, expression=payload.expression,
-                         declared_suit=payload.declared_suit, amount=payload.amount)
+        # ADR-0007 adapter: the legacy field-shaped payload routes through the
+        # same generic service, so there is one implementation behind both paths.
+        input_values = {"card_index": payload.card_index,
+                        "expression": payload.expression,
+                        "declared_suit": payload.declared_suit,
+                        "amount": payload.amount}
+        return store.act_generic(session_id, action, input_values, payload.revision,
+                                 request_id=payload.request_id)
 
     if DIST.is_dir():
         app.mount("/", StaticFiles(directory=DIST, html=True), name="web")

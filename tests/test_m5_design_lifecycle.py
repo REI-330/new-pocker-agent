@@ -152,6 +152,36 @@ def test_publish_is_idempotent_for_the_same_ir(tmp_path):
     assert len(client.get("/api/games/m5-life/versions").json()["versions"]) == 1
 
 
+def test_publish_retry_after_a_session_commit_failure_does_not_duplicate(tmp_path):
+    client = _client(tmp_path)
+    session_id = _design(client)["session_id"]
+    _with_rules(client, session_id)
+    _verified_and_confirmed(client, session_id)
+
+    designs = client.app.state.design_store
+    original = designs.commit
+    pending = {"fail": True}
+
+    def flaky_commit(sid, revision, **kwargs):
+        if pending["fail"] and kwargs.get("event") == "published":
+            pending["fail"] = False
+            raise ValueError("simulated_commit_failure")
+        return original(sid, revision, **kwargs)
+
+    designs.commit = flaky_commit
+    failed = client.post(f"/api/designs/{session_id}/publish", json={})
+    assert failed.status_code == 422
+    assert "simulated_commit_failure" in failed.json()["detail"]
+    # The artifact exists but the session never recorded it; the retry must reuse
+    # that version instead of registering the same rules a second time.
+    designs.commit = original
+    retry = client.post(f"/api/designs/{session_id}/publish", json={})
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["idempotent"] is True
+    versions = client.get("/api/games/m5-life/versions").json()["versions"]
+    assert [item["version"] for item in versions] == [1]
+
+
 def test_publish_requires_a_user_confirmation(tmp_path):
     client = _client(tmp_path)
     session_id = _design(client)["session_id"]

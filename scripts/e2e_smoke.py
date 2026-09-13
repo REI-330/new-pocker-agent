@@ -96,6 +96,29 @@ def main() -> None:
     status, _conflict = request(f"/api/sessions/{session_id}/actions/give_up", "POST", {"revision": 0})
     check("stale_revision_conflict", status == 409, str(status))
 
+    # M5-2: the generic action service and the bounded incremental event read.
+    status, events = request(f"/api/sessions/{session_id}/events?after=0&limit=5")
+    check("generic_events_are_cursor_bounded",
+          status == 200 and events["cursor"] == len(events["events"]) <= 5  # type: ignore[index]
+          and events["total"] >= events["cursor"], str(status))  # type: ignore[index]
+
+    status, second = request("/api/sessions", "POST", {"game_id": "arithmetic24", "seed": 7})
+    answer2 = solve(tuple(second["numbers"]))  # type: ignore[index]
+    generic_body = {"action_id": "submit_expression" if answer2 else "no_solution",
+                    "input_values": {"expression": answer2} if answer2 else {},
+                    "revision": 0}
+    status, generic = request(f"/api/sessions/{second['session_id']}/actions", "POST",  # type: ignore[index]
+                              generic_body)
+    check("generic_action_endpoint",
+          status == 200 and generic["state"]["revision"] == 1, str(status))  # type: ignore[index]
+
+    status, _missing = request("/api/sessions", "POST",
+                               {"game_id": "arithmetic24", "version": 99})
+    check("missing_version_is_404", status == 404, str(status))
+    status, _unknown = request("/api/sessions", "POST",
+                               {"game_id": "arithmetic24", "bogus": 1})
+    check("unknown_request_field_is_422", status == 422, str(status))
+
     status, page = request("/")
     check("frontend_served", status == 200 and "root" in str(page), str(status))
     status, _ = request("/assets/cards/ace_of_spades.svg")

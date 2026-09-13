@@ -46,6 +46,11 @@ from .verify import (
 # How many recent idempotency keys a session remembers. Enough for a retry
 # window without letting a long game grow the persisted payload without bound.
 MAX_PROCESSED_REQUESTS = 16
+#: The largest event window one incremental read returns.
+MAX_EVENT_WINDOW = 500
+#: Event keys that must never cross the API boundary, even if a future tool
+#: starts emitting them: hidden cards, seeds and raw internal state.
+_EVENT_SECRET_KEYS = ("seed", "args", "state", "hand", "cards", "secret", "solution")
 
 
 def _request_fingerprint(action: str, payload: dict[str, Any]) -> str:
@@ -53,6 +58,40 @@ def _request_fingerprint(action: str, payload: dict[str, Any]) -> str:
     canonical = json.dumps({"action": action, "payload": payload}, sort_keys=True,
                            ensure_ascii=False, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _public_event(event: Any) -> dict[str, Any]:
+    """A viewer-safe copy of one interpreter event."""
+    if not isinstance(event, dict):
+        return {"value": deepcopy(event)}
+    return {key: deepcopy(value) for key, value in event.items()
+            if key not in _EVENT_SECRET_KEYS}
+
+
+def _normalize_selection(item: Any, value: Any, options: set[str]) -> Any:
+    """Validate one declared action input and return the interpreter payload value.
+
+    Only ``card_selection`` is a declared input kind today (ADR-0007); an unknown
+    kind is passed through so a future typed input cannot silently be dropped by
+    this layer. The interpreter stays the final authority: an illegal card still
+    rolls the action back.
+    """
+    if getattr(item, "kind", None) != "card_selection":
+        return value
+    if isinstance(value, str):
+        cards = [value]
+    elif isinstance(value, (list, tuple)):
+        cards = [str(entry) for entry in value]
+    else:
+        raise ValueError(f"input_must_be_card_ids:{item.id}")
+    if len(cards) != len(set(cards)):
+        raise ValueError(f"duplicate_cards:{item.id}")
+    if not (item.min_count <= len(cards) <= item.max_count):
+        raise ValueError(f"selection_count_out_of_range:{item.id}")
+    unavailable = [card for card in cards if card not in options]
+    if unavailable:
+        raise ValueError(f"card_not_available:{item.id}:{unavailable[0]}")
+    return cards
 
 
 @dataclass
@@ -279,6 +318,20 @@ class SessionStore:
         versions = [version for (gid, version) in self._stored_artifacts() if gid == game_id]
         return 1 if not versions else max(versions) + 1
 
+    def find_artifact_by_ir(self, game_id: str, ir_hash: str | None) -> dict[str, Any] | None:
+        """The already-registered artifact for an IR hash, if any.
+
+        Publish uses this to stay idempotent even when a crash lands between the
+        artifact write and the design-session write: a retry reuses the existing
+        version instead of registering the same rules again.
+        """
+        if not ir_hash:
+            return None
+        for (gid, _), payload in sorted(self._stored_artifacts().items()):
+            if gid == game_id and payload.get("ir_hash") == ir_hash:
+                return deepcopy(payload)
+        return None
+
     def list_games(self) -> list[dict[str, Any]]:
         games = list_reference_games()
         seen = {game["id"] for game in games}
@@ -376,36 +429,137 @@ class SessionStore:
         with self.lock:
             session = self.get(session_id)
             fingerprint = _request_fingerprint(action, payload)
-            if request_id:
-                entry = session.processed.get(request_id)
-                if entry is not None:
-                    if isinstance(entry, dict) and "response" in entry:
-                        if entry.get("fingerprint") != fingerprint:
-                            raise ValueError(
-                                "request_id_conflict: 相同 request_id 的请求内容不同")
-                        return deepcopy(entry["response"])
-                    return deepcopy(entry)          # legacy bare response shape
+            cached = self._cached_response(session, request_id, fingerprint)
+            if cached is not None:
+                return cached
+            return self._commit_action(session, action, payload, revision, request_id,
+                                       fingerprint)
+
+    def act_generic(self, session_id: str, action_id: str, input_values: dict[str, Any],
+                    revision: int, request_id: str | None = None) -> dict[str, Any]:
+        """A viewer-typed action: validate inputs against the plan, then apply.
+
+        The plan's declared action descriptor decides which inputs exist and what
+        values are legal; the interpreter still owns the final legality check, so
+        a rejected action changes nothing (M5-2). A legacy 0.4 plan with no
+        descriptors accepts the raw payload keys unchanged.
+
+        A retry is answered before the revision is checked: the request is matched
+        by its raw inputs, so a stale retry replays instead of reporting a
+        conflict, while changed inputs under the same key are a conflict.
+        """
+        if not isinstance(input_values, dict):
+            raise ValueError("input_values_must_be_object")
+        with self.lock:
+            session = self.get(session_id)
+            fingerprint = _request_fingerprint(action_id, input_values)
+            cached = self._cached_response(session, request_id, fingerprint)
+            if cached is not None:
+                return cached
             if session.revision != revision:
                 raise ValueError("stale_revision: 牌局已经更新，请刷新牌局")
-            start = len(session.interpreter.events)
-            snapshot = session.interpreter.serialize()
-            try:
-                event = session.interpreter.step(action, **payload)
-                run_bots(session.interpreter)
-            except Exception:
-                session.interpreter = Interpreter.restore(snapshot, session.interpreter.registry)
-                raise
-            session.revision += 1
-            response = {"event": event,
-                        "new_events": session.interpreter.events[start:],
-                        "state": self.snapshot(session)}
-            if request_id:
-                session.processed[request_id] = {"fingerprint": fingerprint,
-                                                 "response": deepcopy(response)}
-                for stale in list(session.processed)[:-MAX_PROCESSED_REQUESTS]:
-                    session.processed.pop(stale, None)
-            self._save(session)
-            return response
+            payload = self._action_payload(session, action_id, input_values)
+            return self._commit_action(session, action_id, payload, revision, request_id,
+                                       fingerprint)
+
+    def _action_payload(self, session: Session, action_id: str,
+                        input_values: dict[str, Any]) -> dict[str, Any]:
+        """Translate viewer inputs into the interpreter's ``step`` payload."""
+        interpreter = session.interpreter
+        if action_id not in interpreter.legal_actions():
+            raise ValueError(f"illegal_action:{action_id}")
+        descriptor = next((item for item in session.plan.actions
+                           if item.id == action_id), None)
+        if descriptor is None:
+            return dict(input_values)
+        declared = {item.id: item for item in descriptor.inputs}
+        unknown = sorted(set(input_values) - set(declared))
+        if unknown:
+            raise ValueError(f"unknown_action_input:{unknown[0]}")
+        options = self._action_options(interpreter, action_id)
+        payload: dict[str, Any] = {}
+        for input_id, item in declared.items():
+            if input_id not in input_values:
+                if item.min_count > 0:
+                    raise ValueError(f"missing_action_input:{input_id}")
+                continue
+            payload[input_id] = _normalize_selection(
+                item, input_values[input_id], options.get(input_id, set()))
+        return payload
+
+    @staticmethod
+    def _action_options(interpreter: Interpreter, action_id: str) -> dict[str, set[str]]:
+        """The viewer-visible card ids per input, scoped to the acting seat."""
+        state = interpreter.state
+        actor = f"player-{int(state.get('current_player', 0)) + 1}"
+        options: dict[str, set[str]] = {}
+        for descriptor in interpreter.action_descriptors(actor):
+            if descriptor["id"] != action_id:
+                continue
+            for item in descriptor["inputs"]:
+                options[item["id"]] = set(item.get("options", []))
+        return options
+
+    def _cached_response(self, session: Session, request_id: str | None,
+                         fingerprint: str) -> dict[str, Any] | None:
+        """A previously committed response for an idempotency key, or ``None``."""
+        if not request_id:
+            return None
+        entry = session.processed.get(request_id)
+        if entry is None:
+            return None
+        if isinstance(entry, dict) and "response" in entry:
+            if entry.get("fingerprint") != fingerprint:
+                raise ValueError("request_id_conflict: 相同 request_id 的请求内容不同")
+            return deepcopy(entry["response"])
+        return deepcopy(entry)              # legacy bare response shape
+
+    def _commit_action(self, session: Session, action: str, payload: dict[str, Any],
+                       revision: int, request_id: str | None,
+                       fingerprint: str) -> dict[str, Any]:
+        """The atomic commit shared by the legacy and generic action paths."""
+        if session.revision != revision:
+            raise ValueError("stale_revision: 牌局已经更新，请刷新牌局")
+        start = len(session.interpreter.events)
+        snapshot = session.interpreter.serialize()
+        try:
+            event = session.interpreter.step(action, **payload)
+            run_bots(session.interpreter)
+        except Exception:
+            session.interpreter = Interpreter.restore(snapshot, session.interpreter.registry)
+            raise
+        session.revision += 1
+        response = {"event": event,
+                    "new_events": session.interpreter.events[start:],
+                    "state": self.snapshot(session)}
+        if request_id:
+            session.processed[request_id] = {"fingerprint": fingerprint,
+                                             "response": deepcopy(response)}
+            for stale in list(session.processed)[:-MAX_PROCESSED_REQUESTS]:
+                session.processed.pop(stale, None)
+        self._save(session)
+        return response
+
+    def events(self, session_id: str, after: int = 0, viewer: str = "player-1",
+               limit: int = 200) -> dict[str, Any]:
+        """Bounded incremental events, from a monotonic cursor (M5-2).
+
+        The cursor is the interpreter's own append-only event index, so a client
+        reconnecting with its last cursor sees exactly what it missed. Sensitive
+        keys are stripped even though today's host events do not carry them.
+        """
+        if after < 0:
+            raise ValueError("after_must_be_non_negative")
+        window_size = max(1, min(int(limit), MAX_EVENT_WINDOW))
+        session = self.get(session_id)
+        all_events = session.interpreter.events
+        total = len(all_events)
+        window = all_events[after:after + window_size]
+        return {"session_id": session.id, "game_id": session.game_id,
+                "revision": session.revision, "version": session.version,
+                "viewer": viewer, "cursor": after + len(window), "total": total,
+                "has_more": after + len(window) < total,
+                "events": [_public_event(event) for event in window]}
 
     def snapshot(self, session: Session, viewer: str = "player-1") -> dict[str, Any]:
         view = session.interpreter.view(viewer)

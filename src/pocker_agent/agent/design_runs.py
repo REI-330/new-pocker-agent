@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -32,6 +33,8 @@ MAX_RUNS_PER_SESSION = 50
 #: How many observations one run keeps; the newest survive.
 MAX_RUN_OBSERVATIONS = 64
 MAX_RUN_MESSAGE = 4000
+#: A run left ``running`` for longer than this was orphaned by a crash/restart.
+DEFAULT_RUN_STALE_SECONDS = 900
 
 #: ``running`` while the turn is in flight, then a terminal state. ``kind`` keeps
 #: the finer design result (question / finalized / unsupported / error / ...).
@@ -69,6 +72,12 @@ class DesignRun:
     artifact: dict[str, Any] | None = None
     verification: dict[str, Any] | None = None
     error: str | None = None
+    #: The client's idempotency key, so a retried turn replays instead of rerunning.
+    request_id: str | None = None
+    #: The exact response body, kept only so a retry can be answered verbatim.
+    response: dict[str, Any] | None = None
+    #: Wall-clock start, used only to reap runs orphaned by a crash (agent layer).
+    started_at: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {"run_id": self.run_id, "session_id": self.session_id, "seq": self.seq,
@@ -77,7 +86,9 @@ class DesignRun:
                 "attempts": self.attempts, "used": deepcopy(self.used),
                 "observations": deepcopy(self.observations),
                 "artifact": deepcopy(self.artifact),
-                "verification": deepcopy(self.verification), "error": self.error}
+                "verification": deepcopy(self.verification), "error": self.error,
+                "request_id": self.request_id, "response": deepcopy(self.response),
+                "started_at": self.started_at}
 
     def summary(self) -> dict[str, Any]:
         """The list view: no observation bodies, only their count."""
@@ -85,7 +96,8 @@ class DesignRun:
                 "message": self.message[:160], "status": self.status, "kind": self.kind,
                 "revision": self.revision, "attempts": self.attempts,
                 "used": deepcopy(self.used), "observations": len(self.observations),
-                "artifact": deepcopy(self.artifact), "error": self.error}
+                "artifact": deepcopy(self.artifact), "error": self.error,
+                "request_id": self.request_id, "started_at": self.started_at}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DesignRun:
@@ -99,7 +111,9 @@ class DesignRun:
                    observations=deepcopy(data.get("observations", [])),
                    artifact=deepcopy(data.get("artifact")),
                    verification=deepcopy(data.get("verification")),
-                   error=data.get("error"))
+                   error=data.get("error"), request_id=data.get("request_id"),
+                   response=deepcopy(data.get("response")),
+                   started_at=float(data.get("started_at", 0.0)))
 
 
 class DesignRunStore:
@@ -152,7 +166,8 @@ class DesignRunStore:
 
     # ------------------------------------------------------------ lifecycle
     def start(self, session_id: str, message: str, *, revision: int = 0,
-              budget: dict[str, Any] | None = None) -> DesignRun:
+              budget: dict[str, Any] | None = None,
+              request_id: str | None = None) -> DesignRun:
         """Open a run before the model is asked anything, so it is pollable."""
         with self.lock:
             if self.path:
@@ -160,13 +175,15 @@ class DesignRunStore:
                     seq = self._next_seq(db)
                     run = DesignRun(uuid.uuid4().hex, session_id, seq,
                                     str(message)[:MAX_RUN_MESSAGE], revision=revision,
-                                    budget=deepcopy(budget or {}))
+                                    budget=deepcopy(budget or {}), request_id=request_id,
+                                    started_at=time.time())
                     self._write(db, run)
                     self._prune(db, session_id)
             else:
                 run = DesignRun(uuid.uuid4().hex, session_id, self._next_seq_mem(),
                                 str(message)[:MAX_RUN_MESSAGE], revision=revision,
-                                budget=deepcopy(budget or {}))
+                                budget=deepcopy(budget or {}), request_id=request_id,
+                                started_at=time.time())
                 self.runs[run.run_id] = deepcopy(run)
                 self._prune_mem(session_id)
             return deepcopy(run)
@@ -177,7 +194,8 @@ class DesignRunStore:
                observations: list[dict[str, Any]] | None = None,
                artifact: dict[str, Any] | None = None,
                verification: dict[str, Any] | None = None,
-               error: str | None = None) -> DesignRun:
+               error: str | None = None,
+               response: dict[str, Any] | None = None) -> DesignRun:
         """Close a run with its terminal state and bounded evidence."""
         if status not in RUN_STATUSES:
             raise ValueError(f"design_run_status_unknown:{status}")
@@ -196,6 +214,8 @@ class DesignRunStore:
             run.artifact = deepcopy(artifact)
             run.verification = deepcopy(verification)
             run.error = error
+            if response is not None:
+                run.response = deepcopy(response)
             if self.path:
                 with connect(self.path) as db:
                     self._write(db, run)
@@ -237,3 +257,45 @@ class DesignRunStore:
                 return DesignRun.from_dict(json.loads(row[0])) if row else None
             mine = [run for run in self.runs.values() if run.session_id == session_id]
             return deepcopy(max(mine, key=lambda run: run.seq)) if mine else None
+
+    def find_by_request(self, session_id: str, request_id: str) -> DesignRun | None:
+        """The newest run that claims a client idempotency key, if any.
+
+        Runs are bounded per session, so a linear scan of the newest first is
+        both cheap and enough for the retry window the key exists to cover.
+        """
+        with self.lock:
+            for summary in self.list_runs(session_id, limit=MAX_RUNS_PER_SESSION):
+                if summary.get("request_id") == request_id:
+                    return self.get(summary["run_id"])
+            return None
+
+    # ------------------------------------------------------------ recovery
+    def _all_runs(self) -> list[DesignRun]:
+        with self.lock:
+            if self.path:
+                with connect(self.path) as db:
+                    rows = db.execute("SELECT payload FROM core_design_runs").fetchall()
+                return [DesignRun.from_dict(json.loads(row[0])) for row in rows]
+            return [deepcopy(run) for run in self.runs.values()]
+
+    def recover_stale(self, max_age_seconds: float = DEFAULT_RUN_STALE_SECONDS,
+                      now: float | None = None) -> int:
+        """Mark runs orphaned by a crash/restart as failed instead of ``running``.
+
+        A run is opened before the model is called, so a process that dies then
+        leaves a run no client can ever finish. Reaping it at startup keeps
+        polling honest. The clock is used only here, in the agent layer.
+        """
+        now = time.time() if now is None else float(now)
+        reaped = 0
+        for run in self._all_runs():
+            if run.status != "running":
+                continue
+            started = run.started_at or 0.0
+            if started and now - started <= float(max_age_seconds):
+                continue
+            self.finish(run.run_id, status="failed", kind="error",
+                        error="host_restarted: 运行被中断，请重新发起")
+            reaped += 1
+        return reaped

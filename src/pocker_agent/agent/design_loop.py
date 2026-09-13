@@ -147,27 +147,36 @@ def run_design_loop(service: DesignService, session_id: str, message: str, model
         used["output_chars"] += len(text)
         used["tokens"] += max(1, len(text) // 4)
 
-        if len(text) > limits["max_output_chars"]:
+        # A verbose model often wraps its decision in reasoning prose. Parse
+        # first: a valid JSON decision is accepted up to a hard cap, so the size
+        # gate only rejects output that carries no usable decision. (The first
+        # M6 blind run hit exactly this: output_too_long before any parse
+        # attempt, which is a host defect, not a model failure.)
+        hard_limit = int(limits["max_output_chars"]) * 4
+        parse_error: RuntimeError | None = None
+        decision = None
+        if len(text) <= hard_limit:
+            try:
+                decision = parse_decision(text)
+            except RuntimeError as error:
+                parse_error = error
+
+        if decision is None:
             used["repairs"] += 1
-            observation = {"ok": False, "tool": None, "error": "output_too_long"}
+            if len(text) > limits["max_output_chars"]:
+                error_code = "output_too_long"
+            else:
+                error_code = str(parse_error or "model_output_invalid_json")
+            observation = {"ok": False, "tool": None, "error": error_code}
             observations.append({"step": used["decisions"], **observation})
             messages.append({"role": "assistant",
                              "content": text[: int(limits["max_output_chars"])]})
             messages.append({"role": "user", "content": observation_text(observation)})
             if used["repairs"] > limits["max_repairs"]:
-                return finish("error", "repair_budget_exhausted: 输出过长次数过多")
-            continue
-
-        try:
-            decision = parse_decision(text)
-        except RuntimeError as error:
-            used["repairs"] += 1
-            observation = {"ok": False, "tool": None, "error": str(error)}
-            observations.append({"step": used["decisions"], **observation})
-            messages.append({"role": "assistant", "content": text})
-            messages.append({"role": "user", "content": observation_text(observation)})
-            if used["repairs"] > limits["max_repairs"]:
-                return finish("error", "repair_budget_exhausted: 无法解析模型输出")
+                message = ("repair_budget_exhausted: 输出过长次数过多"
+                           if error_code == "output_too_long"
+                           else "repair_budget_exhausted: 无法解析模型输出")
+                return finish("error", message)
             continue
 
         tool = decision.get("tool")

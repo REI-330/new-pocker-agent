@@ -108,8 +108,17 @@ def classify(case: dict, record: dict) -> str:
         return "correctly_unsupported" if outcome == "unsupported" else "interpretation"
     if outcome == "success":
         return "success"
-    return {"unsupported": "missing_feature", "question": "interpretation",
-            "budget_exhausted": "generation_budget", "error": "composition",
+    if outcome == "unsupported":
+        return "missing_feature"
+    if outcome == "error":
+        # Repair exhaustion and a transport failure are model-side output/budget
+        # problems, not composition failures, and must be counted as such.
+        message = str(record.get("message") or "")
+        if "repair_budget_exhausted" in message or "model_failed" in message:
+            return "generation_budget"
+        return "composition"
+    return {"question": "interpretation",
+            "budget_exhausted": "generation_budget",
             "verify_failed": "validation", "confirm_failed": "validation",
             "publish_failed": "validation", "unfinished": "UI", "play_rejected": "UI",
             "session_failed": "UI"}.get(outcome, "composition")
@@ -131,9 +140,20 @@ def run_case(client, case: dict, max_turns: int) -> dict:
     session_id = created.json()["session_id"]
     revision = created.json()["revision"]
     last = None
+    nudged = False
     for _ in range(max_turns):
+        if last is None:
+            message = case["goal"]
+        elif last["kind"] == "question" and not nudged:
+            # One automatic clarification: the blind case already contains the
+            # full requirement, so tell the model to stop asking and finalize.
+            nudged = True
+            message = ("上述描述已包含全部规则，信息足够；请不要继续提问，"
+                       "直接按描述提交最终规则并完成正式验证。")
+        else:
+            break
         response = client.post(f"/api/designs/{session_id}/messages",
-                               json={"message": case["goal"] if last is None else "继续",
+                               json={"message": message,
                                      "expected_revision": revision})
         if response.status_code != 200:
             record.update({"outcome": "error", "detail": response.text[:200]})
@@ -143,8 +163,9 @@ def run_case(client, case: dict, max_turns: int) -> dict:
         record["kinds"].append(last["kind"])
         record["attempts"] += int(last.get("attempts") or 0)
         record["used"] = last.get("used") or {}
+        record["message"] = last.get("message")
         revision = last["revision"]
-        if last["kind"] in ("finalized", "unsupported", "error", "budget_exhausted", "question"):
+        if last["kind"] in ("finalized", "unsupported", "error", "budget_exhausted"):
             break
     if last is None:
         record["outcome"] = "generation_budget"
@@ -248,17 +269,22 @@ def main() -> int:
 
         from pocker_agent.app import create_app
         for case in cases:
+            print(f"[m6] {case['id']} …", flush=True)
             with tempfile.TemporaryDirectory() as folder:
                 app = create_app(Path(folder) / "m6.db",
                                  model_factory=lambda case=case: ScriptedModel(scripted_responses(case)))
                 records.append(run_case(TestClient(app), case, args.max_turns))
+            print(f"[m6] {case['id']} -> {records[-1]['outcome']}", flush=True)
         model_info = {"provider": "scripted", "model": "ScriptedModel"}
     else:
         import httpx
         with httpx.Client(base_url=args.base_url, timeout=300) as client:
             model_info = client.get("/api/agent/config").json()
+            print(f"[m6] model {model_info.get('model')} @ {model_info.get('base_url')}", flush=True)
             for case in cases:
+                print(f"[m6] {case['id']} …", flush=True)
                 records.append(run_case(client, case, args.max_turns))
+                print(f"[m6] {case['id']} -> {records[-1]['outcome']}", flush=True)
 
     for case, record in zip(cases, records):
         record["failure_class"] = classify(case, record)

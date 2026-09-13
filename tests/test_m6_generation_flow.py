@@ -92,3 +92,25 @@ def test_a_scripted_design_becomes_a_registered_playable_game(tmp_path):
     assert game["version"] == version
     assert game["playtest"]["evidence"] == "verification"
     assert game["playtest"]["ok"] is True
+
+
+def test_a_verbose_model_output_is_parsed_not_rejected(tmp_path):
+    """A long reasoning preamble must not hide a valid JSON decision.
+
+    The first M6 blind run failed with ``output_too_long`` on a model that wraps
+    its decision in prose; that was a host defect (a size gate before parsing),
+    so a decision inside a long message is now accepted up to a hard cap.
+    """
+    preamble = "推理过程：" + "逐步分析规则与机制。" * 1200          # > 8000 chars
+    script = [preamble + "\n" + decision("propose_ir", ir=scenario_a_ir()),
+              decision("compose_plan"), decision("verify_game"), decision("finalize")]
+    app = create_app(tmp_path / "m6-verbose.db",
+                     model_factory=lambda: ScriptedModel(script))
+    client = TestClient(app)
+    created = client.post("/api/designs",
+                          json={"game_id": "m6-verbose", "description": "公开比较"}).json()
+    turn = client.post(f"/api/designs/{created['session_id']}/messages",
+                       json={"message": "按描述设计"}).json()
+    assert turn["kind"] == "finalized", turn
+    assert turn["observations"][0]["ok"] is True
+    assert turn["used"]["repairs"] == 0, turn["used"]

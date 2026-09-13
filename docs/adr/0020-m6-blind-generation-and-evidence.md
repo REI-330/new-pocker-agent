@@ -41,7 +41,7 @@ G2 的主张是：**不修改任何专属代码**，用真实模型把自然语�
 
 `scripts/m6_generation_acceptance.py` 对每个用例走完整链路：
 
-1. `POST /api/designs` 建会话，`POST /messages` 让真实模型驱动到终态（`finalized/unsupported/error/budget_exhausted`），超过预算或轮数即停；
+1. `POST /api/designs` 建会话，`POST /messages` 让真实模型驱动到终态（`finalized/unsupported/error/budget_exhausted`），超过预算或轮数即停；模型只提问时允许**一次**自动澄清（"信息已足够，请直接完成"），仍只提问则记 `interpretation`；
 2. `finalized` → `verify`（宿主门槛）→ 用户 `confirm` → `publish` 注册不可变版本；
 3. 用注册版本开局，走通用 `POST /actions` 打到 `finished`，并断言不少于独立预期的行动数；
 4. 记录 provider/model、提示指纹、预算与 `used`（decisions/tokens/seconds）、artifact/IR 哈希、`verification_id`、失败分类。

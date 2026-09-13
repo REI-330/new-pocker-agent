@@ -25,7 +25,8 @@ def guarded_http_client(timeout: float) -> httpx.Client:
 
 
 class ModelClient(Protocol):
-    def complete(self, messages: list[dict[str, str]], *, response_format: dict[str, Any] | None = None) -> str: ...
+    def complete(self, messages: list[dict[str, str]], *, response_format: dict[str, Any] | None = None,
+                 timeout_seconds: float | None = None) -> str: ...
 
 
 @dataclass
@@ -39,11 +40,12 @@ class OpenAICompatibleClient:
     def from_config(cls, config: ModelConfig):
         return cls(config.api_key, config.model, config.base_url)
 
-    def _sdk(self) -> OpenAI:
+    def _sdk(self, timeout_seconds: float | None = None) -> OpenAI:
         if not self.api_key:
             raise RuntimeError("请先保存模型配置")
-        return OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout_seconds,
-                      max_retries=0, http_client=guarded_http_client(self.timeout_seconds))
+        timeout = self.timeout_seconds if timeout_seconds is None else max(0.1, float(timeout_seconds))
+        return OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=timeout,
+                      max_retries=0, http_client=guarded_http_client(timeout))
 
     def _failure(self, error: Exception) -> RuntimeError:
         if isinstance(error, BlockedModelHost):
@@ -61,10 +63,14 @@ class OpenAICompatibleClient:
             return RuntimeError("无法连接模型服务，请检查 API 地址和网络")
         return RuntimeError("模型服务返回了无效响应，请检查 API 地址是否指向兼容 API")
 
-    def complete(self, messages: list[dict[str, str]], *, response_format: dict[str, Any] | None = None) -> str:
+    def complete(self, messages: list[dict[str, str]], *, response_format: dict[str, Any] | None = None,
+                 timeout_seconds: float | None = None) -> str:
         # SDK owns HTTP/authentication/error parsing. Omit temperature for models that reject it.
         try:
-            with self._sdk() as sdk:
+            # Keep the no-argument path compatible with injected SDK fakes used
+            # by callers and tests; production clients receive the per-call cap.
+            sdk_factory = self._sdk if timeout_seconds is None else lambda: self._sdk(timeout_seconds)
+            with sdk_factory() as sdk:
                 result = sdk.chat.completions.create(
                     model=self.model, messages=messages, stream=False,
                     **({"response_format": response_format} if response_format else {}),

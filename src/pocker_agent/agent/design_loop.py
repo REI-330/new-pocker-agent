@@ -18,7 +18,10 @@ service, whose ``finalize`` produces a candidate artifact (ADR-0008).
 """
 from __future__ import annotations
 
+import inspect
 import json
+import queue
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -102,6 +105,62 @@ def _usage() -> dict[str, Any]:
             "output_chars": 0}
 
 
+class ModelDeadlineExceeded(TimeoutError):
+    """The model call did not return before the host-owned turn deadline."""
+
+
+def _model_accepts_timeout(model: Any) -> bool:
+    """Keep compatibility with injected test models while enforcing a host cap."""
+    try:
+        signature = inspect.signature(model.complete)
+    except (TypeError, ValueError):
+        return False
+    parameters = signature.parameters.values()
+    return ("timeout_seconds" in signature.parameters
+            or any(parameter.kind is inspect.Parameter.VAR_KEYWORD
+                   for parameter in parameters))
+
+
+def _complete_with_deadline(model: Any, messages: list[dict[str, str]], remaining: float) -> str:
+    """Call a model with a hard host deadline and discard late results.
+
+    OpenAI-compatible clients receive the remaining timeout so their socket is
+    bounded too. Legacy/injected models that do not accept the keyword run in a
+    daemon thread; once the deadline expires their return value is never observed
+    and therefore cannot dispatch a late tool call or mutate the design store.
+    """
+    if remaining <= 0:
+        raise ModelDeadlineExceeded("model_deadline_exceeded")
+    result: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
+    accepts_timeout = _model_accepts_timeout(model)
+
+    def invoke() -> None:
+        try:
+            if accepts_timeout:
+                value = model.complete(messages, timeout_seconds=max(0.1, remaining))
+            else:
+                value = model.complete(messages)
+            result.put_nowait(("ok", value))
+        except Exception as error:  # propagated on the caller thread
+            try:
+                result.put_nowait(("error", error))
+            except queue.Full:
+                pass
+
+    worker = threading.Thread(target=invoke, name="pocker-model-call", daemon=True)
+    worker.start()
+    worker.join(remaining)
+    if worker.is_alive():
+        raise ModelDeadlineExceeded("model_deadline_exceeded")
+    try:
+        kind, value = result.get_nowait()
+    except queue.Empty as error:  # defensive: a completed thread must report
+        raise RuntimeError("model_call_no_result") from error
+    if kind == "error":
+        raise value
+    return value
+
+
 def run_design_loop(service: DesignService, session_id: str, message: str, model,
                     budget: dict[str, Any] | None = None, *,
                     history: Any = None, expected_revision: int | None = None) -> DesignResult:
@@ -117,6 +176,7 @@ def run_design_loop(service: DesignService, session_id: str, message: str, model
     freshly-read one.
     """
     limits = normalize_budget(budget)
+    started = time.monotonic()
     session = service.session()
     prior = history if history is not None else session.context.get("chat")
     chat: list[dict[str, str]] = [*clean_history(prior),
@@ -127,7 +187,6 @@ def run_design_loop(service: DesignService, session_id: str, message: str, model
                                       *chat]
     observations: list[dict[str, Any]] = []
     used = _usage()
-    started = time.monotonic()
 
     def finish(kind: str, text: str, *, artifact: dict[str, Any] | None = None,
                verification: dict[str, Any] | None = None,
@@ -148,8 +207,11 @@ def run_design_loop(service: DesignService, session_id: str, message: str, model
             return finish("budget_exhausted", "budget_exhausted: 达到墙钟时间上限")
         if used["tokens"] > limits["max_tokens"]:
             return finish("budget_exhausted", "budget_exhausted: 达到 token 上限")
+        remaining = float(limits["max_seconds"]) - (time.monotonic() - started)
         try:
-            raw = model.complete(messages)
+            raw = _complete_with_deadline(model, messages, remaining)
+        except ModelDeadlineExceeded:
+            return finish("budget_exhausted", "budget_exhausted: 模型调用超过墙钟时间上限")
         except Exception as error:                          # transport/credential
             return finish("error", f"model_failed:{error}")
 

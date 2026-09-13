@@ -7,6 +7,7 @@ stale revision) stop the turn. A finalized turn still produces only a candidate.
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -107,6 +108,28 @@ def test_a_host_failure_stops_the_turn(tmp_path):
     result = run_design_loop(service, service.session_id, "设计", Broken())
     assert result.kind == "error"
     assert result.message.startswith("model_failed")
+
+
+def test_a_blocking_model_is_cut_off_at_the_host_deadline(tmp_path):
+    service = _service(tmp_path)
+    finished = False
+
+    class SlowModel:
+        def complete(self, messages):
+            nonlocal finished
+            time.sleep(0.15)
+            finished = True
+            return _decision("propose_ir", ir=scenario_a_ir())
+
+    result = run_design_loop(service, service.session_id, "设计", SlowModel(),
+                             {"max_seconds": 0.02})
+    assert result.kind == "budget_exhausted"
+    assert "墙钟" in result.message
+    assert service.session().ir is None
+    # The late worker may finish, but its response is never dispatched.
+    time.sleep(0.17)
+    assert finished is True
+    assert service.session().ir is None
 
 
 def test_the_decision_budget_stops_the_turn(tmp_path):

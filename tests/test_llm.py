@@ -1,7 +1,9 @@
 import json
+
 import httpx2
 import pytest
 from openai import OpenAI
+
 from pocker_agent.llm import OpenAICompatibleClient
 
 
@@ -23,6 +25,23 @@ def test_sdk_sends_selected_model_bearer_and_json_contract(monkeypatch):
         return httpx2.Response(200,json={"choices":[{"message":{"content":'{"ok":true}'}}]})
     client = client_for(monkeypatch, handler)
     assert client.complete([{"role":"user","content":"json please"}],response_format={"type":"json_object"}) == '{"ok":true}'
+
+
+def test_completion_passes_the_remaining_timeout_to_the_sdk(monkeypatch):
+    seen = {}
+    adapter = OpenAICompatibleClient("test-key", "custom-model", "https://relay.test/v1")
+
+    def sdk(timeout_seconds=None):
+        seen["timeout"] = timeout_seconds
+        return OpenAI(api_key=adapter.api_key, base_url=adapter.base_url,
+                      max_retries=0, http_client=httpx2.Client(
+                          transport=httpx2.MockTransport(
+                              lambda request: httpx2.Response(
+                                  200, json={"choices": [{"message": {"content": "ok"}}]}))))
+
+    monkeypatch.setattr(adapter, "_sdk", sdk)
+    assert adapter.complete([{"role": "user", "content": "hello"}], timeout_seconds=0.37) == "ok"
+    assert seen["timeout"] == 0.37
 
 
 @pytest.mark.parametrize("body",[

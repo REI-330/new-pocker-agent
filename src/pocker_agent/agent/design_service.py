@@ -109,14 +109,21 @@ class DesignService:
         return self.store.get(self.session_id)
 
     def _commit(self, session, *, event: str, request_id: str | None = None,
-                **changes: Any):
-        return self.store.commit(self.session_id, session.revision,
+                expected_revision: int | None = None, **changes: Any):
+        revision = session.revision if expected_revision is None else expected_revision
+        return self.store.commit(self.session_id, revision,
                                  request_id=request_id, event=event, **changes)
 
     def record(self, *, event: str = "recorded", request_id: str | None = None,
-               **changes: Any):
-        """Persist non-tool state (chat, budget usage) through the same lock."""
-        return self._commit(self.session(), event=event, request_id=request_id, **changes)
+               expected_revision: int | None = None, **changes: Any):
+        """Persist non-tool state (chat, budget usage) through the same lock.
+
+        ``expected_revision`` lets a caller claim the turn at the revision it
+        read; a concurrent writer then yields ``stale_revision`` instead of the
+        turn silently rebasing onto newer state.
+        """
+        return self._commit(self.session(), event=event, request_id=request_id,
+                            expected_revision=expected_revision, **changes)
 
     def dispatch(self, tool: str, args: dict[str, Any] | None = None, *,
                  request_id: str | None = None) -> dict[str, Any]:

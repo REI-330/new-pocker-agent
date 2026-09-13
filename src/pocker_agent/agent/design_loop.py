@@ -36,8 +36,9 @@ DEFAULT_DESIGN_BUDGET: dict[str, Any] = {
     "max_output_chars": 8000,
 }
 
-#: Failures the model can see and repair, versus host errors that end the turn.
-HOST_ERROR_PREFIXES = ("tool_crashed", "stale_revision", "request_id_conflict")
+#: A crashed host tool ends the turn; a concurrent-writer conflict is raised as a
+#: ``stale_revision``/``request_id_conflict`` ValueError so the API maps it to 409.
+HOST_ERROR_PREFIXES = ("tool_crashed",)
 
 DESIGN_SYSTEM_PROMPT = f"""你是 Pocker Agent 的规则设计服务。你只能调用下面的设计元工具；不要执行游戏、不要写代码、不要返回解释性文字。
 
@@ -92,18 +93,25 @@ def _usage() -> dict[str, Any]:
 
 def run_design_loop(service: DesignService, session_id: str, message: str, model,
                     budget: dict[str, Any] | None = None, *,
-                    history: Any = None) -> DesignResult:
+                    history: Any = None, expected_revision: int | None = None) -> DesignResult:
     """One bounded design turn, persisted through ``service``.
 
     ``history`` overrides the stored chat (used when a caller supplies the thread
     explicitly); otherwise the session's own chat is the source of truth.
+
+    ``expected_revision`` claims the turn at the revision the caller read. The
+    first write commits at that revision, so a concurrent update fails with
+    ``stale_revision`` (mapped to HTTP 409) instead of the turn silently rebasing
+    onto newer state. Once the turn has claimed its revision, later writes use the
+    freshly-read one.
     """
     limits = normalize_budget(budget)
     session = service.session()
     prior = history if history is not None else session.context.get("chat")
     chat: list[dict[str, str]] = [*clean_history(prior),
                                   {"role": "user", "content": message}]
-    session = service.record(event="user_turn", context={"chat": chat, "budget": limits})
+    session = service.record(event="user_turn", expected_revision=expected_revision,
+                             context={"chat": chat, "budget": limits})
     messages: list[dict[str, str]] = [{"role": "system", "content": DESIGN_SYSTEM_PROMPT},
                                       *chat]
     observations: list[dict[str, Any]] = []
@@ -174,6 +182,10 @@ def run_design_loop(service: DesignService, session_id: str, message: str, model
         messages.append({"role": "user", "content": observation_text(observation)})
 
         error = str(observation.get("error") or "")
+        if error.startswith(("stale_revision", "request_id_conflict")):
+            # A concurrent writer owns the session; surface it as a conflict
+            # (HTTP 409) rather than a turn result the model could "repair".
+            raise ValueError(error)
         if error.startswith(HOST_ERROR_PREFIXES):
             return finish("error", f"host_error:{error}")
 

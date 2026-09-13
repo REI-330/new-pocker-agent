@@ -208,3 +208,49 @@ def test_honest_exits_are_distinct_kinds(tmp_path, tool):
     model = ScriptedModel([_decision(tool, **request)])
     result = run_design_loop(service, service.session_id, "设计", model)
     assert result.kind == ("question" if tool == "ask_user" else "unsupported")
+
+
+def test_the_loop_claims_the_callers_revision_before_asking_the_model(tmp_path):
+    service = _service(tmp_path)
+    service.record(event="other_writer")             # revision 0 -> 1
+    model = ScriptedModel([_decision("ask_user", question="q")])
+    with pytest.raises(ValueError, match="stale_revision"):
+        run_design_loop(service, service.session_id, "设计", model,
+                        expected_revision=0)
+    assert model.calls == 0                            # the conflict is not the model's
+
+
+def test_a_concurrent_update_during_the_request_is_a_409_not_a_500(tmp_path):
+    database = tmp_path / "api.db"
+    holder: dict[str, str] = {}
+
+    def model_factory():
+        # A second writer bumps the session in the window between the endpoint's
+        # revision check and the loop's first commit.
+        app.state.design_store.commit(holder["sid"], 0, status="diagnosed")
+        return ScriptedModel([_decision("ask_user", question="q")])
+
+    app = create_app(database, model_factory=model_factory)
+    client = TestClient(app)
+    created = client.post("/api/designs", json={"game_id": "race"}).json()
+    holder["sid"] = created["session_id"]
+    response = client.post(f"/api/designs/{created['session_id']}/messages",
+                           json={"message": "设计", "expected_revision": 0})
+    assert response.status_code == 409, response.text
+    assert "stale_revision" in response.json()["detail"]
+    # The concurrent write is preserved and the racing turn is not applied.
+    stored = client.get(f"/api/designs/{created['session_id']}").json()
+    assert stored["revision"] == 1 and stored["status"] == "diagnosed"
+    assert stored["context"].get("chat") is None
+
+
+def test_a_tool_level_conflict_is_raised_not_returned_as_a_result(tmp_path):
+    service = _service(tmp_path)
+
+    def racing_dispatch(tool, args=None, **kwargs):
+        return {"ok": False, "tool": tool, "error": "stale_revision: 并发写入"}
+
+    service.dispatch = racing_dispatch
+    model = ScriptedModel([_decision("list_capabilities")])
+    with pytest.raises(ValueError, match="stale_revision"):
+        run_design_loop(service, service.session_id, "设计", model)

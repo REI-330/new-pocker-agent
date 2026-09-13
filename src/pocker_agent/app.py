@@ -238,7 +238,8 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
                 f"期望 {payload.expected_revision}）")
         service = DesignService(designs, session_id)
         budget = {"max_decisions": payload.max_steps} if payload.max_steps else None
-        result = run_design_loop(service, session_id, message, make_model(), budget)
+        result = run_design_loop(service, session_id, message, make_model(), budget,
+                                 expected_revision=payload.expected_revision)
         body = result.as_dict()
         body["registered"] = False
         body["session"] = designs.get(session_id).as_dict()
@@ -291,7 +292,8 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
                     f"期望 {payload.expected_revision}）")
             service = DesignService(designs, design_id)
             result = run_design_loop(service, design_id, goal, make_model(),
-                                     {"max_decisions": payload.max_steps})
+                                     {"max_decisions": payload.max_steps},
+                                     expected_revision=payload.expected_revision)
             body = result.as_dict()
             body["registered"] = False
             return body

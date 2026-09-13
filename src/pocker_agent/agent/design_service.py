@@ -32,6 +32,12 @@ from ..core.rules import (
     compile_composed,
     resolve_composition,
 )
+from ..core.verify import (
+    VERIFICATION_SEEDS,
+    VERIFICATION_STRATEGIES,
+    verify_composed,
+    verify_plan,
+)
 from ..core.verify.trace import summarize
 
 #: The tools the design model may call. This is a *separate* table from
@@ -86,10 +92,16 @@ class DesignService:
     yields ``stale_revision`` instead of a silent overwrite.
     """
 
-    def __init__(self, store: Any, session_id: str, *, registry: Any = None) -> None:
+    def __init__(self, store: Any, session_id: str, *, registry: Any = None,
+                 seeds: Any = None, strategies: Any = None) -> None:
         self.store = store
         self.session_id = session_id
         self.registry = registry or core_registry()
+        # The *host* chooses the formal gate's policies and seeds; a caller may
+        # inject them for tests but the model never supplies them (ADR-0008).
+        self.seeds = tuple(seeds) if seeds is not None else VERIFICATION_SEEDS
+        self.strategies = (tuple(strategies) if strategies is not None
+                           else VERIFICATION_STRATEGIES)
 
     # ------------------------------------------------------------- plumbing
     def session(self):
@@ -323,6 +335,94 @@ class DesignService:
             return _fail("simulate", _first_line(error))
         return _ok("simulate", seed=seed, steps=steps, events=len(interpreter.events),
                    game_kind=plan.game_kind, state=summarize(interpreter.state))
+
+    # -------------------------------------------------------------- verify
+    def _tool_verify_game(self, args: dict[str, Any], request_id: str | None):
+        session = self.session()
+        if not session.ir:
+            return _fail("verify_game", "propose_ir_first")
+        try:
+            parsed, plan, summary, _ = self._compile_current(session)
+        except CompileError as error:
+            failure = {**error.as_dict(), "stage": "verify"}
+            updated = self._commit(session, event="verify_game_failed", status="failed",
+                                   diagnosis={"ok": False, "failure": failure},
+                                   context={"failure": failure})
+            return _fail("verify_game", f"compiler_error:{error.code}",
+                         path=error.path, clause=error.clause, revision=updated.revision)
+        except Exception as error:
+            return _fail("verify_game", f"invalid_ir:{_first_line(error)}")
+        if isinstance(parsed, ComposedRulesIR):
+            compiled, result = verify_composed(
+                parsed, self.registry, strategies=self.strategies, seeds=self.seeds)
+            summary = {**summary, "plan_hash": compiled.plan_hash,
+                       "ir_hash": compiled.ir_hash,
+                       "compiler_version": compiled.compiler_version,
+                       "registry_contract_hash": compiled.registry_contract_hash}
+        else:
+            result = verify_plan(plan, self.registry, ir_hash=session.ir_hash,
+                                 strategies=self.strategies, seeds=self.seeds)
+        verification = result.as_dict()
+        if result.ok:
+            updated = self._commit(session, event="verify_game", status="verified",
+                                   diagnosis={"ok": True, "verification_id": result.verification_id},
+                                   context={"verification": verification, "failure": None,
+                                            "compiled": summary})
+            return _ok("verify_game", verified=True, verification_id=result.verification_id,
+                       seeds=list(result.seeds), strategies=list(result.strategies),
+                       covered_wait_nodes=list(result.covered_wait_nodes),
+                       revision=updated.revision)
+        failure = {"kind": "verification_error", "stage": "verify",
+                   "failures": list(result.failures),
+                   "verification_id": result.verification_id,
+                   "ir_hash": result.ir_hash, "plan_hash": result.plan_hash}
+        updated = self._commit(session, event="verify_game", status="failed",
+                               diagnosis={"ok": False, "failures": list(result.failures)},
+                               context={"verification": verification, "failure": failure,
+                                        "compiled": summary})
+        return _fail("verify_game", "verification_failed:" + "; ".join(result.failures[:3]),
+                     verified=False, verification_id=result.verification_id,
+                     failures=list(result.failures), revision=updated.revision)
+
+    def _tool_inspect_failure(self, args: dict[str, Any], request_id: str | None):
+        session = self.session()
+        failure = session.context.get("failure")
+        verification = session.context.get("verification") or {}
+        if not failure and verification.get("ok", True):
+            return _fail("inspect_failure", "no_failure")
+        clauses: dict[str, Any] = {}
+        state: dict[str, Any] | None = None
+        if session.ir:
+            try:
+                _, plan, _, source_map = self._compile_current(session)
+                clauses = source_map.get("clauses", {})
+                state = self._diagnostic_state(plan)
+            except Exception:                               # unbuildable rules
+                clauses, state = {}, None
+        if failure is None:
+            failure = {"kind": "verification_error", "stage": "verify",
+                       "failures": list(verification.get("failures", [])),
+                       "verification_id": verification.get("verification_id"),
+                       "ir_hash": verification.get("ir_hash"),
+                       "plan_hash": verification.get("plan_hash")}
+        return _ok("inspect_failure", failure=failure, clauses=clauses,
+                   state=summarize(state) if state else None)
+
+    def _diagnostic_state(self, plan: Any) -> dict[str, Any] | None:
+        """One bounded bot run, used only to show *where* a failure happened."""
+        try:
+            interpreter = Interpreter(plan, self.registry, seed=self.seeds[0])
+            interpreter.setup()
+            for _ in range(plan.step_limit):
+                if interpreter.state.get("finished"):
+                    break
+                action, payload = bot_action(interpreter)
+                if action is None:
+                    break
+                interpreter.step(action, **payload)
+            return interpreter.state
+        except Exception:
+            return None
 
     # ------------------------------------------------------------- helpers
 

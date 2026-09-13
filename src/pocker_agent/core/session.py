@@ -264,6 +264,21 @@ class SessionStore:
         return [payload for (gid, _), payload in sorted(self._stored_artifacts().items())
                 if gid == game_id]
 
+    def get_artifact(self, game_id: str, version: int | None = None) -> dict[str, Any] | None:
+        """The stored artifact for a version (or the latest), as a deep copy."""
+        found = self._find_artifact(game_id, version)
+        return deepcopy(found) if found is not None else None
+
+    def get_verification(self, verification_id: str) -> dict[str, Any] | None:
+        """The host-recorded credential a version cites, as a deep copy."""
+        stored = self._stored_verifications().get(verification_id)
+        return deepcopy(stored) if stored is not None else None
+
+    def next_version(self, game_id: str) -> int:
+        """The next free immutable version for a game id."""
+        versions = [version for (gid, version) in self._stored_artifacts() if gid == game_id]
+        return 1 if not versions else max(versions) + 1
+
     def list_games(self) -> list[dict[str, Any]]:
         games = list_reference_games()
         seen = {game["id"] for game in games}

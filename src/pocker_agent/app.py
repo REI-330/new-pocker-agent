@@ -19,10 +19,21 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .agent import DESIGN_TOOL_SCHEMAS, TOOL_SCHEMAS, DesignService, DesignStore, run_design_loop, run_loop
+from .agent import (
+    DESIGN_TOOL_SCHEMAS,
+    TOOL_SCHEMAS,
+    DesignRunStore,
+    DesignService,
+    DesignStore,
+    normalize_budget,
+    run_design_loop,
+    run_loop,
+    run_status_for,
+)
 from .configuration import ConfigInput, ConfigStore
 from .core import (
     PLAN_MACROS,
+    ComposedRulesIR,
     SessionStore,
     capability_matrix,
     core_registry,
@@ -30,6 +41,7 @@ from .core import (
     default_macros,
     promotion_report,
 )
+from .core.ir import parse_design_ir
 from .llm import OpenAICompatibleClient
 from .storage import data_path
 
@@ -116,6 +128,34 @@ class DesignMessageInput(BaseModel):
     max_steps: int | None = Field(default=None, ge=1, le=24)
 
 
+class DesignVerifyInput(BaseModel):
+    """Host-run formal verification of the session's current rules (M5-1)."""
+
+    expected_revision: int | None = Field(default=None, ge=0)
+    request_id: str | None = Field(default=None, max_length=64)
+
+
+class DesignConfirmInput(BaseModel):
+    """The user's confirmation of one exact ``ir_hash`` (M5-1).
+
+    This is deliberately a separate HTTP action, never a design tool: the model
+    can propose rules but only a user can confirm them (ADR-0008/0015).
+    """
+
+    ir_hash: str = Field(min_length=1, max_length=64)
+    expected_revision: int | None = Field(default=None, ge=0)
+    request_id: str | None = Field(default=None, max_length=64)
+
+
+class DesignPublishInput(BaseModel):
+    """Register an immutable version once confirmation and evidence bind."""
+
+    expected_revision: int | None = Field(default=None, ge=0)
+    request_id: str | None = Field(default=None, max_length=64)
+    title: str | None = Field(default=None, max_length=128)
+    version: int | None = Field(default=None, ge=1)
+
+
 class ActionInput(BaseModel):
     revision: int = Field(ge=0)
     card_index: int = Field(default=0, ge=0)
@@ -146,8 +186,10 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
     config = ConfigStore(database, vault)
     store = SessionStore(database)
     designs = DesignStore(database)
+    runs = DesignRunStore(database)
     app.state.session_store = store
     app.state.design_store = designs
+    app.state.design_run_store = runs
     app.state.config_store = config
 
     def default_model():
@@ -169,14 +211,22 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
     async def bad_value(request, error):
         message = str(error)
         conflict = ("stale_revision", "plan_changed", "plan_already_registered",
-                    "game_id_reserved", "request_id_conflict")
+                    "game_id_reserved", "request_id_conflict",
+                    "artifact_version_conflict")
         status = 409 if message.startswith(conflict) else 422
         return JSONResponse(status_code=status, content={"detail": message})
 
     @app.exception_handler(KeyError)
     async def not_found(request, error):
-        key = error.args[0] if error.args else ""
-        message = "设计会话不存在" if str(key).startswith("design_") else "牌局不存在，请重新开始"
+        key = str(error.args[0]) if error.args else ""
+        if key.startswith("design_run"):
+            message = "设计运行不存在"
+        elif key.startswith("design_"):
+            message = "设计会话不存在"
+        elif key.startswith("game_version"):
+            message = "游戏版本不存在"
+        else:
+            message = "牌局不存在，请重新开始"
         return JSONResponse(status_code=404, content={"detail": message})
 
     @app.get("/health")
@@ -194,6 +244,26 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
     @app.get("/api/games")
     def games():
         return {"games": store.list_games(), "coverage": coverage_report()}
+
+    @app.get("/api/games/{game_id}/versions")
+    def list_game_versions(game_id: str):
+        """Every immutable version registered for a game id (M5-1)."""
+        return {"game_id": game_id,
+                "versions": [_artifact_summary(item)
+                             for item in store.list_versions(game_id)]}
+
+    @app.get("/api/games/{game_id}/versions/{version}")
+    def get_game_version(game_id: str, version: int):
+        """One version's rules, artifact summary, evidence and source map (M5-1)."""
+        artifact = store.get_artifact(game_id, version)
+        if artifact is None:
+            raise KeyError("game_version_not_found")
+        return {"game_id": game_id, "version": version,
+                "artifact": _artifact_summary(artifact),
+                "rules": artifact.get("ir"),
+                "source_map": artifact.get("source_map") or {},
+                "verification": store.get_verification(artifact["verification_id"]),
+                "plan": artifact.get("plan")}
 
     @app.post("/api/designs")
     def create_design(payload: DesignCreateInput):
@@ -226,7 +296,7 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
 
     @app.post("/api/designs/{session_id}/messages")
     def design_messages(session_id: str, payload: DesignMessageInput):
-        """One design turn against an existing session (M4-7)."""
+        """One design turn against an existing session (M4-7), recorded as a run."""
         message = payload.message.strip()
         if not message:
             raise ValueError("请输入玩法描述")
@@ -236,14 +306,123 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
             raise ValueError(
                 f"stale_revision: 设计会话已更新（当前 {current.revision}，"
                 f"期望 {payload.expected_revision}）")
-        service = DesignService(designs, session_id)
         budget = {"max_decisions": payload.max_steps} if payload.max_steps else None
-        result = run_design_loop(service, session_id, message, make_model(), budget,
-                                 expected_revision=payload.expected_revision)
+        run = runs.start(session_id, message, revision=current.revision,
+                         budget=normalize_budget(budget))
+        service = DesignService(designs, session_id)
+        try:
+            result = run_design_loop(service, session_id, message, make_model(), budget,
+                                     expected_revision=payload.expected_revision)
+        except ValueError as error:
+            # A concurrent writer (or a conflicting retry) owns the session; the
+            # run is closed as failed and the conflict propagates as HTTP 409.
+            runs.finish(run.run_id, status="failed", kind="error",
+                        revision=designs.get(session_id).revision, error=str(error))
+            raise
         body = result.as_dict()
         body["registered"] = False
+        body["run_id"] = run.run_id
         body["session"] = designs.get(session_id).as_dict()
+        runs.finish(run.run_id, status=run_status_for(result.kind), kind=result.kind,
+                    revision=result.revision, attempts=result.attempts, used=result.used,
+                    observations=result.observations, artifact=result.artifact,
+                    verification=result.verification)
         return body
+
+    @app.get("/api/designs/{session_id}/runs")
+    def list_design_runs(session_id: str, limit: int = 20):
+        designs.get(session_id)                              # KeyError -> 404
+        return {"session_id": session_id,
+                "runs": runs.list_runs(session_id, limit=max(1, min(limit, 100)))}
+
+    @app.get("/api/designs/{session_id}/runs/{run_id}")
+    def get_design_run(session_id: str, run_id: str):
+        designs.get(session_id)                              # KeyError -> 404
+        run = runs.get(run_id)                               # KeyError -> 404
+        if run.session_id != session_id:
+            raise KeyError("design_run_not_found")
+        return run.as_dict()
+
+    @app.post("/api/designs/{session_id}/verify")
+    def verify_design(session_id: str, payload: DesignVerifyInput):
+        """Run the host formal gate for the current rules (M5-1).
+
+        This is the same ``verify_game`` tool the model may call, invoked directly
+        by the host: the caller supplies no seeds, strategies or plan.
+        """
+        current = designs.get(session_id)                    # KeyError -> 404
+        if (payload.expected_revision is not None
+                and payload.expected_revision != current.revision):
+            raise ValueError(
+                f"stale_revision: 设计会话已更新（当前 {current.revision}，"
+                f"期望 {payload.expected_revision}）")
+        service = DesignService(designs, session_id)
+        observation = service.dispatch("verify_game", {}, request_id=payload.request_id)
+        session = designs.get(session_id)
+        return {"ok": bool(observation.get("ok")), "observation": observation,
+                "revision": session.revision, "session": session.as_dict()}
+
+    @app.post("/api/designs/{session_id}/confirm")
+    def confirm_design(session_id: str, payload: DesignConfirmInput):
+        """Record the user's confirmation of one exact rule version (M5-1)."""
+        current = designs.get(session_id)                    # KeyError -> 404
+        if not current.ir or not current.ir_hash:
+            raise ValueError("propose_ir_first")
+        if payload.ir_hash != current.ir_hash:
+            raise ValueError("approval_mismatch: 确认的规则版本与当前草案不一致")
+        verification = current.context.get("verification") or {}
+        confirmation = {
+            "ir_hash": current.ir_hash, "revision": current.revision,
+            "verified": bool(verification.get("ok"))
+            and verification.get("ir_hash") == current.ir_hash,
+            "verification_id": verification.get("verification_id")}
+        updated = designs.commit(session_id, payload.expected_revision
+                                 if payload.expected_revision is not None
+                                 else current.revision,
+                                 request_id=payload.request_id, event="confirmed",
+                                 context={"confirmation": confirmation})
+        return {"confirmed": True, "confirmation": confirmation,
+                "session": updated.as_dict()}
+
+    @app.post("/api/designs/{session_id}/publish")
+    def publish_design(session_id: str, payload: DesignPublishInput):
+        """Register an immutable version once confirmation and evidence bind (M5-1).
+
+        Order is fixed: the user confirmation must name the *current* ``ir_hash``,
+        the stored host credential must bind the same rules, and registration then
+        re-runs ``publish_composed`` with ``approval_ir_hash`` so a model can never
+        register or self-confirm (ADR-0008).
+        """
+        current = designs.get(session_id)                    # KeyError -> 404
+        if not current.ir or not current.ir_hash:
+            raise ValueError("propose_ir_first")
+        published = current.context.get("published")
+        if isinstance(published, dict) and published.get("ir_hash") == current.ir_hash:
+            return {"published": True, "idempotent": True, "artifact": published,
+                    "session": current.as_dict()}
+        confirmation = current.context.get("confirmation") or {}
+        if confirmation.get("ir_hash") != current.ir_hash:
+            raise ValueError("confirmation_required: 请先核对并确认当前规则版本")
+        verification = current.context.get("verification") or {}
+        if not (verification.get("ok")
+                and verification.get("ir_hash") == current.ir_hash):
+            raise ValueError("verification_required: 需要绑定当前规则的验证证据")
+        parsed = parse_design_ir(current.ir)
+        if not isinstance(parsed, ComposedRulesIR):
+            raise ValueError("publish_requires_composed_ir: 仅组合规则可注册新版本")
+        version = payload.version or store.next_version(current.game_id)
+        title = payload.title or _design_title(current)
+        artifact = store.verify_and_register(
+            parsed, game_id=current.game_id, version=version, title=title,
+            approval_ir_hash=current.ir_hash)
+        summary = _artifact_summary(artifact.as_dict())
+        updated = designs.commit(session_id, payload.expected_revision
+                                 if payload.expected_revision is not None
+                                 else current.revision,
+                                 request_id=payload.request_id, event="published",
+                                 status="finalized", context={"published": summary})
+        return {"published": True, "idempotent": False, "artifact": summary,
+                "session": updated.as_dict()}
 
     @app.get("/api/agent/tools")
     def agent_tools():
@@ -338,6 +517,27 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
     if DIST.is_dir():
         app.mount("/", StaticFiles(directory=DIST, html=True), name="web")
     return app
+
+
+#: The fields of an artifact that are cheap to send in a list or a summary.
+_ARTIFACT_SUMMARY_KEYS = ("schema_version", "game_id", "version", "title",
+                          "generation_source", "plan_hash", "ir_hash",
+                          "compiler_version", "registry_contract_hash",
+                          "verification_id", "approval_ir_hash")
+
+
+def _artifact_summary(artifact: dict) -> dict:
+    """The metadata of a stored artifact, without the plan or the rule body."""
+    return {key: artifact.get(key) for key in _ARTIFACT_SUMMARY_KEYS}
+
+
+def _design_title(session) -> str:
+    """The user-facing title of a design, falling back to its game id."""
+    ir = session.ir or {}
+    meta = ir.get("meta") if isinstance(ir, dict) else None
+    if isinstance(meta, dict) and meta.get("title"):
+        return str(meta["title"])
+    return str(session.game_id)
 
 
 app = create_app()

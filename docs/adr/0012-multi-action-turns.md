@@ -88,6 +88,10 @@ FlowSpec
 
 第 7 条的 trigger 实现：`ActionSpec.trigger` 是一个有序效果列表（本包只允许 `skip`），编译器把它降层到终局闸门**之后**的共享阶段，用 `state.input.action` 分发到实际运行的动作；`skip` 写 `state.skip_next`，`bump_turn` 前进 `1 + skip_next` 并在 `set_turn_index` 里清零。规则无 trigger 时保留 M2 的 `bump_turn`/初始化，指纹不变。新增 `contract_check` 监测器 `action_counting`（行动数 == 记录到的动作数）与 `trigger_after_terminal`（结束局面的那个动作不得写 `skip_next`），对应失败矩阵的最后两行。
 
+**空区域顶牌**：`top(...)` 在空区域写入一个**每次读取唯一**的哨兵（`__empty_rank_<n>__` 等），因此它既不等于任何真实牌值，也不等于另一次空读取；`eq(top(a).rank, top(b).rank)` 在两个空区上为 `false`，不会退化成 `None == None`。
+
+**无条件回退的强制**：第 3 条「所有 guard 失败则推进座位」在**没有 `max_rounds` 界**时无法终止（只能靠 `action_count`，而空转回合不增计数），因此 IR 校验新增 `turn_sequence_needs_unconditional_action`：当 `terminal.max_rounds is None` 时，`action_sequence` 必须至少有一个 `guard is None` 的候选。已提交的规则（场景 B 的 `pass`、draw/pass 的 `pass`）满足该约束；不合规的规则在解析期就被拒绝，不会跑到 `flow_step_limit`。
+
 ## 迁移与删除
 
 - `round_action` 保持必填；`turn_actions` 为空即单动作，行为与 plan 指纹不变（回归测试锁定）。

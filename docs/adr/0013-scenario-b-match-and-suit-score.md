@@ -66,6 +66,8 @@ SelectEffect.match_top: <shared zone id>
 | `match_top` 指向未声明或非共享区 | IR 校验失败：`select_unknown_match_zone` / `select_match_zone_must_be_shared` |
 | `score_top` 指向非共享区或空 points | IR 校验失败：`score_top_requires_shared_zone` / `score_top_requires_points` |
 | 改动 `score_top` 的分值 | `contract_check` 的 `suit_scoring` 监测器拒绝（从结算前状态重算期望分） |
+| 把 `score_top` 的分发给错误座位 | `suit_scoring` 拒绝：检查获奖座位等于出手玩家，非获奖座位分数不变 |
+| 规则声明多个 `score_top` | 不跳过检查；按结算前读到的区域将所有同区声明纳入期望值 |
 | 机器人第一张牌不匹配 | 在输入区内继续轮换，仍无合法输入才报缺口，不提交非法牌 |
 
 ## 迁移与删除

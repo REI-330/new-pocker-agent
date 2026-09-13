@@ -197,13 +197,17 @@ class _GuardBuilder:
                    {"expression": {"gt": [f"$state.{count}.count", 0]}},
                    branch, result_key=has)
         self._consume(has)
-        # Both arms produce ``g{n}_card``: the real top, or a null card so an
-        # empty zone is false in a comparison rather than a runtime error (B3).
+        # Both arms produce ``g{n}_card``: the real top, or a per-read sentinel
+        # so an empty zone is false in a comparison rather than a runtime error
+        # (B3). The sentinel is unique per read, so two empty tops never compare
+        # equal (``eq(top(a).rank, top(b).rank)`` is false, not ``None == None``).
         self._call(top, "zones", "top", {"state": "$state", "zone": zone_arg},
                    "PENDING", result_key=f"g{n}_card")
         self._call(empty, "state", "update",
                    {"state": "$state", "values": {f"g{n}_card": {
-                       "rank": None, "suit": None, "value": None}}}, "PENDING")
+                       "rank": f"__empty_rank_{n}__",
+                       "suit": f"__empty_suit_{n}__",
+                       "value": f"__empty_value_{n}__"}}}, "PENDING")
         self._add(branch, {"kind": "branch", "value": f"$state.{has}",
                            "cases": [{"value": True, "target": top}], "next": empty})
         self.dangling = [top, empty]

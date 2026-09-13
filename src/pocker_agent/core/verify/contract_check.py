@@ -281,43 +281,72 @@ def _pair_scoring(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
             settlements += 1
             expected = effect.points_per_pair * (pending // group_size)
             before = trace.observations[index - 1].state
+            actor = before.get("current_player")
             deltas = [observation.state["scores"][seat] - before["scores"][seat]
                       for seat in range(ir.players.count)]
-            if sum(deltas) != expected or any(delta < 0 for delta in deltas):
+            if (not isinstance(actor, int) or deltas[actor] != expected
+                    or any(delta for seat, delta in enumerate(deltas) if seat != actor)):
                 return ClauseCheck("pair_scoring", False,
-                                   f"expected={expected},observed={deltas}@{index}")
+                                   f"expected={expected},actor={actor},observed={deltas}@{index}")
             pending = None
     return ClauseCheck("pair_scoring", True, f"settlements={settlements}")
 
 
-def _suit_scoring(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
-    """Independent monitor for ``score_top`` (ADR-0012 B5).
+def _recent_top_zone(trace: GameTrace, index: int, window: int = 6) -> str | None:
+    """The zone of the nearest preceding ``zones.top`` read, if any."""
+    for position in range(index - 1, max(-1, index - 1 - window), -1):
+        observation = trace.observations[position]
+        if observation.tool == "zones" and observation.operation == "top":
+            return observation.args.get("zone")
+    return None
 
-    Re-derives the expected points from the *state before* each settlement: the
-    top card of the named zone and the declared points table. It never reads the
-    compiler's node arguments, so a mutated points value is rejected.
+
+def _suit_scoring(ir: ComposedRulesIR, trace: GameTrace) -> ClauseCheck:
+    """Independent monitor for ``score_top`` (ADR-0012 B5, ADR-0013).
+
+    Re-derives the expected points from the *state before* each settlement and
+    checks the awarded seat, so it rejects both a mutated points value and a
+    settlement paid to the wrong player. It does not skip when a rule declares
+    several ``score_top`` effects: each settlement is matched to the declared
+    effect(s) on the zone read immediately before it.
     """
     effects = [effect for action in ir.actions for effect in action.effects
                if isinstance(effect, ScoreTopEffect)]
     if not effects:
         return ClauseCheck("suit_scoring", True, "no_score_top")
-    if len(effects) != 1:
-        return ClauseCheck("suit_scoring", True, f"skipped:effects={len(effects)}")
-    effect = effects[0]
+    by_zone: dict[str, list[ScoreTopEffect]] = {}
+    for effect in effects:
+        by_zone.setdefault(effect.zone, []).append(effect)
     settlements = 0
     for index, observation in enumerate(trace.observations):
         if observation.tool != "score_settle" or observation.operation != "call":
             continue
-        settlements += 1
         before = trace.observations[index - 1].state if index > 0 else None
-        cards = _cards_at(before, effect.zone)
-        key = getattr(cards[-1], effect.by) if cards else None
-        expected = effect.points.get(str(key), 0)
+        zone = _recent_top_zone(trace, index)
+        candidates = by_zone.get(zone, [])
+        if before is None or not candidates:
+            continue                         # not a ``score_top`` settlement
+        settlements += 1
+        actor = before.get("current_player")
+        winners = observation.args.get("winners")
+        points = observation.args.get("points")
         deltas = [observation.state["scores"][seat] - before["scores"][seat]
                   for seat in range(ir.players.count)]
-        if sum(deltas) != expected or any(delta < 0 for delta in deltas):
+        if winners != [actor]:
             return ClauseCheck("suit_scoring", False,
-                               f"key={key},expected={expected},observed={deltas}@{index}")
+                               f"recipient={winners},actor={actor}@{index}")
+        if not isinstance(actor, int) or deltas[actor] != points or any(
+                delta for seat, delta in enumerate(deltas) if seat != actor):
+            return ClauseCheck("suit_scoring", False,
+                               f"deltas={deltas},points={points}@{index}")
+        expected = set()
+        for effect in candidates:
+            cards = _cards_at(before, effect.zone)
+            key = getattr(cards[-1], effect.by) if cards else None
+            expected.add(effect.points.get(str(key), 0))
+        if points not in expected:
+            return ClauseCheck("suit_scoring", False,
+                               f"points={points},expected={sorted(expected)}@{index}")
     return ClauseCheck("suit_scoring", True, f"settlements={settlements}")
 
 

@@ -543,6 +543,14 @@ class ComposedRulesIR(_Strict):
                 raise ValueError(f"turn_action_unknown:{action_id}")
         if self.flow.turn_actions and self.flow.round_action not in self.flow.turn_actions:
             raise ValueError("round_action_not_in_sequence")
+        # ADR-0012: a turn whose guards can all fail performs no action. With no
+        # round bound the only termination is the action budget, which such a
+        # turn can never reach, so require an unconditional candidate. Without
+        # this the interpreter would spin until ``flow_step_limit`` at setup.
+        if self.terminal.max_rounds is None:
+            sequence_actions = [self.action(action_id) for action_id in sequence]
+            if not any(action.guard is None for action in sequence_actions):
+                raise ValueError("turn_sequence_needs_unconditional_action")
         for effect in self.flow.resolve:
             if isinstance(effect, CompareEffect):
                 if self.zone(effect.zone) is None:

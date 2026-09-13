@@ -215,6 +215,13 @@ def run_design_loop(service: DesignService, session_id: str, message: str, model
         except Exception as error:                          # transport/credential
             return finish("error", f"model_failed:{error}")
 
+        # A model call can return just before the deadline while leaving no
+        # time for parsing, dispatch, and persistence.  Do not start another
+        # host operation once the turn has expired; this closes the small
+        # overrun window observed in real-model runs.
+        if time.monotonic() - started >= limits["max_seconds"]:
+            return finish("budget_exhausted", "budget_exhausted: 达到墙钟时间上限")
+
         used["decisions"] += 1
         text = raw if isinstance(raw, str) else ""
         used["output_chars"] += len(text)
@@ -257,7 +264,11 @@ def run_design_loop(service: DesignService, session_id: str, message: str, model
         if not isinstance(tool, str):
             observation = {"ok": False, "tool": "", "error": "tool_required"}
         else:
+            if time.monotonic() - started >= limits["max_seconds"]:
+                return finish("budget_exhausted", "budget_exhausted: 达到墙钟时间上限")
             observation = service.dispatch(tool, args)
+            if time.monotonic() - started >= limits["max_seconds"]:
+                return finish("budget_exhausted", "budget_exhausted: 达到墙钟时间上限")
         observations.append({"step": used["decisions"], **observation})
         messages.append({"role": "assistant",
                          "content": json.dumps(decision, ensure_ascii=False)})

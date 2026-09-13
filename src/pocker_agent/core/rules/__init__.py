@@ -6,6 +6,7 @@ mechanism data (``ComposedRulesIR``) and deterministically lowered to the existi
 per-game plan function and no dispatch on a game's name.
 """
 from .compiler import (
+    BOUNDED_NODES,
     COMPILER_VERSION,
     CompiledRules,
     CompileError,
@@ -86,6 +87,7 @@ from .requirements import (
 from .structure import analyse_control_flow, reachable_nodes
 
 __all__ = [
+    "BOUNDED_NODES",
     "COMPILER_VERSION",
     "EXPR_ADAPTER",
     "MAX_ACTIONS",

@@ -17,9 +17,22 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from ..core.capability import AXIS_BY_ID, capability_matrix
-from ..core.ir import parse_design_ir
+from ..core.capability import capability_matrix
+from ..core.contracts import ToolError
+from ..core.interpreter import Interpreter
+from ..core.ir import check_ir, host_compile, parse_design_ir
+from ..core.plan import plan_fingerprint
+from ..core.policy import bot_action
 from ..core.registry import core_registry
+from ..core.rules import (
+    BOUNDED_NODES,
+    CompileError,
+    ComposedRulesIR,
+    analyse_control_flow,
+    compile_composed,
+    resolve_composition,
+)
+from ..core.verify.trace import summarize
 
 #: The tools the design model may call. This is a *separate* table from
 #: ``meta_tools.TOOL_SCHEMAS`` on purpose: the macro-authoring tools are deferred
@@ -195,11 +208,123 @@ class DesignService:
         return _ok("patch_ir", kind=parsed.kind, ir_hash=updated.ir_hash,
                    revision=updated.revision, requirements=current, removed=removed)
 
-    # ------------------------------------------------------------- helpers
-    def _axis_status(self, axis_id: str) -> str:
-        capability = AXIS_BY_ID.get(axis_id)
-        return capability.status if capability is not None else "planned"
+    # -------------------------------------------------------------- compile
+    def _compile_current(self, session) -> tuple[Any, Any, dict[str, Any], dict[str, Any]]:
+        """Deterministically compile the session IR to a plan plus a summary.
 
+        Nothing is stored here; ``compose_plan`` records the summary and every
+        later tool recompiles from the same IR, so a session cannot carry a plan
+        that no longer matches its rules (ADR-0005).
+        """
+        parsed = parse_design_ir(session.ir)
+        if isinstance(parsed, ComposedRulesIR):
+            compiled = compile_composed(parsed, self.registry)
+            summary = {"generation_source": "composed_rules",
+                       "compiler_version": compiled.compiler_version,
+                       "ir_hash": compiled.ir_hash, "plan_hash": compiled.plan_hash,
+                       "registry_contract_hash": compiled.registry_contract_hash,
+                       "nodes": len(compiled.plan.nodes),
+                       "tools": [binding.name for binding in compiled.plan.tools],
+                       "game_kind": compiled.plan.game_kind,
+                       "composition": compiled.composition.as_dict()}
+            return parsed, compiled.plan, summary, compiled.source_map
+        plan = host_compile(parsed)
+        summary = {"generation_source": "host_compile", "compiler_version": None,
+                   "ir_hash": session.ir_hash, "plan_hash": plan_fingerprint(plan),
+                   "registry_contract_hash": self.registry.contract_hash(),
+                   "nodes": len(plan.nodes),
+                   "tools": [binding.name for binding in plan.tools],
+                   "game_kind": plan.game_kind, "composition": None}
+        return parsed, plan, summary, {}
+
+    def _tool_capability_check(self, args: dict[str, Any], request_id: str | None):
+        session = self.session()
+        if not session.ir:
+            return _fail("capability_check", "propose_ir_first")
+        parsed = parse_design_ir(session.ir)
+        if isinstance(parsed, ComposedRulesIR):
+            report = resolve_composition(parsed, self.registry).as_dict()
+            expressible = report["ok"]
+            axes, missing = report["axes"], report["missing"]
+        else:
+            report = check_ir(parsed).as_dict()
+            expressible = report["expressible"]
+            axes, missing = report["required_axes"], report["missing"]
+        updated = self._commit(session, event="capability_check", status="diagnosed",
+                               diagnosis={"ok": expressible, **report})
+        return _ok("capability_check", expressible=expressible, axes=axes,
+                   missing=missing, report=report, revision=updated.revision)
+
+    def _tool_compose_plan(self, args: dict[str, Any], request_id: str | None):
+        if args.get("plan") is not None:
+            return _fail("compose_plan", "raw_plan_not_accepted")
+        session = self.session()
+        if not session.ir:
+            return _fail("compose_plan", "propose_ir_first")
+        try:
+            _, _, summary, _ = self._compile_current(session)
+        except CompileError as error:
+            failure = {**error.as_dict(), "stage": "compose"}
+            updated = self._commit(session, event="compose_plan_failed",
+                                   diagnosis={"ok": False, "failure": failure},
+                                   context={"failure": failure})
+            return _fail("compose_plan", f"compiler_error:{error.code}",
+                         path=error.path, clause=error.clause, revision=updated.revision)
+        except Exception as error:
+            return _fail("compose_plan", f"invalid_ir:{_first_line(error)}")
+        updated = self._commit(session, event="compose_plan", status="compiled",
+                               diagnosis={"ok": True, "compiled": summary},
+                               context={"compiled": summary, "failure": None,
+                                        "verification": None})
+        return _ok("compose_plan", revision=updated.revision, **summary)
+
+    def _tool_validate_plan(self, args: dict[str, Any], request_id: str | None):
+        session = self.session()
+        if not session.ir:
+            return _fail("validate_plan", "propose_ir_first")
+        if not session.context.get("compiled"):
+            return _fail("validate_plan", "compose_plan_first")
+        try:
+            _, plan, summary, _ = self._compile_current(session)
+            Interpreter(plan, self.registry)
+        except Exception as error:
+            return _fail("validate_plan", f"invalid_plan:{_first_line(error)}")
+        flow = analyse_control_flow(plan, BOUNDED_NODES)
+        if flow["unreachable"] or flow["unbounded_cycles"]:
+            return _fail("validate_plan", "invalid_plan:structure",
+                         unreachable=flow["unreachable"],
+                         unbounded_cycles=flow["unbounded_cycles"])
+        return _ok("validate_plan", game_kind=plan.game_kind, nodes=len(plan.nodes),
+                   reachable=len(flow["reachable"]), unreachable=flow["unreachable"],
+                   unbounded_cycles=flow["unbounded_cycles"],
+                   plan_hash=summary["plan_hash"])
+
+    def _tool_simulate(self, args: dict[str, Any], request_id: str | None):
+        session = self.session()
+        if not session.ir:
+            return _fail("simulate", "propose_ir_first")
+        try:
+            _, plan, _, _ = self._compile_current(session)
+            seed = int(args.get("seed", 7))
+            interpreter = Interpreter(plan, self.registry, seed=seed)
+            interpreter.setup()
+            steps = 0
+            for _ in range(plan.step_limit):
+                if interpreter.state.get("finished"):
+                    break
+                action, payload = bot_action(interpreter)
+                if action is None:
+                    return _fail("simulate", "simulate_stuck")
+                interpreter.step(action, **payload)
+                steps += 1
+            if not interpreter.state.get("finished"):
+                return _fail("simulate", "simulate_did_not_finish")
+        except (ToolError, ValueError) as error:
+            return _fail("simulate", _first_line(error))
+        return _ok("simulate", seed=seed, steps=steps, events=len(interpreter.events),
+                   game_kind=plan.game_kind, state=summarize(interpreter.state))
+
+    # ------------------------------------------------------------- helpers
 
 def _first_line(error: Exception) -> str:
     return str(error).splitlines()[0] if str(error) else type(error).__name__

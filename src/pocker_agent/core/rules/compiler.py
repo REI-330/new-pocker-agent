@@ -54,7 +54,7 @@ COMPILER_VERSION = "m2-0.1"
 # The only cycles the compiler emits are the turn loop (bounded by ``players`` via
 # ``set_turn_index``) and the round loop (bounded by ``max_rounds`` via
 # ``set_round``). ``analyse_control_flow`` requires every cycle to contain one.
-_BOUNDED_NODES = frozenset({"set_round", "set_turn_index"})
+BOUNDED_NODES = frozenset({"set_round", "set_turn_index"})
 
 
 class CompileError(ToolError):
@@ -1013,7 +1013,7 @@ def compile_composed(ir: ComposedRulesIR | dict[str, Any],
                     tools=_tool_bindings(ir), actions=_action_descriptors(ir),
                     initial={"reveal": False}, entry="setup_seed", nodes=nodes,
                     step_limit=MAX_STEP_LIMIT)
-    flow = analyse_control_flow(plan, _BOUNDED_NODES)
+    flow = analyse_control_flow(plan, BOUNDED_NODES)
     if flow["unreachable"]:
         raise CompileError("unreachable_plan_nodes", ",".join(flow["unreachable"]),
                            "plan", clause_for(ir, "plan"))

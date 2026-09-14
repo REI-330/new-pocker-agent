@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from ..storage import connect
+from .actions import normalize_action_payload
 from .artifacts import GameArtifact, VerificationResult, build_artifact
 from .interpreter import Interpreter
 from .plan import GamePlan, plan_fingerprint
@@ -84,32 +85,6 @@ def _public_event(event: Any) -> dict[str, Any]:
         return {"value": deepcopy(event)}
     return {key: deepcopy(value) for key, value in event.items()
             if key not in _EVENT_SECRET_KEYS}
-
-
-def _normalize_selection(item: Any, value: Any, options: set[str]) -> Any:
-    """Validate one declared action input and return the interpreter payload value.
-
-    Only ``card_selection`` is a declared input kind today (ADR-0007); an unknown
-    kind is passed through so a future typed input cannot silently be dropped by
-    this layer. The interpreter stays the final authority: an illegal card still
-    rolls the action back.
-    """
-    if getattr(item, "kind", None) != "card_selection":
-        return value
-    if isinstance(value, str):
-        cards = [value]
-    elif isinstance(value, (list, tuple)):
-        cards = [str(entry) for entry in value]
-    else:
-        raise ValueError(f"input_must_be_card_ids:{item.id}")
-    if len(cards) != len(set(cards)):
-        raise ValueError(f"duplicate_cards:{item.id}")
-    if not (item.min_count <= len(cards) <= item.max_count):
-        raise ValueError(f"selection_count_out_of_range:{item.id}")
-    unavailable = [card for card in cards if card not in options]
-    if unavailable:
-        raise ValueError(f"card_not_available:{item.id}:{unavailable[0]}")
-    return cards
 
 
 @dataclass
@@ -509,33 +484,12 @@ class SessionStore:
                            if item.id == action_id), None)
         if descriptor is None:
             return dict(input_values)
-        declared = {item.id: item for item in descriptor.inputs}
-        unknown = sorted(set(input_values) - set(declared))
-        if unknown:
-            raise ValueError(f"unknown_action_input:{unknown[0]}")
-        options = self._action_options(interpreter, action_id)
-        payload: dict[str, Any] = {}
-        for input_id, item in declared.items():
-            if input_id not in input_values:
-                if item.min_count > 0:
-                    raise ValueError(f"missing_action_input:{input_id}")
-                continue
-            payload[input_id] = _normalize_selection(
-                item, input_values[input_id], options.get(input_id, set()))
-        return payload
-
-    @staticmethod
-    def _action_options(interpreter: Interpreter, action_id: str) -> dict[str, set[str]]:
-        """The viewer-visible card ids per input, scoped to the acting seat."""
-        state = interpreter.state
-        actor = f"player-{int(state.get('current_player', 0)) + 1}"
-        options: dict[str, set[str]] = {}
-        for descriptor in interpreter.action_descriptors(actor):
-            if descriptor["id"] != action_id:
-                continue
-            for item in descriptor["inputs"]:
-                options[item["id"]] = set(item.get("options", []))
-        return options
+        return normalize_action_payload(
+            interpreter.state,
+            descriptor,
+            input_values,
+            unavailable_error="card_not_available",
+        )
 
     def _cached_response(self, session: Session, request_id: str | None,
                          fingerprint: str) -> dict[str, Any] | None:

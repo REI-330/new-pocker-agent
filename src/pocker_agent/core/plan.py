@@ -55,12 +55,37 @@ class ActionInputDescriptor(_Strict):
         return self
 
 
+class IntegerRangeInputDescriptor(_Strict):
+    """A required integer whose legal bounds are evaluated from live state.
+
+    ``minimum`` and ``maximum`` contain compiled, side-effect-free expressions:
+    literals, ``$state`` references, or the same closed expression objects used
+    by ``logic.evaluate``. This lets one plan describe a dynamic raise range
+    without putting poker-specific fields in the interpreter.
+    """
+
+    id: str = Field(min_length=1, max_length=32, pattern=r"^[a-z][a-z0-9_]*$")
+    kind: Literal["integer_range"] = "integer_range"
+    minimum: Any
+    maximum: Any
+
+    @model_validator(mode="after")
+    def static_bounds(self) -> IntegerRangeInputDescriptor:
+        if type(self.minimum) is int and type(self.maximum) is int:
+            if self.maximum < self.minimum:
+                raise ValueError("action_integer_bounds_invalid")
+        return self
+
+
+ActionInput = ActionInputDescriptor | IntegerRangeInputDescriptor
+
+
 class ActionDescriptor(_Strict):
     """A wait action offered by a plan, plus the inputs it expects."""
 
     id: str = Field(min_length=1, max_length=32, pattern=r"^[a-z][a-z0-9_]*$")
     label: str = Field(default="", max_length=120)
-    inputs: list[ActionInputDescriptor] = Field(default_factory=list, max_length=4)
+    inputs: list[ActionInput] = Field(default_factory=list, max_length=4)
 
     @model_validator(mode="after")
     def unique_inputs(self) -> ActionDescriptor:

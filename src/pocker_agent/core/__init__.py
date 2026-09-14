@@ -58,7 +58,16 @@ from .ir import (
 )
 from .macro_library import MATCH_TURN, PLAN_MACROS, default_macros
 from .macros import MacroRegistry, MacroSpec, expand_macro, promotion_report, validate_macro, wire
-from .plan import ActionDescriptor, ActionInputDescriptor, FlowCase, FlowNode, GamePlan, ToolBinding, ToolCall
+from .plan import (
+                     ActionDescriptor,
+                     ActionInputDescriptor,
+                     FlowCase,
+                     FlowNode,
+                     GamePlan,
+                     IntegerRangeInputDescriptor,
+                     ToolBinding,
+                     ToolCall,
+)
 from .plans import (
                      arithmetic_plan,
                      blackjack_plan,
@@ -142,6 +151,7 @@ __all__ = [
                      "GameArtifact",
                      "GamePlan",
                      "GoFishIR",
+                     "IntegerRangeInputDescriptor",
                      "Interpreter",
                      "MacroRegistry",
                      "MacroSpec",

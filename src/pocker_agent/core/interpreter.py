@@ -14,7 +14,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from .actions import resolve_zone
+from .actions import integer_bounds, normalize_action_payload, resolve_zone
 from .cards import decode, encode
 from .contracts import ToolError, ToolRegistry
 from .plan import GamePlan
@@ -211,9 +211,16 @@ class Interpreter:
             raise ToolError("illegal_action")
         backup = (deepcopy(self.state), deepcopy(self.events), self.pc)
         try:
-            self.state["input"] = {"action": action, "card_index": card_index,
-                                     "expression": "", "declared_suit": "", "amount": 0,
-                                     **payload}
+            descriptor = next(
+                (item for item in self.plan.actions if item.id == action), None
+            )
+            if descriptor is not None:
+                payload = normalize_action_payload(self.state, descriptor, payload)
+                self.state["input"] = {"action": action, **payload}
+            else:
+                self.state["input"] = {"action": action, "card_index": card_index,
+                                         "expression": "", "declared_suit": "", "amount": 0,
+                                         **payload}
             self.pc = node_inputs[key]
             self.advance()
         except Exception:
@@ -297,6 +304,11 @@ class Interpreter:
         for descriptor in self.plan.actions:
             inputs: list[dict[str, Any]] = []
             for item in descriptor.inputs:
+                if item.kind == "integer_range":
+                    minimum, maximum = integer_bounds(self.state, item)
+                    inputs.append({"id": item.id, "kind": item.kind,
+                                   "minimum": minimum, "maximum": maximum})
+                    continue
                 try:
                     zone_id = resolve_zone(self.state, item)
                 except ToolError:

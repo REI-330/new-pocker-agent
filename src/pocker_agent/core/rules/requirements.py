@@ -22,6 +22,7 @@ from typing import Any
 from ..capability import capability_check
 from ..contracts import FEATURE_TAGS
 from .composed import (
+    ActionInputSpec,
     AssignEffect,
     CompareEffect,
     ComposedRulesIR,
@@ -37,7 +38,7 @@ from .composed import (
 from .expr import guard_mechanisms, refs_in
 
 # Interaction input kinds the host can currently compile and validate.
-SUPPORTED_INPUT_KINDS = frozenset({"card_selection"})
+SUPPORTED_INPUT_KINDS = frozenset({"card_selection", "integer_range"})
 
 # Operations the compiler always emits around a composed game's turn loop.
 _ALWAYS_OPERATIONS = ("deck.deal", "logic.evaluate", "score_settle.call",
@@ -128,8 +129,9 @@ def derive_requirements(ir: ComposedRulesIR) -> tuple[Requirement, ...]:
             if item.kind not in SUPPORTED_INPUT_KINDS:
                 found.append(Requirement("input", item.kind, f"{base}.inputs.{item.id}",
                                          _clause(ir, base)))
-            found.append(Requirement("zone", item.zone, f"{base}.inputs.{item.id}",
-                                     _clause(ir, base)))
+            if isinstance(item, ActionInputSpec):
+                found.append(Requirement("zone", item.zone, f"{base}.inputs.{item.id}",
+                                         _clause(ir, base)))
         _effect_requirements(ir, action.effects, base, found)
         _effect_requirements(ir, action.trigger, f"{base}.trigger", found)
 

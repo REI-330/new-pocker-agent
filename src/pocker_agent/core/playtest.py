@@ -59,7 +59,7 @@ def descriptor_candidates(interpreter: Interpreter, action: str, *, newest: bool
     is bounded by the largest input zone (never the whole state), so this stays
     deterministic and finite.
     """
-    from .actions import descriptor_for, payload_for, resolve_zone
+    from .actions import descriptor_for, integer_bounds, payload_for, resolve_zone
 
     descriptor = descriptor_for(interpreter.plan, action)
     if descriptor is None:
@@ -67,6 +67,10 @@ def descriptor_candidates(interpreter: Interpreter, action: str, *, newest: bool
     limit = 1
     zones = interpreter.state.get("zones")
     for item in descriptor.inputs:
+        if item.kind == "integer_range":
+            minimum, maximum = integer_bounds(interpreter.state, item)
+            limit = max(limit, min(maximum - minimum + 1, INPUT_CANDIDATE_LIMIT))
+            continue
         try:
             zone_id = resolve_zone(interpreter.state, item)
         except ToolError:

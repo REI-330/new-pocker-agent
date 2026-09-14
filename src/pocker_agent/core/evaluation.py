@@ -83,6 +83,13 @@ def _visible_payload(
             for item in descriptor.get("inputs", []):
                 if not isinstance(item, Mapping):
                     return None
+                if item.get("kind") == "integer_range":
+                    minimum = item.get("minimum")
+                    maximum = item.get("maximum")
+                    if type(minimum) is not int or type(maximum) is not int:
+                        return None
+                    payload[str(item["id"])] = maximum if newest else minimum
+                    continue
                 options = item.get("options")
                 if not isinstance(options, list):
                     return None

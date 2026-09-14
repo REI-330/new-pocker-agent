@@ -28,15 +28,23 @@ from typing import Any
 from pydantic import ValidationError
 
 from ..contracts import ToolError, ToolRegistry
-from ..plan import ActionDescriptor, ActionInputDescriptor, GamePlan, plan_fingerprint
+from ..plan import (
+    ActionDescriptor,
+    ActionInputDescriptor,
+    GamePlan,
+    IntegerRangeInputDescriptor,
+    plan_fingerprint,
+)
 from ..zones import MAX_DUPLICATE_TOTAL
 from .composed import (
     MAX_PLAN_NODES,
     MAX_STEP_LIMIT,
+    ActionInputSpec,
     AssignEffect,
     CompareEffect,
     ComposedRulesIR,
     DrawEffect,
+    IntegerRangeInputSpec,
     MoveSelectionEffect,
     MoveTopEffect,
     RefillEffect,
@@ -49,7 +57,7 @@ from .expr import compile_expression, guard_mechanisms
 from .requirements import CompositionReport, clause_for, resolve_composition
 from .structure import analyse_control_flow
 
-COMPILER_VERSION = "m2-0.1"
+COMPILER_VERSION = "m2-0.2"
 
 # The only cycles the compiler emits are the turn loop (bounded by ``players`` via
 # ``set_turn_index``) and the round loop (bounded by ``max_rounds`` via
@@ -320,7 +328,8 @@ class _Compiler:
         found: set[str] = set()
         for action in self.actions:
             for item in action.inputs:
-                found.add(item.zone)
+                if isinstance(item, ActionInputSpec):
+                    found.add(item.zone)
             for effect in action.effects:
                 if isinstance(effect, (MoveSelectionEffect, RemovePairsEffect, RefillEffect,
                                       DrawEffect)):
@@ -956,11 +965,23 @@ def _action_descriptors(ir: ComposedRulesIR) -> list[ActionDescriptor]:
     scope are kept verbatim -- ``actor`` resolution happens against the live
     state, which is what lets one descriptor serve both seats.
     """
-    return [ActionDescriptor(id=action.id, label="", inputs=[
-        ActionInputDescriptor(id=item.id, kind=item.kind, zone=item.zone,
-                              scope=item.scope, min_count=item.min_count,
-                              max_count=item.max_count)
-        for item in action.inputs]) for action in ir.actions]
+    result: list[ActionDescriptor] = []
+    for action in ir.actions:
+        inputs: list[ActionInputDescriptor | IntegerRangeInputDescriptor] = []
+        for item in action.inputs:
+            if isinstance(item, ActionInputSpec):
+                inputs.append(ActionInputDescriptor(
+                    id=item.id, kind=item.kind, zone=item.zone, scope=item.scope,
+                    min_count=item.min_count, max_count=item.max_count,
+                ))
+            elif isinstance(item, IntegerRangeInputSpec):
+                inputs.append(IntegerRangeInputDescriptor(
+                    id=item.id, kind=item.kind,
+                    minimum=compile_expression(item.minimum),
+                    maximum=compile_expression(item.maximum),
+                ))
+        result.append(ActionDescriptor(id=action.id, label="", inputs=inputs))
+    return result
 
 
 def build_source_map(ir: ComposedRulesIR, entries: list[dict[str, str]]) -> dict[str, Any]:

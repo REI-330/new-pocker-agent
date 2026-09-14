@@ -16,6 +16,13 @@ from .compositions import (
 )
 from .contracts import Observation, OperationSpec, ToolError, ToolRegistry, ToolSpec
 from .corpus import coverage_report, load_corpus
+from .evaluation import (
+                     DEFAULT_EVALUATION_STRATEGIES,
+                     Distribution,
+                     SimulationEvaluation,
+                     SimulationRun,
+                     evaluate_simulations,
+)
 from .interpreter import Interpreter
 from .invariants import (
                      card_conservation,
@@ -103,6 +110,7 @@ from .zones import (
 
 __all__ = [
                      "AXES",
+                     "DEFAULT_EVALUATION_STRATEGIES",
                      "MATCH_TURN",
                      "PLAN_MACROS",
                      "REFERENCE_GAMES",
@@ -119,6 +127,7 @@ __all__ = [
                      "ComposedRulesIR",
                      "CompositionReport",
                      "ContractReport",
+                     "Distribution",
                      "FlowCase",
                      "FlowNode",
                      "GameArtifact",
@@ -135,6 +144,8 @@ __all__ = [
                      "Session",
                      "SessionStore",
                      "SheddingIR",
+                     "SimulationEvaluation",
+                     "SimulationRun",
                      "ToolBinding",
                      "ToolCall",
                      "ToolError",
@@ -173,6 +184,7 @@ __all__ = [
                      "derive_requirements",
                      "encode",
                      "ensure_playtested",
+                     "evaluate_simulations",
                      "exchange_compare_composition",
                      "exchange_strategy",
                      "exchange_suit_score_composition",

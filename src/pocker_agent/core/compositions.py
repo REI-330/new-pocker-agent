@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .decision import PolicyContext
 from .plan import GamePlan
 
 ZONE_RANKS = ("2", "3", "4", "5", "6", "7", "8", "9")
@@ -204,12 +205,14 @@ def composition_samples() -> dict[str, GamePlan]:
             "zones_exchange_suit_score": exchange_suit_score_composition()}
 
 
-def exchange_strategy(interpreter: Any):
+def exchange_strategy(context: PolicyContext):
     """Deterministic policy for the samples: first hand card for first market card."""
-    actions = interpreter.legal_actions()
+    actions = context.legal_actions
     if "exchange" not in actions:
         return (actions[0], {}) if actions else None
-    zones = interpreter.state["zones"]
-    hand = zones[f"hand-{interpreter.state['current_player']}"]["cards"]
-    market = zones["market"]["cards"]
-    return ("exchange", {"hand_cards": [hand[0].id], "market_cards": [market[0].id]})
+    zones = context.observation.get("zones", {})
+    hand = zones.get(f"hand-{context.player}", {}).get("cards", [])
+    market = zones.get("market", {}).get("cards", [])
+    payload = ({"hand_cards": [hand[0]["id"]], "market_cards": [market[0]["id"]]}
+               if hand and market else None)
+    return ("exchange", payload) if payload is not None else None

@@ -6,16 +6,16 @@ a session for a game whose playtest gate has not passed, keeps a monotonic
 session survives a restart without re-running the model (there is no model in
 this path at all).
 
-Games come from three places, all gated:
+Games come from two places, both gated:
 - host-compiled reference games (``reference.py``);
-- legacy agent plans registered from a host playtest report (``register_plan``);
-- immutable, verified artifacts published by ``verify/`` (``register_artifact``).
+- immutable, verified ``GameRules 1.0`` artifacts published by ``verify/``.
 
-An artifact is authorised only by a verification credential the host itself
-recorded (ADR-0008): ``register_artifact`` recomputes the plan hash, looks the
-cited ``verification_id`` up in the host table, and refuses a missing, stale or
-failed one. A session then restores against the *version* it ran, never against
-whatever now happens to sit under the same game id.
+An artifact is authorised only by the approved ``GameRules 1.0`` document and a
+verification credential the host itself recorded (ADR-0008):
+``register_artifact`` recompiles the rules, checks every identity binding, looks
+the cited ``verification_id`` up in the host table, and refuses a missing,
+stale or failed one. A session then restores against the *version* it ran, never
+against whatever now happens to sit under the same game id.
 """
 from __future__ import annotations
 
@@ -30,17 +30,18 @@ from pathlib import Path
 from typing import Any
 
 from ..storage import connect
-from .artifacts import GameArtifact, VerificationResult, build_artifact
+from .actions import normalize_action_payload
+from .artifacts import GameArtifact, VerificationResult
+from .game_rules import compile_rules, parse_rules, publish_rules, rules_fingerprint
 from .interpreter import Interpreter
 from .plan import GamePlan, plan_fingerprint
-from .policy import bot_action, run_bots
+from .policy import run_bots
 from .reference import REFERENCE_GAMES, build_plan, ensure_playtested, list_reference_games
 from .registry import core_registry
 from .verify import (
     VERIFICATION_SEEDS,
     VERIFICATION_STRATEGIES,
     publish_composed,
-    verify_plan,
 )
 
 # How many recent idempotency keys a session remembers. Enough for a retry
@@ -86,32 +87,6 @@ def _public_event(event: Any) -> dict[str, Any]:
             if key not in _EVENT_SECRET_KEYS}
 
 
-def _normalize_selection(item: Any, value: Any, options: set[str]) -> Any:
-    """Validate one declared action input and return the interpreter payload value.
-
-    Only ``card_selection`` is a declared input kind today (ADR-0007); an unknown
-    kind is passed through so a future typed input cannot silently be dropped by
-    this layer. The interpreter stays the final authority: an illegal card still
-    rolls the action back.
-    """
-    if getattr(item, "kind", None) != "card_selection":
-        return value
-    if isinstance(value, str):
-        cards = [value]
-    elif isinstance(value, (list, tuple)):
-        cards = [str(entry) for entry in value]
-    else:
-        raise ValueError(f"input_must_be_card_ids:{item.id}")
-    if len(cards) != len(set(cards)):
-        raise ValueError(f"duplicate_cards:{item.id}")
-    if not (item.min_count <= len(cards) <= item.max_count):
-        raise ValueError(f"selection_count_out_of_range:{item.id}")
-    unavailable = [card for card in cards if card not in options]
-    if unavailable:
-        raise ValueError(f"card_not_available:{item.id}:{unavailable[0]}")
-    return cards
-
-
 @dataclass
 class Session:
     id: str
@@ -147,34 +122,8 @@ class SessionStore:
     # ------------------------------------------------------- plan registry
     def register_plan(self, game_id: str, plan: dict[str, Any], playtest_report: dict[str, Any],
                       title: str = "") -> None:
-        """Register an agent-composed plan from a host playtest report.
-
-        Kept for the known-family agent path while the M4/M5 consumers migrate to
-        ``register_artifact``. Two rules keep a registration from rewriting
-        history: the built-in ids are reserved, and an existing agent game keeps
-        its plan unless the caller registers the *same* plan again.
-        """
-        if not playtest_report.get("ok"):
-            raise ValueError("plan_not_playtested:" + game_id)
-        if game_id in REFERENCE_GAMES:
-            raise ValueError(f"game_id_reserved:{game_id}")
-        validated = GamePlan.model_validate(plan)
-        fingerprint = plan_fingerprint(validated)
-        payload = {"plan": plan, "playtest": playtest_report,
-                   "title": title or plan.get("game_kind", game_id),
-                   "fingerprint": fingerprint}
-        existing = self._stored_plans().get(game_id)
-        if existing is not None:
-            # Rows written before fingerprints existed are compared by content.
-            previous = existing.get("fingerprint") or plan_fingerprint(existing["plan"])
-            if previous != fingerprint:
-                raise ValueError(f"plan_already_registered:{game_id}")
-        if self.path:
-            with connect(self.path) as db:
-                db.execute("INSERT OR REPLACE INTO core_agent_plans VALUES (?, ?)",
-                           (game_id, json.dumps(payload)))
-        else:
-            self.plans[game_id] = payload
+        """拒绝旧的裸 GamePlan 注册；发布必须携带 GameRules 与用户审批。"""
+        raise ValueError("raw_plan_registration_not_supported")
 
     def _stored_plans(self) -> dict[str, dict[str, Any]]:
         if not self.path:
@@ -203,19 +152,43 @@ class SessionStore:
         return {verification_id: json.loads(payload) for verification_id, payload in rows}
 
     def register_artifact(self, artifact: GameArtifact) -> None:
-        """Register an immutable artifact, authorised only by a recorded credential.
+        """Register an approved GameRules artifact bound to recorded verification.
 
-        This is the unbypassable gate: the plan hash is recomputed, the cited
-        ``verification_id`` must exist in the host's own table, and its binding
-        must match the artifact. A forged, missing, stale or failed credential is
-        refused. An existing ``(game_id, version)`` keeps its content, so a new
-        rule set must take a new version.
+        This is the final gate. It parses and recompiles the embedded rules,
+        requires their hash to be the explicitly approved hash, and then checks
+        the host-recorded verification credential. Supplying only a GamePlan or
+        a plan-only verification result can therefore never create a game.
         """
         if artifact.game_id in REFERENCE_GAMES:
             raise ValueError(f"game_id_reserved:{artifact.game_id}")
+        if artifact.generation_source != "game_rules_1_0":
+            raise ValueError("artifact_game_rules_required")
+        if not isinstance(artifact.ir, dict):
+            raise ValueError("artifact_game_rules_required")
+        try:
+            rules = parse_rules(artifact.ir)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("artifact_game_rules_invalid") from exc
+        rules_hash = rules_fingerprint(rules)
+        if rules.game_id != artifact.game_id:
+            raise ValueError("artifact_game_id_mismatch")
+        if artifact.ir_hash != rules_hash:
+            raise ValueError("artifact_rules_hash_mismatch")
+        if artifact.approval_ir_hash != rules_hash:
+            raise ValueError("artifact_approval_mismatch")
+        try:
+            compiled = compile_rules(rules, core_registry())
+        except (TypeError, ValueError) as exc:
+            raise ValueError("artifact_rules_do_not_compile") from exc
         validated = GamePlan.model_validate(artifact.plan)
         if plan_fingerprint(validated) != artifact.plan_hash:
             raise ValueError("artifact_plan_hash_mismatch")
+        if compiled.plan_hash != artifact.plan_hash:
+            raise ValueError("artifact_plan_not_compiled_from_rules")
+        if artifact.compiler_version != "game-rules-1.0":
+            raise ValueError("artifact_compiler_version_mismatch")
+        if artifact.registry_contract_hash != compiled.registry_contract_hash:
+            raise ValueError("artifact_registry_contract_mismatch")
         stored = self._stored_verifications().get(artifact.verification_id)
         if stored is None:
             raise ValueError(f"verification_unknown:{artifact.verification_id}")
@@ -228,7 +201,7 @@ class SessionStore:
         with self.lock:
             existing = self._find_artifact(artifact.game_id, artifact.version)
             if existing is not None:
-                if existing["plan_hash"] != artifact.plan_hash:
+                if existing != payload:
                     raise ValueError(
                         f"artifact_version_conflict:{artifact.game_id}@{artifact.version}")
                 return
@@ -259,49 +232,27 @@ class SessionStore:
         self.register_artifact(artifact)
         return artifact
 
-    @staticmethod
-    def _host_strategies(plan: GamePlan) -> tuple[Any, ...]:
-        """The host-owned policy for a plan, chosen by mechanism family.
-
-        A known family reuses the reference strategy that already gates it; an
-        agent-authored plan uses the host bot policy. The caller never supplies
-        the policy, so it cannot pick a lenient gate.
-        """
-        for game in REFERENCE_GAMES.values():
-            if game.kind == plan.game_kind:
-                return (game.strategy,)
-        return (bot_action,)
+    def verify_and_register_rules(self, rules: Any, *, version: int,
+                                  approval_rules_hash: str, title: str | None = None,
+                                  registry: Any = None,
+                                  strategies: Any = VERIFICATION_STRATEGIES,
+                                  seeds: Any = VERIFICATION_SEEDS, invariants: Any = (),
+                                  require_wait_coverage: bool = True) -> GameArtifact:
+        """验证并注册一份经用户按哈希确认的 GameRules 1.0 文档。"""
+        _, result, artifact = publish_rules(
+            rules, {"rules_hash": approval_rules_hash, "version": version, "title": title},
+            registry=registry or core_registry(), strategies=strategies, seeds=seeds,
+            invariants=invariants, require_wait_coverage=require_wait_coverage)
+        self.record_verification(result)
+        self.register_artifact(artifact)
+        return artifact
 
     def verify_and_register_plan(self, game_id: str, plan: GamePlan | dict[str, Any],
                                  title: str = "", *, strategies: Any = None,
                                  seeds: Any = None,
                                  generation_source: str = "known_parameters") -> GameArtifact:
-        """Host gate for the agent path: verify with host policies, then register.
-
-        The caller's playtest report is never used as evidence; the host re-runs
-        the gate with a policy it chose. Re-registering the same plan is
-        idempotent, while a new rule set takes a new version.
-        """
-        if game_id in REFERENCE_GAMES:
-            raise ValueError(f"game_id_reserved:{game_id}")
-        validated = plan if isinstance(plan, GamePlan) else GamePlan.model_validate(plan)
-        chosen = tuple(strategies) if strategies else self._host_strategies(validated)
-        chosen_seeds = tuple(seeds) if seeds else VERIFICATION_SEEDS
-        result = verify_plan(validated, core_registry(), strategies=chosen,
-                             seeds=chosen_seeds)
-        if not result.ok:
-            raise ValueError("verification_failed:" + "; ".join(result.failures))
-        fingerprint = plan_fingerprint(validated)
-        existing = self._find_artifact(game_id, None)
-        if existing is not None and existing["plan_hash"] == fingerprint:
-            return GameArtifact.from_dict(existing)
-        version = 1 if existing is None else int(existing["version"]) + 1
-        artifact = build_artifact(game_id=game_id, version=version,
-                                  title=title or validated.game_kind, plan=validated,
-                                  verification=result, generation_source=generation_source)
-        self.record_verification(result)
-        self.register_artifact(artifact)
-        return artifact
+        """拒绝旧的裸 GamePlan 验证注册；兼容输入必须先归一为 GameRules。"""
+        raise ValueError("raw_plan_registration_not_supported")
 
     def _stored_artifacts(self) -> dict[tuple[str, int], dict[str, Any]]:
         if not self.path:
@@ -509,33 +460,12 @@ class SessionStore:
                            if item.id == action_id), None)
         if descriptor is None:
             return dict(input_values)
-        declared = {item.id: item for item in descriptor.inputs}
-        unknown = sorted(set(input_values) - set(declared))
-        if unknown:
-            raise ValueError(f"unknown_action_input:{unknown[0]}")
-        options = self._action_options(interpreter, action_id)
-        payload: dict[str, Any] = {}
-        for input_id, item in declared.items():
-            if input_id not in input_values:
-                if item.min_count > 0:
-                    raise ValueError(f"missing_action_input:{input_id}")
-                continue
-            payload[input_id] = _normalize_selection(
-                item, input_values[input_id], options.get(input_id, set()))
-        return payload
-
-    @staticmethod
-    def _action_options(interpreter: Interpreter, action_id: str) -> dict[str, set[str]]:
-        """The viewer-visible card ids per input, scoped to the acting seat."""
-        state = interpreter.state
-        actor = f"player-{int(state.get('current_player', 0)) + 1}"
-        options: dict[str, set[str]] = {}
-        for descriptor in interpreter.action_descriptors(actor):
-            if descriptor["id"] != action_id:
-                continue
-            for item in descriptor["inputs"]:
-                options[item["id"]] = set(item.get("options", []))
-        return options
+        return normalize_action_payload(
+            interpreter.state,
+            descriptor,
+            input_values,
+            unavailable_error="card_not_available",
+        )
 
     def _cached_response(self, session: Session, request_id: str | None,
                          fingerprint: str) -> dict[str, Any] | None:

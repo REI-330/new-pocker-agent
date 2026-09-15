@@ -24,6 +24,7 @@ against the typed schemas by the architecture tests.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -62,6 +63,70 @@ def one_of(*schemas: dict[str, Any]) -> dict[str, Any]:
     if len(schemas) < 2:
         raise ToolError("one_of_requires_two_or_more_schemas")
     return {"oneOf": [deepcopy(schema) for schema in schemas]}
+
+
+def validate_schema(value: Any, schema: dict[str, Any], path: str = "$") -> None:
+    """Validate the small JSON-Schema subset published by mechanism contracts."""
+    if "oneOf" in schema:
+        errors: list[str] = []
+        for branch in schema["oneOf"]:
+            try:
+                validate_schema(value, branch, path)
+                return
+            except ToolError as error:
+                errors.append(str(error))
+        raise ToolError(f"schema_no_union_branch:{path}:{errors[0] if errors else 'empty'}")
+    expected = schema.get("type", "any")
+    if isinstance(expected, list):
+        for candidate in expected:
+            try:
+                validate_schema(value, {**schema, "type": candidate}, path)
+                return
+            except ToolError:
+                pass
+        raise ToolError(f"schema_type:{path}:{expected}")
+    if expected == "any":
+        return
+    if expected == "null":
+        if value is not None:
+            raise ToolError(f"schema_type:{path}:null")
+        return
+    if expected == "integer":
+        if type(value) is not int:
+            raise ToolError(f"schema_type:{path}:integer")
+        return
+    if expected == "string":
+        if not isinstance(value, str):
+            raise ToolError(f"schema_type:{path}:string")
+        return
+    if expected == "boolean":
+        if type(value) is not bool:
+            raise ToolError(f"schema_type:{path}:boolean")
+        return
+    if expected == "array":
+        if not isinstance(value, (list, tuple)):
+            raise ToolError(f"schema_type:{path}:array")
+        for index, item in enumerate(value):
+            validate_schema(item, schema.get("items", ANY), f"{path}[{index}]")
+        return
+    if expected == "object":
+        if not isinstance(value, dict):
+            if not schema.get("properties") and hasattr(value, "as_dict"):
+                return
+            raise ToolError(f"schema_type:{path}:object")
+        properties = schema.get("properties", {})
+        missing = [name for name in schema.get("required", []) if name not in value]
+        if missing:
+            raise ToolError(f"schema_required:{path}.{missing[0]}")
+        if schema.get("additionalProperties") is False:
+            unknown = sorted(set(value) - set(properties))
+            if unknown:
+                raise ToolError(f"schema_unknown:{path}.{unknown[0]}")
+        for name, item in value.items():
+            if name in properties:
+                validate_schema(item, properties[name], f"{path}.{name}")
+        return
+    raise ToolError(f"schema_unknown_type:{path}:{expected}")
 
 
 INT_LIST = array(INTEGER)
@@ -178,8 +243,14 @@ class ToolSpec:
     factory: Callable[..., Any]
     operations: tuple[OperationSpec, ...]
     config_schema: dict[str, Any] = field(default_factory=dict)
+    api_version: str = "1.0"
+    version: str = "1.0.0"
 
     def __post_init__(self) -> None:
+        if self.api_version != "1.0":
+            raise ToolError(f"unsupported_mechanism_api:{self.name}:{self.api_version}")
+        if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", self.version) is None:
+            raise ToolError(f"invalid_mechanism_version:{self.name}")
         # Binding configuration is declared once on the tool; every operation of
         # that tool sees the same config. An operation must not carry a competing
         # schema -- that would let the tool config and the operation disagree.
@@ -199,7 +270,8 @@ class ToolSpec:
         raise ToolError(f"unknown_tool_operation:{self.name}.{name}")
 
     def export(self) -> dict[str, Any]:
-        return {"name": self.name, "config_schema": deepcopy(self.config_schema),
+        return {"name": self.name, "api_version": self.api_version,
+                "version": self.version, "config_schema": deepcopy(self.config_schema),
                 "operations": [op.export() for op in self.operations]}
 
 
@@ -226,6 +298,7 @@ class ToolRegistry:
 
     def create(self, name: str, **config: Any) -> Any:
         spec = self.spec(name)
+        validate_schema(spec.config_schema, config, f"{name}.config")
         try:
             return spec.factory(**config)
         except TypeError as error:

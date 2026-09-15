@@ -121,7 +121,7 @@ def _normalize_ir(ir: Any) -> dict[str, Any]:
     Normalising on write means a stored session always holds a canonical IR, and
     an unparseable one is refused before anything is written.
     """
-    from ..core.ir import parse_design_ir
+    from ..core.game_rules import normalize_rules
 
     if isinstance(ir, BaseModel):
         payload: Any = ir.model_dump(mode="json")
@@ -130,7 +130,7 @@ def _normalize_ir(ir: Any) -> dict[str, Any]:
     else:
         raise ValueError("design_ir_must_be_object")
     try:
-        parsed = parse_design_ir(payload)
+        parsed = normalize_rules(payload)
     except Exception as error:                      # pydantic ValidationError
         raise ValueError(f"invalid_ir:{str(error).splitlines()[0]}") from error
     return parsed.model_dump(mode="json")
@@ -278,6 +278,11 @@ class DesignStore:
             updated.description = str(changes["description"])[:MAX_DESCRIPTION]
         if "ir" in changes:
             normalized = _normalize_ir(changes["ir"])
+            normalized["game_id"] = current.game_id
+            source = normalized.get("execution", {}).get("rules")
+            if isinstance(source, dict) and "game_id" in source:
+                source["game_id"] = current.game_id
+            normalized = _normalize_ir(normalized)
             updated.ir = normalized
             updated.ir_hash = design_ir_hash(normalized)
         if "diagnosis" in changes:

@@ -1,8 +1,8 @@
 """v0.4 application surface: capabilities, games, sessions, and the agent loop.
 
 This app talks only to ``core`` and ``agent``. Every playable game passes the
-playtest gate: reference games at build time, agent-composed games at
-``finalize`` time (enforced again by ``SessionStore.register_plan``).
+playtest gate: reference games at build time, and generated games through the
+``GameRules 1.0`` verify, confirm and publish lifecycle.
 """
 from __future__ import annotations
 
@@ -34,15 +34,15 @@ from .agent import (
 from .configuration import ConfigInput, ConfigStore
 from .core import (
     PLAN_MACROS,
-    ComposedRulesIR,
     SessionStore,
     capability_matrix,
     core_registry,
     coverage_report,
     default_macros,
+    normalize_rules,
     promotion_report,
+    rules_fingerprint,
 )
-from .core.ir import parse_design_ir
 from .llm import OpenAICompatibleClient
 from .storage import data_path
 
@@ -494,8 +494,8 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
 
         Order is fixed: the user confirmation must name the *current* ``ir_hash``,
         the stored host credential must bind the same rules, and registration then
-        re-runs ``publish_composed`` with ``approval_ir_hash`` so a model can never
-        register or self-confirm (ADR-0008).
+        recompiles the same ``GameRules`` and checks its approval hash again, so
+        a model can never register or self-confirm (ADR-0008).
         """
         current = designs.get(session_id)                    # KeyError -> 404
         if not current.ir or not current.ir_hash:
@@ -511,9 +511,6 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
         if not (verification.get("ok")
                 and verification.get("ir_hash") == current.ir_hash):
             raise ValueError("verification_required: 需要绑定当前规则的验证证据")
-        parsed = parse_design_ir(current.ir)
-        if not isinstance(parsed, ComposedRulesIR):
-            raise ValueError("publish_requires_composed_ir: 仅组合规则可注册新版本")
         # Idempotency across a crash between the artifact write and this commit:
         # if these exact rules already have a version, reuse it instead of
         # registering a second one.
@@ -524,9 +521,9 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
         else:
             version = payload.version or store.next_version(current.game_id)
             title = payload.title or _design_title(current)
-            artifact = store.verify_and_register(
-                parsed, game_id=current.game_id, version=version, title=title,
-                approval_ir_hash=current.ir_hash)
+            artifact = store.verify_and_register_rules(
+                current.ir, version=version, title=title,
+                approval_rules_hash=current.ir_hash)
             summary = _artifact_summary(artifact.as_dict())
             idempotent = False
         updated = designs.commit(session_id, payload.expected_revision
@@ -592,24 +589,15 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
         result = run_loop(goal, make_model(),
                           history=[message.model_dump() for message in payload.messages],
                           max_steps=payload.max_steps)
-        registered = False
-        if result.finalized and result.plan and result.ir:
-            try:
-                # Host gate: re-verify with a host-chosen policy, then register an
-                # immutable artifact. The loop's own playtest report is not used
-                # as evidence (ADR-0008).
-                store.verify_and_register_plan(result.ir["game_id"], result.plan,
-                                               result.ir.get("title", ""))
-                registered = True
-            except ValueError as error:
-                # The design itself is still valid and worth showing; only the
-                # registration was refused (a reserved or already-used id).
-                body = result.as_dict()
-                body["registered"] = False
-                body["registration_error"] = str(error)
-                return body
         body = result.as_dict()
-        body["registered"] = registered
+        if result.finalized and result.plan and result.ir:
+            # 旧生成器只产生候选。兼容 IR 立即归一后返回给调用者，后续必须走
+            # 设计会话的 verify -> confirm -> publish，不能在模型回合内自行注册。
+            rules = normalize_rules(result.ir)
+            body["ir"] = rules.model_dump(mode="json")
+            body["ir_hash"] = rules_fingerprint(rules)
+            body["approval_required"] = True
+        body["registered"] = False
         return body
 
     @app.post("/api/sessions")

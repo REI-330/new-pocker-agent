@@ -34,7 +34,7 @@ def test_create_read_and_update_over_http(tmp_path):
     assert updated.status_code == 200, updated.text
     body = updated.json()
     assert body["revision"] == 1 and body["status"] == "diagnosed"
-    assert body["ir"]["kind"] == "composed"
+    assert body["ir"]["kind"] == "game_rules"
     assert body["ir_hash"]
 
 
@@ -113,7 +113,7 @@ def test_a_restarted_app_restores_design_sessions(tmp_path):
     restored = restarted.get(f"/api/designs/{created['session_id']}").json()
     assert restored["revision"] == 1
     assert restored["status"] == "diagnosed"
-    assert restored["ir"]["kind"] == "composed"
+    assert restored["ir"]["kind"] == "game_rules"
     assert restored["diagnosis"] == {"ok": True}
 
 

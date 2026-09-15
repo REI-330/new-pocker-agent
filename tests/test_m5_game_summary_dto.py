@@ -14,7 +14,6 @@ from pydantic import ValidationError
 from test_g2_m2 import scenario_a_ir
 
 from pocker_agent.app import GameSummaryDTO, create_app
-from pocker_agent.core.reference import build_plan
 
 PLAYTEST_KEYS = {"ok", "seeds", "checks", "failures", "covered_wait_nodes",
                  "event_counts", "evidence"}
@@ -38,11 +37,6 @@ def client(tmp_path):
     published = test_client.post(f"/api/designs/{session_id}/publish", json={})
     assert published.status_code == 200, published.text
 
-    # An agent-registered plan is the third evidence shape.
-    app.state.session_store.register_plan(
-        "dto-agent", build_plan("war").model_dump(mode="json"),
-        {"ok": True, "seeds": [3], "checks": ["agent check"], "failures": [],
-         "covered_wait_nodes": ["turn"], "event_counts": {"turn": 2}}, "Dto Agent")
     return test_client
 
 
@@ -52,10 +46,10 @@ def _games(client) -> dict:
 
 def test_every_game_has_the_complete_playtest_shape(client):
     games = _games(client)
-    assert {"arithmetic24", "dto-composed", "dto-agent"} <= set(games)
+    assert {"arithmetic24", "dto-composed"} <= set(games)
     for game in games.values():
         assert set(game["playtest"]) == PLAYTEST_KEYS, game["id"]
-        assert game["playtest"]["evidence"] in ("reference", "verification", "agent_playtest")
+        assert game["playtest"]["evidence"] in ("reference", "verification")
 
 
 def test_a_reference_game_reports_reference_evidence(client):
@@ -75,13 +69,6 @@ def test_a_published_artifact_summarises_its_verification_credential(client):
     assert report["seeds"] == verification["seeds"]
     assert report["checks"] == verification["checks"]
     assert report["covered_wait_nodes"] == verification["covered_wait_nodes"]
-
-
-def test_an_agent_plan_reports_its_registration_playtest(client):
-    game = _games(client)["dto-agent"]
-    assert game["playtest"]["evidence"] == "agent_playtest"
-    assert game["playtest"]["checks"] == ["agent check"]
-    assert game["source"] == "agent_compose"
 
 
 def test_optional_artifact_fields_are_explicit_nulls(client):

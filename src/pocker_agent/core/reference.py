@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 
-from .interpreter import Interpreter
+from .decision import Policy, PolicyContext
 from .plan import GamePlan
 from .plans import (
     arithmetic_plan,
@@ -25,18 +25,20 @@ from .plans import (
 from .playtest import PlaytestReport, card_first, first_legal, playtest, resilient_first
 from .policy import bet_first
 from .registry import core_registry
+from .tools import ExactExpressionTool
 
 RANK_VALUES = {"A": 1, **{str(n): n for n in range(2, 11)}, "J": 11, "Q": 12, "K": 13}
 DECK_RANKS = ("A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K")
 DECK_SUITS = ("S", "H", "D", "C")
 
 
-def _solve_or_claim_none(interpreter: Interpreter):
+def _solve_or_claim_none(context: PolicyContext):
     """Deterministic policy for the arithmetic drill: answer correctly."""
-    actions = interpreter.legal_actions()
+    actions = context.legal_actions
     if "submit_expression" not in actions:
         return (actions[0], {}) if actions else None
-    answer = interpreter.tools["exact_expression"].solve(interpreter.state["numbers"])
+    answer = ExactExpressionTool(target=int(context.observation["target"])).solve(
+        context.observation["numbers"])
     if answer is None:
         return ("no_solution", {})
     return ("submit_expression", {"expression": answer})
@@ -48,7 +50,7 @@ class ReferenceGame:
     title: str
     kind: str
     build: Callable[[], GamePlan]
-    strategy: Callable[[Interpreter], tuple[str, dict] | None]
+    strategy: Policy
 
 
 def _arithmetic24() -> GamePlan:
@@ -72,12 +74,19 @@ def _five_card_poker() -> GamePlan:
     return five_card_poker_plan(stacks=100, min_raise=10)
 
 
-def _stand_at_17(interpreter: Interpreter):
-    actions = interpreter.legal_actions()
+def _stand_at_17(context: PolicyContext):
+    actions = context.legal_actions
     if not actions:
         return None
-    rank = interpreter.tools["point_total"].total(interpreter.state["hands"][0])
-    return ("stand", {}) if rank["total"] >= 17 else ("hit", {})
+    actor = context.observation["players"][context.player]
+    ranks = [card["rank"] for card in actor["hand"]]
+    total = sum(11 if rank == "A" else 10 if rank in {"J", "Q", "K"} else int(rank)
+                for rank in ranks)
+    aces = ranks.count("A")
+    while total > 21 and aces:
+        total -= 10
+        aces -= 1
+    return ("stand", {}) if total >= 17 else ("hit", {})
 
 
 def _blackjack() -> GamePlan:

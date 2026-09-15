@@ -44,7 +44,7 @@ def test_the_version_list_is_a_cheap_summary(published):
     assert [item["version"] for item in versions] == [1]
     summary = versions[0]
     assert summary["title"] == "三轮公开比较积分"
-    assert summary["generation_source"] == "composed_rules"
+    assert summary["generation_source"] == "game_rules_1_0"
     assert summary["plan_hash"] and summary["verification_id"]
     assert summary["ir_hash"] == published["ir_hash"]
     assert "plan" not in summary and "ir" not in summary
@@ -54,8 +54,9 @@ def test_the_version_detail_exposes_rules_evidence_and_clause_paths(published):
     detail = published["client"].get("/api/games/m5-version/versions/1")
     assert detail.status_code == 200, detail.text
     body = detail.json()
-    assert body["rules"]["kind"] == "composed"
-    assert body["rules"]["requirements"], "the confirmed clauses must be visible"
+    assert body["rules"]["kind"] == "game_rules"
+    assert body["rules"]["execution"]["rules"]["requirements"], \
+        "the confirmed clauses must be visible"
     assert body["artifact"] == published["artifact"]
     verification = body["verification"]
     assert verification["ok"] is True

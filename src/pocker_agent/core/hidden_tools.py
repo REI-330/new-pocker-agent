@@ -23,7 +23,7 @@ class HiddenDrawTool:
     @staticmethod
     def _seat(state: dict[str, Any], seat: int | None, hands: list) -> int:
         resolved = state.get("current_player", 0) if seat is None else seat
-        if not 0 <= resolved < len(hands):
+        if type(resolved) is not int or not 0 <= resolved < len(hands):
             raise ToolError("invalid_seat")
         return resolved
 
@@ -36,13 +36,15 @@ class HiddenDrawTool:
                 ranks.append(card.rank)
         return [f"ask:{rank}" for rank in ranks]
 
-    def ask(self, state: dict[str, Any], action: str, asker: int | None = None) -> dict[str, Any]:
+    def ask(self, state: dict[str, Any], action: str, asker: int | None = None,
+            target: int | None = None) -> dict[str, Any]:
         if not isinstance(action, str) or not action.startswith("ask:") or len(action) <= 4:
             raise ToolError("invalid_ask")
         rank = action.split(":", 1)[1]
         hands = self._hands(state)
         player = self._seat(state, asker, hands)
-        source = (player + 1) % len(hands)
+        source = ((player + 1) % len(hands) if target is None
+                  else self._seat(state, target, hands))
         if source == player:
             raise ToolError("no_opponent")
         if not any(card.rank == rank for card in hands[player]):
@@ -52,7 +54,9 @@ class HiddenDrawTool:
             hands[source] = [card for card in hands[source] if card.rank != rank]
             hands[player].extend(taken)
             return {"got": len(taken), "fished": False, "source": source}
-        stock = state.get("stock") or []
+        stock = state.get("stock")
+        if not isinstance(stock, list):
+            raise ToolError("hidden_draw_requires_stock")
         if stock:
             hands[player].append(stock.pop())
             state["stock"] = stock
@@ -80,13 +84,18 @@ class HiddenDrawTool:
                 kept.append(card)
             hands[player] = kept
         scores = state.setdefault("pairs", [0] * len(hands))
+        if (not isinstance(scores, list) or len(scores) != len(hands)
+                or any(type(value) is not int or value < 0 for value in scores)):
+            raise ToolError("hidden_draw_pairs_invalid")
         scores[player] += removed
         return {"pairs": removed, "hand_size": len(hands[player]), "total": scores[player]}
 
     def refill(self, state: dict[str, Any], seat: int | None = None) -> dict[str, Any]:
         hands = self._hands(state)
         player = self._seat(state, seat, hands)
-        stock = state.get("stock") or []
+        stock = state.get("stock")
+        if not isinstance(stock, list):
+            raise ToolError("hidden_draw_requires_stock")
         if hands[player] or not stock:
             return {"drew": 0}
         hands[player].append(stock.pop())
@@ -95,5 +104,7 @@ class HiddenDrawTool:
 
     def is_finished(self, state: dict[str, Any]) -> bool:
         hands = self._hands(state)
-        stock = state.get("stock") or []
+        stock = state.get("stock")
+        if not isinstance(stock, list):
+            raise ToolError("hidden_draw_requires_stock")
         return not stock and any(not hand for hand in hands)

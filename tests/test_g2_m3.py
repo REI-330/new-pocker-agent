@@ -28,12 +28,16 @@ from pocker_agent.core import (
     Interpreter,
     SessionStore,
     ToolError,
+    bind_rules_game_id,
     compile_composed,
     core_registry,
+    normalize_rules,
     playtest,
+    rules_fingerprint,
     run_bots,
 )
 from pocker_agent.core.actions import descriptor_for, payload_for, resolve_zone
+from pocker_agent.core.decision import policy_context
 from pocker_agent.core.ir import parse_design_ir
 from pocker_agent.core.plan import GamePlan
 from pocker_agent.core.policy import bot_action
@@ -76,7 +80,7 @@ def test_the_bot_payload_comes_from_the_live_zone_not_the_action_name():
     compiled = compiled_scenario_a()
     interpreter = Interpreter(compiled.plan, core_registry(), seed=0)
     interpreter.setup()
-    action, payload = bot_action(interpreter)
+    action, payload = bot_action(policy_context(interpreter))
     seat = interpreter.state["current_player"]
     hand = interpreter.state["zones"][f"hand-{seat}"]["cards"]
     assert action == "play"
@@ -126,8 +130,9 @@ def test_the_view_publishes_actions_with_viewer_filtered_options():
     interpreter.setup()
     seat = interpreter.state["current_player"]
     hand_ids = [card.id for card in interpreter.state["zones"][f"hand-{seat}"]["cards"]]
-    # public hands: every viewer sees the actor's options
-    action = interpreter.view("player-2")["actions"][0]
+    # 只有当前行动者收到动作面，防止旁观者利用合法动作作为侧信道。
+    actor_view = f"player-{seat + 1}"
+    action = interpreter.view(actor_view)["actions"][0]
     assert action["id"] == "play"
     assert action["inputs"][0]["options"] == hand_ids
     assert "owner" not in action["inputs"][0]
@@ -146,7 +151,7 @@ def test_action_options_are_hidden_from_a_non_owner():
     actor = interpreter.state["current_player"]
     other = "player-2" if actor == 0 else "player-1"
     assert interpreter.view(f"player-{actor + 1}")["actions"][0]["inputs"][0]["options"]
-    assert interpreter.view(other)["actions"][0]["inputs"][0]["options"] == []
+    assert "actions" not in interpreter.view(other)
 
 
 # -------------------------------------------------------------- end-to-end
@@ -162,8 +167,12 @@ def test_a_composed_game_runs_through_the_session_store_with_bot_payloads(tmp_pa
     report = playtest(compiled.plan, core_registry(), bot_action, seeds=(3,))
     assert report.ok, report.failures
     store = SessionStore(tmp_path / "g2-m3a.sqlite")
-    store.register_plan("composed-duel", compiled.plan.model_dump(mode="json"),
-                        report.as_dict(), title="组合对局")
+    rules = bind_rules_game_id(normalize_rules(scenario_a_ir()), "composed-duel")
+    store.verify_and_register_rules(
+        rules, version=1, title="组合对局",
+        approval_rules_hash=rules_fingerprint(rules),
+        strategies=(bot_action,), seeds=(3,),
+    )
     session = store.create("composed-duel", seed=3)
     assert session.revision == 0
     descriptor = descriptor_for(session.plan, "play")
@@ -264,7 +273,7 @@ def test_the_bot_fills_every_zone_input():
     compiled = compile_composed(parse_design_ir(dual_zone_ir()), core_registry())
     interpreter = Interpreter(compiled.plan, core_registry(), seed=0)
     interpreter.setup()
-    action, payload = bot_action(interpreter)
+    action, payload = bot_action(policy_context(interpreter))
     seat = interpreter.state["current_player"]
     hand = [card.id for card in interpreter.state["zones"][f"hand-{seat}"]["cards"]]
     market = [card.id for card in interpreter.state["zones"]["market"]["cards"]]

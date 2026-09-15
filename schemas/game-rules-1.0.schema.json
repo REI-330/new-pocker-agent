@@ -1,0 +1,314 @@
+{
+  "$defs": {
+    "ComponentSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "card_deck",
+            "object_pool",
+            "board",
+            "resource",
+            "zone"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "config": {
+          "additionalProperties": true,
+          "title": "Config",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "title": "ComponentSpec",
+      "type": "object"
+    },
+    "ExecutionBudget": {
+      "additionalProperties": false,
+      "properties": {
+        "step_limit": {
+          "default": 2048,
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Step Limit",
+          "type": "integer"
+        }
+      },
+      "title": "ExecutionBudget",
+      "type": "object"
+    },
+    "ExecutionSpec": {
+      "additionalProperties": false,
+      "description": "确定性编译配置；旧 profile 只用于兼容导入。",
+      "properties": {
+        "profile": {
+          "enum": [
+            "composed-1.0",
+            "arithmetic-0.4",
+            "war-0.4",
+            "shedding-0.4",
+            "whist-0.4",
+            "poker-0.4",
+            "blackjack-0.4",
+            "go_fish-0.4",
+            "uno-0.4"
+          ],
+          "title": "Profile",
+          "type": "string"
+        },
+        "rules": {
+          "additionalProperties": true,
+          "title": "Rules",
+          "type": "object"
+        }
+      },
+      "required": [
+        "profile",
+        "rules"
+      ],
+      "title": "ExecutionSpec",
+      "type": "object"
+    },
+    "MechanismBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "title": "Version",
+          "type": "string"
+        },
+        "config": {
+          "additionalProperties": true,
+          "title": "Config",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "MechanismBinding",
+      "type": "object"
+    },
+    "ParticipantSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "maximum": 16,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "roles": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Roles",
+          "type": "array"
+        },
+        "teams": {
+          "items": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "maxItems": 16,
+          "title": "Teams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "count"
+      ],
+      "title": "ParticipantSpec",
+      "type": "object"
+    },
+    "RuleMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Description",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "RuleMeta",
+      "type": "object"
+    },
+    "StateFieldSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "value_type": {
+          "default": "any",
+          "enum": [
+            "any",
+            "integer",
+            "number",
+            "boolean",
+            "string",
+            "card",
+            "cards",
+            "array",
+            "object"
+          ],
+          "title": "Value Type",
+          "type": "string"
+        },
+        "scope": {
+          "default": "global",
+          "enum": [
+            "global",
+            "player",
+            "team"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "visibility": {
+          "default": "host",
+          "enum": [
+            "public",
+            "owner",
+            "team",
+            "host"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        },
+        "initial": {
+          "default": null,
+          "title": "Initial"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "StateFieldSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "kind": {
+      "const": "game_rules",
+      "default": "game_rules",
+      "title": "Kind",
+      "type": "string"
+    },
+    "game_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "title": "Game Id",
+      "type": "string"
+    },
+    "rules_version": {
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "title": "Rules Version",
+      "type": "string"
+    },
+    "meta": {
+      "$ref": "#/$defs/RuleMeta"
+    },
+    "participants": {
+      "$ref": "#/$defs/ParticipantSpec"
+    },
+    "components": {
+      "items": {
+        "$ref": "#/$defs/ComponentSpec"
+      },
+      "maxItems": 64,
+      "title": "Components",
+      "type": "array"
+    },
+    "state": {
+      "items": {
+        "$ref": "#/$defs/StateFieldSpec"
+      },
+      "maxItems": 128,
+      "title": "State",
+      "type": "array"
+    },
+    "mechanisms": {
+      "items": {
+        "$ref": "#/$defs/MechanismBinding"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Mechanisms",
+      "type": "array"
+    },
+    "execution": {
+      "$ref": "#/$defs/ExecutionSpec"
+    },
+    "budget": {
+      "$ref": "#/$defs/ExecutionBudget"
+    },
+    "compatibility_import": {
+      "default": false,
+      "title": "Compatibility Import",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "game_id",
+    "rules_version",
+    "meta",
+    "participants",
+    "mechanisms",
+    "execution"
+  ],
+  "title": "GameRules",
+  "type": "object"
+}

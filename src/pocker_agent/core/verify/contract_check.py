@@ -479,6 +479,8 @@ def contract_check(ir: ComposedRulesIR, plan: GamePlan, registry: ToolRegistry,
         for strategy in strategies:
             trace = record_trace(plan, registry, strategy, seed, max_steps=max_steps)
             traces.append(trace)
+            if trace.error:
+                failures.setdefault("replay", f"{seed}:{strategy.__name__}:{trace.error}")
             problems = compare_traces(trace, replay_trace(plan, registry, trace))
             if problems:
                 failures.setdefault("replay", f"{seed}:{strategy.__name__}:{problems[0]}")

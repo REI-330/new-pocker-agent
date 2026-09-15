@@ -20,9 +20,16 @@ from typing import Any
 from ..core.artifacts import VerificationResult, build_artifact
 from ..core.capability import capability_matrix
 from ..core.contracts import ToolError
+from ..core.decision import policy_context
+from ..core.game_rules import (
+    bind_rules_game_id,
+    compile_rules,
+    normalize_rules,
+    source_ir,
+    verify_rules,
+)
 from ..core.interpreter import Interpreter
-from ..core.ir import check_ir, host_compile, parse_design_ir
-from ..core.plan import plan_fingerprint
+from ..core.ir import check_ir
 from ..core.policy import bot_action
 from ..core.registry import core_registry
 from ..core.rules import (
@@ -30,14 +37,11 @@ from ..core.rules import (
     CompileError,
     ComposedRulesIR,
     analyse_control_flow,
-    compile_composed,
     resolve_composition,
 )
 from ..core.verify import (
     VERIFICATION_SEEDS,
     VERIFICATION_STRATEGIES,
-    verify_composed,
-    verify_plan,
 )
 from ..core.verify.trace import summarize
 
@@ -186,19 +190,21 @@ class DesignService:
     # --------------------------------------------------------------- rules IR
     def _tool_propose_ir(self, args: dict[str, Any], request_id: str | None):
         payload = args.get("ir", args)
+        session = self.session()
         try:
-            parsed = parse_design_ir(payload)
+            rules = normalize_rules(payload, self.registry)
+            rules = bind_rules_game_id(rules, session.game_id)
+            parsed = source_ir(rules)
         except Exception as error:                          # pydantic ValidationError
             return _fail("propose_ir", f"invalid_ir:{_ir_errors(error)}")
-        normalized = parsed.model_dump(mode="json")
+        normalized = rules.model_dump(mode="json")
         requirements = _requirement_ids(parsed)
-        session = self.session()
         updated = self._commit(
             session, event="propose_ir", request_id=request_id, ir=normalized,
             status="draft", diagnosis=None,
             context={"compiled": None, "verification": None, "failure": None,
                      "requirements": requirements, "macros": []})
-        return _ok("propose_ir", kind=parsed.kind, ir_hash=updated.ir_hash,
+        return _ok("propose_ir", kind=rules.kind, source_kind=parsed.kind, ir_hash=updated.ir_hash,
                    revision=updated.revision, requirements=requirements)
 
     def _tool_patch_ir(self, args: dict[str, Any], request_id: str | None):
@@ -211,14 +217,29 @@ class DesignService:
         merged = deepcopy(session.ir)
         path = args.get("path")
         try:
+            legacy_fields = merged.get("execution", {}).get("rules")
+            if isinstance(legacy_fields, dict):
+                canonical_roots = {"schema_version", "kind", "game_id", "rules_version", "meta",
+                                   "participants", "components", "state", "mechanisms", "execution",
+                                   "budget", "compatibility_import"}
+                if path and str(path).split(".", 1)[0] not in canonical_roots:
+                    path = f"execution.rules.{path}"
+                elif not path and set(values).isdisjoint(canonical_roots):
+                    merged = legacy_fields
             if path:
                 _merge_at_path(merged, str(path), values)
             else:
                 merged.update(values)
-            parsed = parse_design_ir(merged)
+            rules = normalize_rules(merged if merged.get("kind") == "game_rules" else session.ir,
+                                    self.registry)
+            if merged is legacy_fields:
+                canonical = deepcopy(session.ir)
+                canonical["execution"]["rules"] = merged
+                rules = normalize_rules(canonical, self.registry)
+            parsed = source_ir(rules)
         except Exception as error:
             return _fail("patch_ir", f"invalid_ir:{_ir_errors(error)}")
-        normalized = parsed.model_dump(mode="json")
+        normalized = rules.model_dump(mode="json")
         previous = list(session.context.get("requirements", []))
         current = _requirement_ids(parsed)
         allowed = args.get("allow_requirement_removal")
@@ -233,7 +254,7 @@ class DesignService:
             status="draft", diagnosis=None,
             context={"compiled": None, "verification": None, "failure": None,
                      "requirements": current})
-        return _ok("patch_ir", kind=parsed.kind, ir_hash=updated.ir_hash,
+        return _ok("patch_ir", kind=rules.kind, source_kind=parsed.kind, ir_hash=updated.ir_hash,
                    revision=updated.revision, requirements=current, removed=removed)
 
     # -------------------------------------------------------------- compile
@@ -244,32 +265,24 @@ class DesignService:
         later tool recompiles from the same IR, so a session cannot carry a plan
         that no longer matches its rules (ADR-0005).
         """
-        parsed = parse_design_ir(session.ir)
-        if isinstance(parsed, ComposedRulesIR):
-            compiled = compile_composed(parsed, self.registry)
-            summary = {"generation_source": "composed_rules",
-                       "compiler_version": compiled.compiler_version,
-                       "ir_hash": compiled.ir_hash, "plan_hash": compiled.plan_hash,
-                       "registry_contract_hash": compiled.registry_contract_hash,
-                       "nodes": len(compiled.plan.nodes),
-                       "tools": [binding.name for binding in compiled.plan.tools],
-                       "game_kind": compiled.plan.game_kind,
-                       "composition": compiled.composition.as_dict()}
-            return parsed, compiled.plan, summary, compiled.source_map
-        plan = host_compile(parsed)
-        summary = {"generation_source": "host_compile", "compiler_version": None,
-                   "ir_hash": session.ir_hash, "plan_hash": plan_fingerprint(plan),
-                   "registry_contract_hash": self.registry.contract_hash(),
-                   "nodes": len(plan.nodes),
-                   "tools": [binding.name for binding in plan.tools],
-                   "game_kind": plan.game_kind, "composition": None}
-        return parsed, plan, summary, {}
+        rules = normalize_rules(session.ir, self.registry)
+        parsed = source_ir(rules)
+        compiled = compile_rules(rules, self.registry)
+        summary = {"generation_source": "game_rules_1_0",
+                   "compiler_version": "game-rules-1.0",
+                   "ir_hash": compiled.rules_hash, "plan_hash": compiled.plan_hash,
+                   "registry_contract_hash": compiled.registry_contract_hash,
+                   "nodes": len(compiled.plan.nodes),
+                   "tools": [binding.name for binding in compiled.plan.tools],
+                   "game_kind": compiled.plan.game_kind,
+                   "composition": compiled.composition}
+        return parsed, compiled.plan, summary, compiled.source_map
 
     def _tool_capability_check(self, args: dict[str, Any], request_id: str | None):
         session = self.session()
         if not session.ir:
             return _fail("capability_check", "propose_ir_first")
-        parsed = parse_design_ir(session.ir)
+        parsed = source_ir(session.ir)
         if isinstance(parsed, ComposedRulesIR):
             report = resolve_composition(parsed, self.registry).as_dict()
             expressible = report["ok"]
@@ -340,7 +353,7 @@ class DesignService:
             for _ in range(plan.step_limit):
                 if interpreter.state.get("finished"):
                     break
-                action, payload = bot_action(interpreter)
+                action, payload = bot_action(policy_context(interpreter, steps))
                 if action is None:
                     return _fail("simulate", "simulate_stuck")
                 interpreter.step(action, **payload)
@@ -390,7 +403,7 @@ class DesignService:
         if cached is not None:
             return cached
         try:
-            parsed, plan, summary, _ = self._compile_current(session)
+            _, _, summary, _ = self._compile_current(session)
         except CompileError as error:
             failure = {**error.as_dict(), "stage": "verify"}
             updated = self._commit(session, event="verify_game_failed", status="failed",
@@ -400,16 +413,11 @@ class DesignService:
                          path=error.path, clause=error.clause, revision=updated.revision)
         except Exception as error:
             return _fail("verify_game", f"invalid_ir:{_first_line(error)}")
-        if isinstance(parsed, ComposedRulesIR):
-            compiled, result = verify_composed(
-                parsed, self.registry, strategies=self.strategies, seeds=self.seeds)
-            summary = {**summary, "plan_hash": compiled.plan_hash,
-                       "ir_hash": compiled.ir_hash,
-                       "compiler_version": compiled.compiler_version,
-                       "registry_contract_hash": compiled.registry_contract_hash}
-        else:
-            result = verify_plan(plan, self.registry, ir_hash=session.ir_hash,
-                                 strategies=self.strategies, seeds=self.seeds)
+        compiled, result = verify_rules(
+            session.ir, self.registry, strategies=self.strategies, seeds=self.seeds)
+        summary = {**summary, "plan_hash": compiled.plan_hash,
+                   "ir_hash": compiled.rules_hash,
+                   "registry_contract_hash": compiled.registry_contract_hash}
         verification = result.as_dict()
         if result.ok:
             observation = _ok(
@@ -472,10 +480,10 @@ class DesignService:
         try:
             interpreter = Interpreter(plan, self.registry, seed=self.seeds[0])
             interpreter.setup()
-            for _ in range(plan.step_limit):
+            for step in range(plan.step_limit):
                 if interpreter.state.get("finished"):
                     break
-                action, payload = bot_action(interpreter)
+                action, payload = bot_action(policy_context(interpreter, step))
                 if action is None:
                     break
                 interpreter.step(action, **payload)

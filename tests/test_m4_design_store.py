@@ -52,7 +52,8 @@ def test_commit_normalizes_the_ir_and_bumps_the_revision(tmp_path):
                            status="diagnosed", diagnosis={"ok": True})
     assert updated.revision == 1
     assert updated.status == "diagnosed"
-    assert updated.ir["kind"] == "composed"
+    assert updated.ir["kind"] == "game_rules"
+    assert updated.ir["execution"]["profile"] == "composed-1.0"
     assert updated.ir_hash == updated.ir_hash and updated.ir_hash
     assert updated.diagnosis == {"ok": True}
     assert [event["event"] for event in updated.history] == ["created", "updated"]
@@ -100,7 +101,7 @@ def test_restart_restores_session_revision_ir_and_diagnosis(tmp_path):
     restored = reopened.get(session.session_id)
     assert restored.revision == 1
     assert restored.description == "描述"
-    assert restored.ir["kind"] == "composed"
+    assert restored.ir["kind"] == "game_rules"
     assert restored.diagnosis == {"ok": True, "failures": []}
     assert restored.status == "diagnosed"
     assert restored.history[-1]["revision"] == 1
@@ -205,7 +206,12 @@ def test_a_design_session_is_not_a_playable_game(tmp_path):
         sessions.create("not-registered")
 
     # The only path is the host publish service, which produces the artifact.
-    artifact = sessions.verify_and_register(scenario_b_ir(), game_id="not-registered",
-                                            version=1, title="T", seeds=SCENARIO_B_SEEDS)
-    assert artifact.generation_source == "composed_rules"
+    from pocker_agent.core import bind_rules_game_id, normalize_rules, rules_fingerprint
+
+    rules = bind_rules_game_id(normalize_rules(scenario_b_ir()), "not-registered")
+    artifact = sessions.verify_and_register_rules(
+        rules, version=1, title="T", approval_rules_hash=rules_fingerprint(rules),
+        seeds=SCENARIO_B_SEEDS,
+    )
+    assert artifact.generation_source == "game_rules_1_0"
     assert sessions.list_versions("not-registered")[0]["plan_hash"] == artifact.plan_hash

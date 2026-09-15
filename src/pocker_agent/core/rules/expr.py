@@ -247,6 +247,18 @@ def guard_zones(expr: Any) -> set[str]:
     return found
 
 
+def identity_zones_in(expr: Any) -> set[str]:
+    """Zones whose card identity, rather than only their count, affects an expression."""
+    found: set[str] = set()
+    for node in _walk(expr):
+        op = getattr(node, "op", None)
+        if op == "top":
+            found.add(node.zone)
+        elif op == "has_match":
+            found.update((node.zone, node.top.zone))
+    return found
+
+
 def uses_guard_mechanism(expr: Any, mechanism: str) -> bool:
     return mechanism in guard_mechanisms(expr)
 

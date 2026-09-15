@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..contracts import ToolError, ToolRegistry
+from ..decision import policy_context
 from ..interpreter import Interpreter
 from ..plan import GamePlan
 from ..playtest import Strategy
@@ -58,15 +59,21 @@ def record_trace(plan: GamePlan, registry: ToolRegistry, strategy: Strategy, see
     interpreter.setup()
     inputs: list[dict[str, Any]] = []
     spans: list[tuple[int, int]] = []
-    for _ in range(max_steps):
+    error: str | None = None
+    for step in range(max_steps):
         if interpreter.state.get("finished"):
             break
-        choice = strategy(interpreter)
+        choice = strategy(policy_context(interpreter, step))
         if choice is None:
-            raise ToolError("strategy_returned_none")
+            error = "strategy_returned_none"
+            break
         start = len(observations)
         action, payload = choice
-        interpreter.step(action, **(payload or {}))
+        try:
+            interpreter.step(action, **(payload or {}))
+        except ToolError as failure:
+            error = str(failure)
+            break
         inputs.append(deepcopy(interpreter.state["input"]))
         spans.append((start, len(observations)))
     else:
@@ -74,7 +81,7 @@ def record_trace(plan: GamePlan, registry: ToolRegistry, strategy: Strategy, see
     return GameTrace(seed=seed, inputs=tuple(inputs),
                      events=tuple(deepcopy(interpreter.events)),
                      observations=tuple(observations), spans=tuple(spans),
-                     finished=bool(interpreter.state.get("finished")))
+                     finished=bool(interpreter.state.get("finished")), error=error)
 
 
 def replay_trace(plan: GamePlan, registry: ToolRegistry, trace: GameTrace) -> GameTrace:

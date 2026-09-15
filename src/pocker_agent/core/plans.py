@@ -363,10 +363,13 @@ def five_card_poker_plan(*, stacks: int = 100, min_raise: int = 10, cards_each: 
             "result_key": "folded_count"}},
         "folded_branch": {"kind": "branch", "value": "$state.folded_count",
                           "cases": [{"value": 1, "target": "folded_winner"}],
-                          "next": "showdown_compare"},
+                          "next": "showdown_reveal"},
         "folded_winner": {"kind": "branch", "value": "$state.folded.0",
                           "cases": [{"value": 0, "target": "award_p1"},
                                     {"value": 1, "target": "award_p0"}], "next": "award_p0"},
+        "showdown_reveal": {"kind": "call", "next": "showdown_compare", "action": {
+            "tool": "state", "operation": "update",
+            "args": {"state": "$state", "values": {"reveal": True}}}},
         "showdown_compare": {"kind": "call", "next": "showdown_branch", "action": {
             "tool": "hand_rank", "operation": "compare",
             "args": {"left": "$state.hands.0", "right": "$state.hands.1"},
@@ -486,7 +489,8 @@ def blackjack_plan(*, max_rounds: int = 3, target: int = 21, dealer_stand_on: in
             "args": {"values": "$state.scores"}, "result_key": "winners_indexes"}},
         "finish": {"kind": "call", "next": "end", "action": {
             "tool": "state", "operation": "update", "args": {"state": "$state", "values": {
-                "finished": True, "winners": "$state.winners_indexes", "phase": "finished"}}}},
+                "finished": True, "winners": "$state.winners_indexes", "phase": "finished",
+                "reveal": True}}}},
         "end": {"kind": "end"},
     }
     initial = {"finished": False, "winners": [], "scores": [0, 0], "current_player": 0,

@@ -86,7 +86,7 @@ parse_design_ir(payload)     # 接受 composed
 
 回合方向/起始座位/轮数/终局全部来自 IR 字段：`start_seat=round_parity` → `first_seat=(round-1)%players`；compare 需要恰好两人（否则 `compiler_error:compare_requires_two_players`）。
 
-**确定性绑定**：同一规范化 IR + `COMPILER_VERSION`（`m2-0.1`）+ `registry.contract_hash()` → 相同 `plan` 与 `plan_fingerprint`；`CompiledRules` 同时带 `ir_hash` 与 `source_map`。`generation_source=composed_rules` 由实际编译路径记录。
+**确定性绑定**：同一规范化 IR + `COMPILER_VERSION`（当前为 `m2-0.2`）+ `registry.contract_hash()` → 相同 `plan` 与 `plan_fingerprint`；`CompiledRules` 同时带 `ir_hash` 与 `source_map`。`generation_source=composed_rules` 由实际编译路径记录。
 
 **形状测试**：只改 `meta.title`/`description` 的两份 IR 生成**完全相同**的 Plan 节点与指纹（`test_the_same_mechanism_combination_compiles_to_the_same_structure`）。
 

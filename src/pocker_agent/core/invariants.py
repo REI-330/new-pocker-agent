@@ -104,10 +104,10 @@ def view_is_safe():
     """No viewer's projection may expose a card it does not own.
 
     This checks the *projection*, not the raw state: a hidden or other-owned zone
-    must project to an empty card list until the game reveals or finishes.
+    must project to an empty card list until the rules explicitly reveal it.
     """
     def invariant(interpreter: Interpreter) -> None:
-        if interpreter.state.get("finished") or interpreter.state.get("reveal"):
+        if interpreter.state.get("reveal"):
             return
         for index in range(interpreter.plan.players):
             view = interpreter.view(f"player-{index + 1}")

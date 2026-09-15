@@ -14,9 +14,9 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from .actions import resolve_zone
+from .actions import integer_bounds, normalize_action_payload, resolve_zone
 from .cards import decode, encode
-from .contracts import ToolError, ToolRegistry
+from .contracts import ToolError, ToolRegistry, validate_schema
 from .plan import GamePlan
 from .tools import evaluate_expression
 
@@ -97,6 +97,11 @@ class Interpreter:
         args = self.resolve(action.args)
         if not isinstance(args, dict):
             raise ToolError("tool_args_must_be_object")
+        try:
+            validate_schema(args, operation.input_schema)
+        except ToolError as error:
+            raise ToolError(
+                f"contract_input_invalid:{action.tool}.{action.operation}:{error}") from error
         self._check_predicates(operation.requires, "precondition", action)
         before = deepcopy(self.state)
         try:
@@ -113,6 +118,11 @@ class Interpreter:
         except (KeyError, IndexError, AttributeError) as error:
             raise ToolError(
                 f"tool_state_missing:{action.tool}.{action.operation}:{error!r}") from error
+        try:
+            validate_schema(result, operation.output_schema)
+        except ToolError as error:
+            raise ToolError(
+                f"contract_output_invalid:{action.tool}.{action.operation}:{error}") from error
         if action.result_key:
             self.state[action.result_key] = result
         # Contract enforcement: an operation may only change the state keys it
@@ -211,9 +221,16 @@ class Interpreter:
             raise ToolError("illegal_action")
         backup = (deepcopy(self.state), deepcopy(self.events), self.pc)
         try:
-            self.state["input"] = {"action": action, "card_index": card_index,
-                                     "expression": "", "declared_suit": "", "amount": 0,
-                                     **payload}
+            descriptor = next(
+                (item for item in self.plan.actions if item.id == action), None
+            )
+            if descriptor is not None:
+                payload = normalize_action_payload(self.state, descriptor, payload)
+                self.state["input"] = {"action": action, **payload}
+            else:
+                self.state["input"] = {"action": action, "card_index": card_index,
+                                         "expression": "", "declared_suit": "", "amount": 0,
+                                         **payload}
             self.pc = node_inputs[key]
             self.advance()
         except Exception:
@@ -259,7 +276,7 @@ class Interpreter:
         """A viewer-aware projection of ``state['zones']``.
 
         ``public`` zones show their cards to everyone; ``owner_only`` zones only
-        to the owning seat (or once the game is finished/revealed); ``hidden``
+        to the owning seat (or once the rules explicitly reveal them); ``hidden``
         zones never expose identities, only a count. This is a *view* rule: it
         stops the projection from leaking hidden cards without pretending the
         host already enforces per-viewer action permissions.
@@ -268,7 +285,7 @@ class Interpreter:
         if not isinstance(zones, dict):
             return {}
         index = self._viewer_index(viewer)
-        reveal = bool(self.state.get("reveal")) or bool(self.state.get("finished"))
+        reveal = bool(self.state.get("reveal"))
         projected: dict[str, Any] = {}
         for zone_id, entry in sorted(zones.items()):
             cards = entry.get("cards") or []
@@ -297,26 +314,43 @@ class Interpreter:
         for descriptor in self.plan.actions:
             inputs: list[dict[str, Any]] = []
             for item in descriptor.inputs:
+                if item.kind == "integer_range":
+                    minimum, maximum = integer_bounds(self.state, item)
+                    inputs.append({"id": item.id, "kind": item.kind,
+                                   "minimum": minimum, "maximum": maximum})
+                    continue
                 try:
                     zone_id = resolve_zone(self.state, item)
                 except ToolError:
                     zone_id = None
                 zone = projected.get(zone_id) if zone_id else None
+                options = [card["id"] for card in zone["cards"]] if zone else []
+                if item.match_top and options:
+                    top_zone = projected.get(item.match_top)
+                    top_cards = top_zone.get("cards", []) if top_zone else []
+                    if top_cards:
+                        top = top_cards[-1]
+                        options = [card["id"] for card in zone["cards"]
+                                   if card.get("rank") == top.get("rank")
+                                   or card.get("suit") == top.get("suit")]
                 inputs.append({
                     "id": item.id, "kind": item.kind, "zone": item.zone,
                     "scope": item.scope, "min_count": item.min_count,
                     "max_count": item.max_count,
-                    "options": [card["id"] for card in zone["cards"]] if zone else []})
+                    "options": options})
             result.append({"id": descriptor.id, "label": descriptor.label,
                            "inputs": inputs})
         return result
 
     def view(self, viewer: str = "player-1") -> dict[str, Any]:
         state = self.state
+        viewer_index = self._viewer_index(viewer)
+        current_index = int(state.get("current_player", 0))
+        is_actor = viewer_index == current_index
+        revealed = bool(state.get("reveal", False))
         scores = list(state.get("scores", []))
         hands = state.get("hands")
-        private = (bool(state.get("private_hands")) and not state.get("reveal")
-                   and not state.get("finished"))
+        private = bool(state.get("private_hands")) and not state.get("reveal")
         known_hands = isinstance(hands, list) and bool(hands)
         count = len(hands) if known_hands else len(scores)
         players = []
@@ -334,29 +368,31 @@ class Interpreter:
             "max_rounds": state.get("max_rounds", 1), "phase": state.get("phase", self.pc),
             # The executed-action counter the terminal/`max_actor_actions` uses
             # (ADR-0012); exposed read-only so a client can verify a run.
-            "action_count": int(state.get("action_count", 0)),
+            "action_count": (state.get("action_count", 0)
+                             if type(state.get("action_count", 0)) is int else 0),
             "current_player": f"player-{int(state.get('current_player', 0)) + 1}",
             "finished": bool(state.get("finished")), "winners": [
                 f"player-{int(i) + 1}" for i in state.get("winners", [])],
-            "legal_actions": self.legal_actions(),
+            "legal_actions": self.legal_actions() if is_actor else [],
             "players": players,
             "scores": scores,
             "table": [card.as_dict() for card in state.get("table", [])],
             "numbers": list(state.get("numbers", [])),
             "target": state.get("target"),
             "reveal": bool(state.get("reveal", False)),
-            "solution": state.get("solution"),
+            "solution": state.get("solution") if revealed else None,
             "instructions": state.get("instructions", ""),
-            "feedback": state.get("feedback", ""),
-            "legal_card_indices": list(state.get("legal_card_indices", [])),
+            "feedback": state.get("feedback", "") if is_actor else "",
+            "legal_card_indices": list(state.get("legal_card_indices", [])) if is_actor else [],
             "wild_ranks": list(state.get("wild_ranks", [])),
             "private_hands": private,
-            "events": self.events[-100:],
+            # 工具调用轨迹属于宿主验证证据；分支长度可能泄漏隐藏状态。
+            "events": [],
         }
         projected = self.project_zones(viewer)
         if projected:
             result["zones"] = projected
-        actions = self.action_descriptors(viewer)
+        actions = self.action_descriptors(viewer) if is_actor else []
         if actions:
             result["actions"] = actions
         # Extra table state (chips, teams, tricks, pairs) is exposed read-only so

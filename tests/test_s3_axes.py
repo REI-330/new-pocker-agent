@@ -15,6 +15,7 @@ from pocker_agent.core import (
 )
 from pocker_agent.core.cards import CardRef as C
 from pocker_agent.core.contracts import ToolError
+from pocker_agent.core.decision import policy_context
 from pocker_agent.core.ir import WhistIR
 from pocker_agent.core.playtest import card_first
 from pocker_agent.core.tools import TrickTool
@@ -135,7 +136,7 @@ def test_whist_full_game_ends_with_a_team_winner_and_private_hands():
     for _ in range(400):
         if interpreter.state["finished"]:
             break
-        action, payload = card_first(interpreter)
+        action, payload = card_first(policy_context(interpreter))
         interpreter.step(action, **payload)
 
     assert interpreter.state["finished"] is True

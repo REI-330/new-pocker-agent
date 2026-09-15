@@ -1,0 +1,167 @@
+{
+  "schema_version": "1.0",
+  "kind": "game_rules",
+  "game_id": "three-round-public-compare",
+  "rules_version": "1.0.0",
+  "meta": {
+    "title": "三轮公开比大小",
+    "description": "两名玩家每轮各公开一张牌，牌点大者得一分，三轮后总分最高者获胜。",
+    "tags": []
+  },
+  "participants": {
+    "count": 2,
+    "roles": [],
+    "teams": []
+  },
+  "components": [
+    {
+      "id": "deck",
+      "kind": "card_deck",
+      "config": {
+        "ranks": [
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "J",
+          "Q",
+          "K",
+          "A"
+        ],
+        "suits": [
+          "S",
+          "H",
+          "D",
+          "C"
+        ],
+        "copies": 1
+      }
+    }
+  ],
+  "state": [
+    {
+      "name": "current_player",
+      "value_type": "integer",
+      "scope": "global",
+      "visibility": "public",
+      "initial": null
+    },
+    {
+      "name": "finished",
+      "value_type": "boolean",
+      "scope": "global",
+      "visibility": "public",
+      "initial": false
+    },
+    {
+      "name": "winners",
+      "value_type": "array",
+      "scope": "global",
+      "visibility": "public",
+      "initial": []
+    },
+    {
+      "name": "hands",
+      "value_type": "cards",
+      "scope": "player",
+      "visibility": "owner",
+      "initial": null
+    }
+  ],
+  "mechanisms": [
+    {
+      "name": "state",
+      "version": "1.0.0",
+      "config": {}
+    },
+    {
+      "name": "logic",
+      "version": "1.0.0",
+      "config": {}
+    },
+    {
+      "name": "deck",
+      "version": "1.0.0",
+      "config": {
+        "ranks": [
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "J",
+          "Q",
+          "K",
+          "A"
+        ],
+        "suits": [
+          "S",
+          "H",
+          "D",
+          "C"
+        ]
+      }
+    },
+    {
+      "name": "rank_compare",
+      "version": "1.0.0",
+      "config": {}
+    },
+    {
+      "name": "score_settle",
+      "version": "1.0.0",
+      "config": {}
+    },
+    {
+      "name": "winner_resolve",
+      "version": "1.0.0",
+      "config": {}
+    }
+  ],
+  "execution": {
+    "profile": "war-0.4",
+    "rules": {
+      "schema_version": "0.4",
+      "kind": "war",
+      "game_id": "three-round-public-compare",
+      "title": "三轮公开比大小",
+      "description": "两名玩家每轮各公开一张牌，牌点大者得一分，三轮后总分最高者获胜。",
+      "players": 2,
+      "max_rounds": 3,
+      "ranks": [
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "J",
+        "Q",
+        "K",
+        "A"
+      ],
+      "suits": [
+        "S",
+        "H",
+        "D",
+        "C"
+      ]
+    }
+  },
+  "budget": {
+    "step_limit": 256
+  },
+  "compatibility_import": true
+}

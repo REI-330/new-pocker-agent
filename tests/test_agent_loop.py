@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from pocker_agent.agent import run_loop
 
 
@@ -43,7 +45,8 @@ def test_loop_composes_a_new_game_without_a_human():
     )
     result = run_loop("做一个两人各抽一张比大小的游戏", model)
     assert result.kind == "proposal" and result.finalized is True
-    assert result.ir["kind"] == "war"
+    assert result.ir["kind"] == "game_rules"
+    assert result.ir["execution"]["profile"] == "war-0.4"
     assert result.playtest["ok"] is True
     assert result.attempts == 5
     assert all(observation["ok"] for observation in result.observations)
@@ -151,7 +154,7 @@ def test_loop_continues_a_multi_turn_conversation():
     )
     done = run_loop("5 轮", second, history=asked.messages)
     assert done.finalized is True
-    assert done.ir["max_rounds"] == 5
+    assert done.ir["execution"]["rules"]["max_rounds"] == 5
     # the history is carried forward, so the client can keep the thread
     assert done.messages[:2] == asked.messages
     assert done.messages[-2] == {"role": "user", "content": "5 轮"}
@@ -172,8 +175,8 @@ def test_clean_history_drops_tool_transcript_noise():
                     {"role": "assistant", "content": "{\"tool\": \"propose_ir\"}"}]
 
 
-def test_loop_ships_a_model_authored_plan_and_it_becomes_playable():
-    """agent_compose: the plan comes from the model, not from host_compile."""
+def test_loop_rejects_a_model_authored_plan_and_uses_the_rule_compiler():
+    """模型不能绕过 GameRules 编译器直接注入执行计划。"""
     from pocker_agent.core.plans import war_plan
     from pocker_agent.core.session import SessionStore
 
@@ -182,24 +185,21 @@ def test_loop_ships_a_model_authored_plan_and_it_becomes_playable():
         decision("propose_ir", ir={"kind": "war", "game_id": "agent-novel-war",
                                      "title": "七轮比大小", "max_rounds": 7, "players": 2}),
         decision("compose_plan", plan=authored),
+        decision("compose_plan"),
         decision("playtest"),
         decision("finalize"),
     )
     result = run_loop("做一个七轮的比大小", model)
     assert result.finalized is True
-    composed = next(observation for observation in result.observations
-                    if observation["tool"] == "compose_plan")
-    assert composed["source"] == "agent_compose"
+    composed = [observation for observation in result.observations
+                if observation["tool"] == "compose_plan"]
+    assert composed[0]["error"] == "raw_plan_not_accepted"
+    assert composed[1]["source"] == "game_rules_1_0"
 
     store = SessionStore()
-    store.register_plan("agent-novel-war", result.plan, result.playtest)
-    session = store.create("agent-novel-war", seed=3)
-    for _ in range(20):
-        if session.interpreter.state["finished"]:
-            break
-        session.interpreter.step("play")
-    assert session.interpreter.state["finished"] is True
-    assert session.interpreter.state["round"] == 7
+    with pytest.raises(ValueError, match="raw_plan_registration_not_supported"):
+        store.register_plan("agent-novel-war", result.plan, result.playtest)
+    assert not store.list_versions("agent-novel-war")
 
 
 def test_the_prompt_advertises_every_family_the_ir_accepts():

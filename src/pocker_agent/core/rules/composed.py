@@ -22,7 +22,9 @@ from .expr import (
     RESERVED_STATE_NAMES,
     Expr,
     check_assignable,
+    identity_zones_in,
     infer_type,
+    refs_in,
     validate_expression,
     validate_guard,
 )
@@ -95,6 +97,7 @@ class SetupSpec(_Strict):
 class VariableSpec(_Strict):
     name: str = Field(min_length=1, max_length=32, pattern=r"^[a-z][a-z0-9_]*$")
     type: Literal["integer", "boolean", "string", "integer_list"]
+    visibility: Literal["public", "host"] = "host"
     initial: Any = None
 
 
@@ -105,6 +108,21 @@ class ActionInputSpec(_Strict):
     scope: Literal["actor", "shared"] = "actor"
     min_count: int = Field(default=1, ge=0, le=MAX_SELECTION)
     max_count: int = Field(default=1, ge=0, le=MAX_SELECTION)
+
+
+class IntegerRangeInputSpec(_Strict):
+    """A required integer input with declarative, state-dependent bounds."""
+
+    id: str = Field(min_length=1, max_length=32, pattern=r"^[a-z][a-z0-9_]*$")
+    kind: Literal["integer_range"] = "integer_range"
+    minimum: Expr
+    maximum: Expr
+
+
+ActionInput = Annotated[
+    ActionInputSpec | IntegerRangeInputSpec,
+    Field(discriminator="kind"),
+]
 
 
 # --------------------------------------------------------------------- effects
@@ -240,7 +258,7 @@ Effect = Annotated[
 class ActionSpec(_Strict):
     id: str = Field(min_length=1, max_length=32, pattern=r"^[a-z][a-z0-9_]*$")
     guard: Expr | None = None
-    inputs: list[ActionInputSpec] = Field(default_factory=list, max_length=4)
+    inputs: list[ActionInput] = Field(default_factory=list, max_length=4)
     effects: list[Effect] = Field(default_factory=list, max_length=64)
     # ADR-0012: effects that run in the trigger phase -- after the terminal gate,
     # before the seat advances. Only ``skip`` is a trigger effect today.
@@ -395,7 +413,7 @@ class ComposedRulesIR(_Strict):
         for item in self.variables:
             if item.name in RESERVED_STATE_NAMES:
                 raise ValueError(f"variable_name_reserved:{item.name}")
-            if item.type == "integer" and not isinstance(item.initial, int):
+            if item.type == "integer" and type(item.initial) is not int:
                 raise ValueError(f"variable_initial_type_mismatch:{item.name}")
             if item.type == "boolean" and not isinstance(item.initial, bool):
                 raise ValueError(f"variable_initial_type_mismatch:{item.name}")
@@ -403,8 +421,18 @@ class ComposedRulesIR(_Strict):
                 raise ValueError(f"variable_initial_type_mismatch:{item.name}")
             if item.type == "integer_list" and not (
                     isinstance(item.initial, list)
-                    and all(isinstance(value, int) for value in item.initial)):
+                    and all(type(value) is int for value in item.initial)):
                 raise ValueError(f"variable_initial_type_mismatch:{item.name}")
+
+    def _reject_host_refs(self, expression: Any, error: str) -> None:
+        host = {item.name for item in self.variables if item.visibility == "host"}
+        leaked = sorted(
+            path[len("variables."):]
+            for path in refs_in(expression)
+            if path.startswith("variables.") and path[len("variables."):] in host
+        )
+        if leaked:
+            raise ValueError(f"{error}:{leaked[0]}")
 
     def _check_actions(self) -> None:
         ids = [action.id for action in self.actions]
@@ -414,7 +442,15 @@ class ComposedRulesIR(_Strict):
         for action in self.actions:
             if action.guard is not None:
                 validate_expression(action.guard, self.variable_names)
+                self._reject_host_refs(action.guard, f"guard_reads_host_variable:{action.id}")
                 validate_guard(action.guard, zone_ids)
+                for zone_id in identity_zones_in(action.guard):
+                    zone = self.zone(zone_id)
+                    if zone is not None and (zone.visibility == "hidden"
+                                             or (zone.scope == "shared"
+                                                 and zone.visibility != "public")):
+                        raise ValueError(
+                            f"guard_reads_hidden_card_identity:{action.id}:{zone_id}")
                 guard_type = infer_type(action.guard, self.variable_types())
                 if guard_type not in {BOOLEAN, ANY_TYPE}:
                     raise ValueError(
@@ -425,11 +461,26 @@ class ComposedRulesIR(_Strict):
         inputs = {item.id: item for item in action.inputs}
         if len(inputs) != len(action.inputs):
             raise ValueError(f"action_input_ids_must_be_unique:{action.id}")
+        for item in action.inputs:
+            if isinstance(item, ActionInputSpec):
+                zone = self.zone(item.zone)
+                if zone is None:
+                    raise ValueError(f"action_input_unknown_zone:{action.id}:{item.zone}")
+                if item.scope == "actor" and zone.scope != "player":
+                    raise ValueError(f"actor_input_requires_player_zone:{action.id}:{item.id}")
+                if item.scope == "shared" and zone.scope != "shared":
+                    raise ValueError(f"shared_input_requires_shared_zone:{action.id}:{item.id}")
+                if item.scope == "shared" and zone.visibility != "public":
+                    raise ValueError(f"action_input_reads_hidden_zone:{action.id}:{item.id}")
         seen_selections: set[str] = set()
         for effect in action.effects:
             if isinstance(effect, SelectEffect):
                 if effect.input not in inputs:
                     raise ValueError(f"select_unknown_input:{action.id}:{effect.input}")
+                if not isinstance(inputs[effect.input], ActionInputSpec):
+                    raise ValueError(
+                        f"select_requires_card_input:{action.id}:{effect.input}"
+                    )
                 if effect.result in seen_selections:
                     raise ValueError(f"select_duplicate_result:{action.id}:{effect.result}")
                 seen_selections.add(effect.result)
@@ -441,6 +492,9 @@ class ComposedRulesIR(_Strict):
                     if top.scope != "shared":
                         raise ValueError(
                             f"select_match_zone_must_be_shared:{action.id}:{effect.match_top}")
+                    if top.visibility != "public":
+                        raise ValueError(
+                            f"select_match_zone_must_be_public:{action.id}:{effect.match_top}")
             elif isinstance(effect, MoveSelectionEffect):
                 for zone_id in (effect.from_zone, effect.to_zone):
                     if self.zone(zone_id) is None:
@@ -519,14 +573,40 @@ class ComposedRulesIR(_Strict):
                 if infer_type(effect.condition, self.variable_types()) not in {BOOLEAN, ANY_TYPE}:
                     raise ValueError(f"trigger_condition_type_mismatch:{path}")
         for item in action.inputs:
-            zone = self.zone(item.zone)
-            if zone is None:
-                raise ValueError(f"input_unknown_zone:{action.id}:{item.zone}")
-            if item.scope == "actor" and zone.scope != "player":
-                raise ValueError(f"actor_input_requires_player_zone:{action.id}:{item.zone}")
-            if item.scope == "shared" and zone.scope != "shared":
-                raise ValueError(f"shared_input_requires_shared_zone:{action.id}:{item.zone}")
-            if item.max_count < item.min_count:
+            if isinstance(item, ActionInputSpec):
+                zone = self.zone(item.zone)
+                if zone is None:
+                    raise ValueError(f"input_unknown_zone:{action.id}:{item.zone}")
+                if item.scope == "actor" and zone.scope != "player":
+                    raise ValueError(
+                        f"actor_input_requires_player_zone:{action.id}:{item.zone}"
+                    )
+                if item.scope == "shared" and zone.scope != "shared":
+                    raise ValueError(
+                        f"shared_input_requires_shared_zone:{action.id}:{item.zone}"
+                    )
+                if item.max_count < item.min_count:
+                    raise ValueError(f"input_bounds_invalid:{action.id}:{item.id}")
+                continue
+            for name, bound in (("minimum", item.minimum), ("maximum", item.maximum)):
+                validate_expression(bound, self.variable_names)
+                self._reject_host_refs(
+                    bound, f"integer_bound_reads_host_variable:{action.id}:{item.id}:{name}"
+                )
+                if any(ref.startswith("input.") for ref in refs_in(bound)):
+                    raise ValueError(
+                        f"integer_bound_cannot_read_action_input:{action.id}:{item.id}:{name}"
+                    )
+                actual = infer_type(bound, self.variable_types())
+                if actual != "integer":
+                    raise ValueError(
+                        f"integer_bound_type_mismatch:{action.id}:{item.id}:{name}:{actual}"
+                    )
+            if (
+                getattr(item.minimum, "op", None) == "lit"
+                and getattr(item.maximum, "op", None) == "lit"
+                and item.maximum.value < item.minimum.value
+            ):
                 raise ValueError(f"input_bounds_invalid:{action.id}:{item.id}")
 
     def _check_scoring_and_flow(self) -> None:
@@ -592,7 +672,11 @@ class ComposedRulesIR(_Strict):
         action = self.action(self.flow.round_action)
         select_by_result = {item.result: item for item in action.effects
                             if isinstance(item, SelectEffect)}
-        bounds = {item.id: (item.min_count, item.max_count) for item in action.inputs}
+        bounds = {
+            item.id: (item.min_count, item.max_count)
+            for item in action.inputs
+            if isinstance(item, ActionInputSpec)
+        }
         per_action_in = per_action_out = 0
         for item in action.effects:
             if not isinstance(item, MoveSelectionEffect):

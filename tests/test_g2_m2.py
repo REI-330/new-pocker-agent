@@ -18,7 +18,15 @@ import copy
 import pytest
 from pydantic import ValidationError
 
-from pocker_agent.core import ToolError, core_registry, playtest
+from pocker_agent.core import (
+    ToolError,
+    bind_rules_game_id,
+    core_registry,
+    normalize_rules,
+    playtest,
+    rules_fingerprint,
+)
+from pocker_agent.core.decision import PolicyContext, policy_context, visible_payload
 from pocker_agent.core.invariants import card_conservation
 from pocker_agent.core.ir import DESIGN_ADAPTER, ComposedRulesIR, parse_design_ir
 from pocker_agent.core.plan import plan_fingerprint
@@ -101,15 +109,13 @@ def scenario_a_ir(**overrides) -> dict:
     return payload
 
 
-def smallest_card_strategy(interpreter):
+def smallest_card_strategy(context: PolicyContext):
     """The scenario-A fixture policy: play the lowest card in the actor's hand."""
-    actions = interpreter.legal_actions()
+    actions = context.legal_actions
     if "play" not in actions:
         return None
-    seat = interpreter.state["current_player"]
-    hand = interpreter.state["zones"][f"hand-{seat}"]["cards"]
-    card = min(hand, key=lambda item: item.value)
-    return ("play", {"card": [card.id]})
+    payload = visible_payload(context, "play")
+    return ("play", payload) if payload is not None else None
 
 
 # ------------------------------------------------------------------ IR entry
@@ -330,12 +336,12 @@ def shared_move_ir() -> dict:
     return payload
 
 
-def market_strategy(interpreter):
-    actions = interpreter.legal_actions()
+def market_strategy(context: PolicyContext):
+    actions = context.legal_actions
     if "play" not in actions:
         return None
-    market = interpreter.state["zones"]["market"]["cards"]
-    return ("play", {"card": [market[0].id]})
+    payload = visible_payload(context, "play")
+    return ("play", payload) if payload is not None else None
 
 
 def test_a_shared_from_zone_compiles_to_the_literal_zone_id():
@@ -459,7 +465,7 @@ def test_scenario_a_compiles_and_simulates_a_full_game():
     interpreter.setup()
     actions = 0
     while not interpreter.state.get("finished"):
-        action, payload = smallest_card_strategy(interpreter)
+        action, payload = smallest_card_strategy(policy_context(interpreter))
         interpreter.step(action, **(payload or {}))
         actions += 1
     assert actions == 6, "three rounds x two actors"
@@ -500,8 +506,13 @@ def test_the_compiled_plan_registers_and_restores_through_the_real_session_store
     assert report.ok, report.failures
 
     store = SessionStore(tmp_path / "g2-m2.sqlite")
-    store.register_plan("scenario-a", compiled.plan.model_dump(mode="json"),
-                        report.as_dict(), title="场景 A")
+    rules = bind_rules_game_id(normalize_rules(scenario_a_ir()), "scenario-a")
+    artifact = store.verify_and_register_rules(
+        rules, version=1, title="场景 A",
+        approval_rules_hash=rules_fingerprint(rules),
+        strategies=(smallest_card_strategy,), seeds=(3,),
+    )
+    assert artifact.plan_hash == compiled.plan_hash
     session = store.create("scenario-a", seed=3)
     assert plan_fingerprint(session.plan) == compiled.plan_hash
     restored = store.get(session.id)
@@ -510,7 +521,7 @@ def test_the_compiled_plan_registers_and_restores_through_the_real_session_store
     interpreter = session.interpreter
     actions = 0
     while not interpreter.state.get("finished"):
-        action, payload = smallest_card_strategy(interpreter)
+        action, payload = smallest_card_strategy(policy_context(interpreter))
         interpreter.step(action, **(payload or {}))
         actions += 1
     assert actions == 6

@@ -15,6 +15,7 @@ from pocker_agent.core import (
 )
 from pocker_agent.core.cards import CardRef as C
 from pocker_agent.core.contracts import ToolError
+from pocker_agent.core.decision import policy_context
 from pocker_agent.core.ir import PokerIR
 from pocker_agent.core.poker_tools import BettingTool, HandRankTool, LedgerTool
 from pocker_agent.core.policy import bot_action
@@ -139,6 +140,46 @@ def test_betting_all_in_and_fold_end_the_round():
     assert 1 in state["folded"] and state["street_done"] is True
 
 
+def test_a_short_all_in_does_not_reopen_raising_for_players_who_already_acted():
+    betting = BettingTool(min_raise=10)
+    state = betting_state((100, 100, 25))
+    betting.act(state, "raise", amount=20)
+    betting.act(state, "call")
+    betting.act(state, "all_in")
+    assert state["current_bet"] == 25
+    assert state["min_raise"] == 20
+    assert betting.legal(state) == ["fold", "call"]
+    betting.act(state, "call")
+    assert betting.legal(state) == ["fold", "call"]
+    betting.act(state, "call")
+    assert state["street_done"] is True
+
+
+def test_a_full_raise_reopens_action_and_resets_the_acted_set():
+    betting = BettingTool(min_raise=10)
+    state = betting_state()
+    betting.act(state, "check")
+    betting.act(state, "raise", amount=20)
+    assert state["acted"] == [1]
+    assert "raise" in betting.legal(state)
+
+
+def test_a_player_cannot_raise_without_a_complete_minimum_raise():
+    betting = BettingTool(min_raise=10)
+    state = betting_state((5, 50))
+    assert betting.legal(state) == ["fold", "check", "all_in"]
+
+
+def test_ledger_rejects_misaligned_or_negative_state():
+    ledger = LedgerTool()
+    with pytest.raises(ToolError, match="ledger_size_mismatch"):
+        ledger.commit({"stacks": [10], "committed": [], "hand_committed": [0]}, 0, 1)
+    state = betting_state((10, 10))
+    state["hand_committed"][0] = -1
+    with pytest.raises(ToolError, match="non_negative"):
+        ledger.commit(state, 0, 1)
+
+
 # --------------------------------------------------------------------- poker
 
 def test_poker_ir_compiles_and_reports_axes():
@@ -171,7 +212,7 @@ def test_poker_full_game_reaches_showdown_and_conserves_chips():
     for _ in range(200):
         if interpreter.state["finished"]:
             break
-        action, payload = bot_action(interpreter)
+        action, payload = bot_action(policy_context(interpreter))
         interpreter.step(action, **payload)
 
     assert interpreter.state["finished"] is True

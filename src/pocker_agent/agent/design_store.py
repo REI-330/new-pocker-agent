@@ -279,6 +279,10 @@ class DesignStore:
         if "ir" in changes:
             normalized = _normalize_ir(changes["ir"])
             normalized["game_id"] = current.game_id
+            source = normalized.get("execution", {}).get("rules")
+            if isinstance(source, dict) and "game_id" in source:
+                source["game_id"] = current.game_id
+            normalized = _normalize_ir(normalized)
             updated.ir = normalized
             updated.ir_hash = design_ir_hash(normalized)
         if "diagnosis" in changes:

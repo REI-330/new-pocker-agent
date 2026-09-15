@@ -97,6 +97,7 @@ class SetupSpec(_Strict):
 class VariableSpec(_Strict):
     name: str = Field(min_length=1, max_length=32, pattern=r"^[a-z][a-z0-9_]*$")
     type: Literal["integer", "boolean", "string", "integer_list"]
+    visibility: Literal["public", "host"] = "host"
     initial: Any = None
 
 
@@ -412,7 +413,7 @@ class ComposedRulesIR(_Strict):
         for item in self.variables:
             if item.name in RESERVED_STATE_NAMES:
                 raise ValueError(f"variable_name_reserved:{item.name}")
-            if item.type == "integer" and not isinstance(item.initial, int):
+            if item.type == "integer" and type(item.initial) is not int:
                 raise ValueError(f"variable_initial_type_mismatch:{item.name}")
             if item.type == "boolean" and not isinstance(item.initial, bool):
                 raise ValueError(f"variable_initial_type_mismatch:{item.name}")
@@ -420,8 +421,18 @@ class ComposedRulesIR(_Strict):
                 raise ValueError(f"variable_initial_type_mismatch:{item.name}")
             if item.type == "integer_list" and not (
                     isinstance(item.initial, list)
-                    and all(isinstance(value, int) for value in item.initial)):
+                    and all(type(value) is int for value in item.initial)):
                 raise ValueError(f"variable_initial_type_mismatch:{item.name}")
+
+    def _reject_host_refs(self, expression: Any, error: str) -> None:
+        host = {item.name for item in self.variables if item.visibility == "host"}
+        leaked = sorted(
+            path[len("variables."):]
+            for path in refs_in(expression)
+            if path.startswith("variables.") and path[len("variables."):] in host
+        )
+        if leaked:
+            raise ValueError(f"{error}:{leaked[0]}")
 
     def _check_actions(self) -> None:
         ids = [action.id for action in self.actions]
@@ -431,6 +442,7 @@ class ComposedRulesIR(_Strict):
         for action in self.actions:
             if action.guard is not None:
                 validate_expression(action.guard, self.variable_names)
+                self._reject_host_refs(action.guard, f"guard_reads_host_variable:{action.id}")
                 validate_guard(action.guard, zone_ids)
                 for zone_id in identity_zones_in(action.guard):
                     zone = self.zone(zone_id)
@@ -578,6 +590,9 @@ class ComposedRulesIR(_Strict):
                 continue
             for name, bound in (("minimum", item.minimum), ("maximum", item.maximum)):
                 validate_expression(bound, self.variable_names)
+                self._reject_host_refs(
+                    bound, f"integer_bound_reads_host_variable:{action.id}:{item.id}:{name}"
+                )
                 if any(ref.startswith("input.") for ref in refs_in(bound)):
                     raise ValueError(
                         f"integer_bound_cannot_read_action_input:{action.id}:{item.id}:{name}"

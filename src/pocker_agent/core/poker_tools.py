@@ -166,7 +166,10 @@ class BettingTool:
 
     @staticmethod
     def _folded(state: dict[str, Any]) -> set[int]:
-        return set(state.get("folded") or [])
+        folded = state.get("folded", [])
+        if not isinstance(folded, list):
+            raise ToolError("betting_folded_invalid")
+        return set(folded)
 
     @staticmethod
     def _validate_state(state: dict[str, Any]) -> None:
@@ -182,7 +185,7 @@ class BettingTool:
             raise ToolError("betting_ledger_values_invalid")
         players = set(range(len(stacks)))
         for name in ("folded", "acted"):
-            seats = state.get(name) or []
+            seats = state.get(name, [])
             if (not isinstance(seats, list) or len(seats) != len(set(seats))
                     or any(type(seat) is not int for seat in seats)
                     or not set(seats) <= players):

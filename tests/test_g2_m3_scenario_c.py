@@ -265,19 +265,16 @@ def test_refill_requires_a_shared_stock_and_a_player_target():
 
 # ------------------------------------------------------------- credential gate
 def test_a_contract_hash_change_invalidates_a_recorded_credential(tmp_path):
-    from pocker_agent.core.artifacts import GameArtifact, build_artifact
+    from pocker_agent.core import bind_rules_game_id, normalize_rules, rules_fingerprint
+    from pocker_agent.core.artifacts import GameArtifact
 
     store = SessionStore(tmp_path / "c.db")
-    store.verify_and_register(scenario_c_ir(), game_id="scenario-c", version=1, title="C")
+    rules = bind_rules_game_id(normalize_rules(scenario_c_ir()), "scenario-c")
+    store.verify_and_register_rules(
+        rules, version=1, title="C", approval_rules_hash=rules_fingerprint(rules),
+    )
     stored = store.list_versions("scenario-c")[0]
-    from pocker_agent.core.artifacts import VerificationResult
-
-    credential = VerificationResult.from_dict(store._stored_verifications()[
-        stored["verification_id"]])
-    artifact = build_artifact(game_id="scenario-c", version=2, title="C",
-                              plan=stored["plan"], verification=credential,
-                              generation_source="composed_rules")
-    stale = GameArtifact.from_dict({**artifact.as_dict(),
+    stale = GameArtifact.from_dict({**stored, "version": 2,
                                     "registry_contract_hash": "changed"})
-    with pytest.raises(ValueError, match="verification_stale"):
+    with pytest.raises(ValueError, match="artifact_registry_contract_mismatch"):
         store.register_artifact(stale)

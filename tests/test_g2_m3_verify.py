@@ -21,9 +21,13 @@ from pocker_agent.core import (
     Interpreter,
     SessionStore,
     ToolError,
+    bind_rules_game_id,
     core_registry,
     goal_first,
+    normalize_rules,
+    publish_rules,
     random_legal,
+    rules_fingerprint,
 )
 from pocker_agent.core.artifacts import build_artifact, verification_id
 from pocker_agent.core.decision import policy_context
@@ -33,21 +37,38 @@ from pocker_agent.core.plan import plan_fingerprint
 from pocker_agent.core.playtest import boundary_first
 from pocker_agent.core.policy import bot_action
 from pocker_agent.core.rules import compile_composed
-from pocker_agent.core.verify import (
-    VERIFICATION_SEEDS,
-    publish_composed,
-)
+from pocker_agent.core.verify import VERIFICATION_SEEDS
 
 # A different rule set that still verifies: two rounds instead of three.
 ALT_IR = scenario_a_ir(terminal={"max_rounds": 2, "winner": "highest_score", "tie": "allow"})
 
 
+def _rules(ir, game_id):
+    return bind_rules_game_id(normalize_rules(ir), game_id)
+
+
+def _publish(ir, *, game_id, version, title, approval_ir_hash=None):
+    rules = _rules(ir, game_id)
+    approved = approval_ir_hash or rules_fingerprint(rules)
+    return publish_rules(
+        rules, {"rules_hash": approved, "version": version, "title": title}
+    )
+
+
+def _register(store, ir, *, game_id, version, title):
+    rules = _rules(ir, game_id)
+    return store.verify_and_register_rules(
+        rules, version=version, title=title,
+        approval_rules_hash=rules_fingerprint(rules),
+    )
+
+
 # --------------------------------------------------------------- publish service
 def test_publish_composed_binds_ir_plan_and_compiler():
-    compiled, result, artifact = publish_composed(
+    compiled, result, artifact = _publish(
         scenario_a_ir(), game_id="duel", version=1, title="公开对局")
     assert result.ok
-    assert artifact.generation_source == "composed_rules"
+    assert artifact.generation_source == "game_rules_1_0"
     assert artifact.plan_hash == compiled.plan_hash == plan_fingerprint(compiled.plan)
     assert artifact.ir_hash == compiled.ir_hash
     assert artifact.compiler_version == compiled.compiler_version
@@ -59,7 +80,7 @@ def test_publish_composed_binds_ir_plan_and_compiler():
 
 def test_publish_rejects_a_confirmation_for_a_different_ir():
     with pytest.raises(ValueError, match="approval_mismatch"):
-        publish_composed(scenario_a_ir(), game_id="duel", version=1, title="对局",
+        _publish(scenario_a_ir(), game_id="duel", version=1, title="对局",
                          approval_ir_hash="0" * 16)
 
 
@@ -72,14 +93,29 @@ def test_verification_id_is_content_bound_not_time_bound():
 
 # ----------------------------------------------------------- registration gate
 def test_registration_requires_a_host_recorded_credential(tmp_path):
-    _, _, artifact = publish_composed(scenario_a_ir(), game_id="duel", version=1, title="对局")
+    _, _, artifact = _publish(scenario_a_ir(), game_id="duel", version=1, title="对局")
     store = SessionStore(tmp_path / "verify.db")
     with pytest.raises(ValueError, match="verification_unknown"):
         store.register_artifact(artifact)
 
 
+def test_a_recorded_plan_only_credential_cannot_bypass_game_rules(tmp_path):
+    from pocker_agent.core.verify import verify_plan
+
+    compiled = compile_composed(parse_design_ir(scenario_a_ir()), core_registry())
+    result = verify_plan(compiled.plan, core_registry())
+    artifact = build_artifact(
+        game_id="duel", version=1, title="对局", plan=compiled.plan,
+        verification=result, generation_source="composed_rules",
+    )
+    store = SessionStore(tmp_path / "verify.db")
+    store.record_verification(result)
+    with pytest.raises(ValueError, match="artifact_game_rules_required"):
+        store.register_artifact(artifact)
+
+
 def test_a_stale_credential_is_refused():
-    _, result, _ = publish_composed(scenario_a_ir(), game_id="duel", version=1, title="对局")
+    _, result, _ = _publish(scenario_a_ir(), game_id="duel", version=1, title="对局")
     other = compile_composed(parse_design_ir(ALT_IR), core_registry())
     with pytest.raises(ValueError, match="verification_stale"):
         build_artifact(game_id="duel", version=2, title="对局", plan=other.plan,
@@ -87,7 +123,7 @@ def test_a_stale_credential_is_refused():
 
 
 def test_an_artifact_cannot_claim_a_plan_the_credential_did_not_cover():
-    _, result, artifact = publish_composed(scenario_a_ir(), game_id="duel", version=1, title="对局")
+    _, result, artifact = _publish(scenario_a_ir(), game_id="duel", version=1, title="对局")
     tampered = {**artifact.plan, "players": 3}
     with pytest.raises(ValueError, match="verification_stale"):
         build_artifact(game_id="duel", version=1, title="对局", plan=tampered,
@@ -97,7 +133,7 @@ def test_an_artifact_cannot_claim_a_plan_the_credential_did_not_cover():
 # ------------------------------------------------------------- version binding
 def test_verify_and_register_makes_a_versioned_game_playable(tmp_path):
     store = SessionStore(tmp_path / "verify.db")
-    artifact = store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="对局")
+    artifact = _register(store, scenario_a_ir(), game_id="duel", version=1, title="对局")
     game = next(item for item in store.list_games() if item["id"] == "duel")
     assert game["version"] == 1 and game["verification_id"] == artifact.verification_id
     session = store.create("duel", seed=3, version=1)
@@ -109,9 +145,9 @@ def test_verify_and_register_makes_a_versioned_game_playable(tmp_path):
 
 def test_a_session_restores_by_the_version_it_ran(tmp_path):
     store = SessionStore(tmp_path / "verify.db")
-    store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="v1")
+    _register(store, scenario_a_ir(), game_id="duel", version=1, title="v1")
     session = store.create("duel", seed=3, version=1)
-    store.verify_and_register(ALT_IR, game_id="duel", version=2, title="v2")
+    _register(store, ALT_IR, game_id="duel", version=2, title="v2")
     # the running session still resolves the version it started on
     assert store.get(session.id).version == 1
     # a fresh session without a version takes the latest
@@ -120,22 +156,29 @@ def test_a_session_restores_by_the_version_it_ran(tmp_path):
 
 def test_a_version_cannot_be_overwritten_with_new_content(tmp_path):
     store = SessionStore(tmp_path / "verify.db")
-    store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="v1")
+    _register(store, scenario_a_ir(), game_id="duel", version=1, title="v1")
     with pytest.raises(ValueError, match="artifact_version_conflict"):
-        store.verify_and_register(ALT_IR, game_id="duel", version=1, title="v1-new")
+        _register(store, ALT_IR, game_id="duel", version=1, title="v1-new")
 
 
 def test_registering_the_same_version_and_content_is_idempotent(tmp_path):
     store = SessionStore(tmp_path / "verify.db")
-    first = store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="v1")
-    second = store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="v1")
+    first = _register(store, scenario_a_ir(), game_id="duel", version=1, title="v1")
+    second = _register(store, scenario_a_ir(), game_id="duel", version=1, title="v1")
     assert first.plan_hash == second.plan_hash
     assert len(store.list_versions("duel")) == 1
 
 
+def test_a_version_cannot_silently_change_metadata_with_the_same_plan(tmp_path):
+    store = SessionStore(tmp_path / "verify.db")
+    _register(store, scenario_a_ir(), game_id="duel", version=1, title="v1")
+    with pytest.raises(ValueError, match="artifact_version_conflict"):
+        _register(store, scenario_a_ir(), game_id="duel", version=1, title="renamed")
+
+
 def test_a_missing_version_is_an_explicit_error(tmp_path):
     store = SessionStore(tmp_path / "verify.db")
-    store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="v1")
+    _register(store, scenario_a_ir(), game_id="duel", version=1, title="v1")
     with pytest.raises(ValueError, match="version_not_found"):
         store.create("duel", seed=1, version=99)
 
@@ -183,7 +226,7 @@ def test_typed_invariants_catch_lost_cards_and_negative_scores():
 # ------------------------------------------------------------- atomic commit
 def test_act_rolls_back_when_a_bot_step_fails(tmp_path, monkeypatch):
     store = SessionStore()                          # the in-memory path too
-    store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="对局")
+    _register(store, scenario_a_ir(), game_id="duel", version=1, title="对局")
     session = store.create("duel", seed=3)
     interpreter = session.interpreter
     seat = interpreter.state["current_player"]
@@ -226,7 +269,7 @@ def test_a_repeated_request_id_returns_the_original_response(tmp_path):
     from pocker_agent.core.actions import descriptor_for, payload_for
 
     store = SessionStore(tmp_path / "dedup.db")
-    store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="对局")
+    _register(store, scenario_a_ir(), game_id="duel", version=1, title="对局")
     session = store.create("duel", seed=3)
     descriptor = descriptor_for(session.plan, "play")
     payload = payload_for(session.interpreter.state, descriptor)
@@ -245,7 +288,7 @@ def test_processed_request_ids_survive_a_reload(tmp_path):
 
     path = tmp_path / "dedup.db"
     store = SessionStore(path)
-    store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="对局")
+    _register(store, scenario_a_ir(), game_id="duel", version=1, title="对局")
     session = store.create("duel", seed=3)
     descriptor = descriptor_for(session.plan, "play")
     payload = payload_for(session.interpreter.state, descriptor)
@@ -261,7 +304,7 @@ def test_a_request_id_with_a_different_body_conflicts(tmp_path):
     from pocker_agent.core.actions import descriptor_for, payload_for
 
     store = SessionStore(tmp_path / "dedup.db")
-    store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="对局")
+    _register(store, scenario_a_ir(), game_id="duel", version=1, title="对局")
     session = store.create("duel", seed=3)
     descriptor = descriptor_for(session.plan, "play")
     payload = payload_for(session.interpreter.state, descriptor)
@@ -273,7 +316,7 @@ def test_a_request_id_with_a_different_body_conflicts(tmp_path):
 # ------------------------------------------------- immutability of the artifact
 def test_an_artifact_cannot_be_edited_through_its_output(tmp_path):
     store = SessionStore(tmp_path / "artifact.db")
-    artifact = store.verify_and_register(scenario_a_ir(), game_id="duel", version=1, title="对局")
+    artifact = _register(store, scenario_a_ir(), game_id="duel", version=1, title="对局")
     exposed = artifact.as_dict()
     exposed["plan"]["players"] = 99
     exposed["title"] = "tampered"
@@ -288,31 +331,21 @@ def test_an_artifact_cannot_be_edited_through_its_output(tmp_path):
 
 
 # ---------------------------------------------- host-verified agent registration
-def test_the_agent_registration_path_is_host_verified_and_idempotent(tmp_path):
+def test_the_raw_agent_plan_registration_path_is_closed(tmp_path):
     from pocker_agent.core.plans import war_plan
 
     store = SessionStore(tmp_path / "agent.db")
     plan = war_plan(max_rounds=3).model_dump(mode="json")
-    artifact = store.verify_and_register_plan("agent-war", plan, "Agent War")
-    assert artifact.generation_source == "known_parameters"
-    assert artifact.verification_id
-    game = next(item for item in store.list_games() if item["id"] == "agent-war")
-    assert game["source"] == "known_parameters" and game["version"] == 1
-    again = store.verify_and_register_plan("agent-war", plan, "Agent War")
-    assert again.version == artifact.version
-    assert len(store.list_versions("agent-war")) == 1
-    # a changed rule set becomes a new immutable version
-    changed = war_plan(max_rounds=5).model_dump(mode="json")
-    newer = store.verify_and_register_plan("agent-war", changed, "Agent War")
-    assert newer.version == 2
-    assert len(store.list_versions("agent-war")) == 2
+    with pytest.raises(ValueError, match="raw_plan_registration_not_supported"):
+        store.verify_and_register_plan("agent-war", plan, "Agent War")
+    assert not store.list_versions("agent-war")
 
 
 def test_the_agent_registration_path_refuses_a_reserved_id(tmp_path):
     from pocker_agent.core.plans import war_plan
 
     store = SessionStore(tmp_path / "agent.db")
-    with pytest.raises(ValueError, match="game_id_reserved:war"):
+    with pytest.raises(ValueError, match="raw_plan_registration_not_supported"):
         store.verify_and_register_plan("war", war_plan(max_rounds=3).model_dump(mode="json"))
 
 
@@ -321,5 +354,5 @@ def test_the_agent_registration_path_rejects_an_unplayable_plan(tmp_path):
     broken = {"schema_version": "0.4", "game_kind": "war", "players": 2,
               "tools": [{"name": "deck"}], "initial": {}, "entry": "end",
               "nodes": {"end": {"kind": "end"}}}
-    with pytest.raises(ValueError, match="verification_failed"):
+    with pytest.raises(ValueError, match="raw_plan_registration_not_supported"):
         store.verify_and_register_plan("agent-broken", broken)

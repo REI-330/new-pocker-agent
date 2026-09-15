@@ -42,10 +42,10 @@ def test_agent_loop_supports_a_multi_turn_conversation_over_http(tmp_path):
     assert second["messages"][:2] == first["messages"]      # thread preserved
     assert second["messages"][-1]["role"] == "assistant"
 
-    games = c.get("/api/games").json()["games"]
-    assert any(game["id"] == "agent-chat-war" for game in games)
-    state = c.post("/api/sessions", json={"game_id": "agent-chat-war", "seed": 3}).json()
-    assert state["legal_actions"] == ["play"]
+    assert second["registered"] is False
+    assert second["approval_required"] is True
+    assert not any(game["id"] == "agent-chat-war"
+                   for game in c.get("/api/games").json()["games"])
 
 
 def test_agent_loop_rejects_an_empty_message(tmp_path):
@@ -304,25 +304,10 @@ def test_agent_composes_a_game_and_it_becomes_playable_over_http(tmp_path):
     assert result["playtest"]["ok"] is True
 
     game_id = result["ir"]["game_id"]
-    games = c.get("/api/games").json()["games"]
-    # The agent loop host-compiles a known IR, so the artifact records
-    # generation_source=known_parameters (ADR-0008), now behind a host-issued
-    # verification credential and an immutable version.
-    registered = next(game for game in games if game["id"] == game_id)
-    assert registered["source"] == "known_parameters"
-    assert registered["version"] == 1 and registered["verification_id"]
-
-    state = c.post("/api/sessions", json={"game_id": game_id, "seed": 3}).json()
-    session_id = state["session_id"]
-    for _ in range(20):
-        if state["finished"]:
-            break
-        response = c.post(f"/api/sessions/{session_id}/actions/play",
-                          json={"revision": state["revision"]})
-        assert response.status_code == 200, response.text
-        state = response.json()["state"]
-    assert state["finished"] is True
-    assert state["scores"] and sum(state["scores"]) > 0
+    assert result["registered"] is False
+    assert result["approval_required"] is True
+    assert result["ir_hash"]
+    assert not any(game["id"] == game_id for game in c.get("/api/games").json()["games"])
 
 
 def test_agent_loop_fails_safely_without_a_model(tmp_path):
@@ -354,7 +339,8 @@ def test_uno_over_http_applies_special_cards_and_hides_hands(tmp_path):
         state = response.json()["state"]
 
     assert state["finished"] is True
-    assert state["players"][1]["hidden_count"] == 0
+    assert state["players"][1]["hidden_count"] > 0
+    assert state["players"][1]["hand"] == []
 
 
 def test_go_fish_over_http_asks_concrete_ranks(tmp_path):
@@ -472,4 +458,5 @@ def test_crazy_eights_over_http_hides_the_opponent_and_is_playable(tmp_path):
         state = response.json()["state"]
 
     assert state["finished"] is True
-    assert state["players"][1]["hidden_count"] == 0     # revealed once the game ends
+    assert state["players"][1]["hidden_count"] > 0
+    assert state["players"][1]["hand"] == []

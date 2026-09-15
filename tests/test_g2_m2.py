@@ -18,7 +18,14 @@ import copy
 import pytest
 from pydantic import ValidationError
 
-from pocker_agent.core import ToolError, core_registry, playtest
+from pocker_agent.core import (
+    ToolError,
+    bind_rules_game_id,
+    core_registry,
+    normalize_rules,
+    playtest,
+    rules_fingerprint,
+)
 from pocker_agent.core.decision import PolicyContext, policy_context, visible_payload
 from pocker_agent.core.invariants import card_conservation
 from pocker_agent.core.ir import DESIGN_ADAPTER, ComposedRulesIR, parse_design_ir
@@ -499,8 +506,13 @@ def test_the_compiled_plan_registers_and_restores_through_the_real_session_store
     assert report.ok, report.failures
 
     store = SessionStore(tmp_path / "g2-m2.sqlite")
-    store.register_plan("scenario-a", compiled.plan.model_dump(mode="json"),
-                        report.as_dict(), title="场景 A")
+    rules = bind_rules_game_id(normalize_rules(scenario_a_ir()), "scenario-a")
+    artifact = store.verify_and_register_rules(
+        rules, version=1, title="场景 A",
+        approval_rules_hash=rules_fingerprint(rules),
+        strategies=(smallest_card_strategy,), seeds=(3,),
+    )
+    assert artifact.plan_hash == compiled.plan_hash
     session = store.create("scenario-a", seed=3)
     assert plan_fingerprint(session.plan) == compiled.plan_hash
     restored = store.get(session.id)

@@ -28,9 +28,12 @@ from pocker_agent.core import (
     Interpreter,
     SessionStore,
     ToolError,
+    bind_rules_game_id,
     compile_composed,
     core_registry,
+    normalize_rules,
     playtest,
+    rules_fingerprint,
     run_bots,
 )
 from pocker_agent.core.actions import descriptor_for, payload_for, resolve_zone
@@ -164,8 +167,12 @@ def test_a_composed_game_runs_through_the_session_store_with_bot_payloads(tmp_pa
     report = playtest(compiled.plan, core_registry(), bot_action, seeds=(3,))
     assert report.ok, report.failures
     store = SessionStore(tmp_path / "g2-m3a.sqlite")
-    store.register_plan("composed-duel", compiled.plan.model_dump(mode="json"),
-                        report.as_dict(), title="组合对局")
+    rules = bind_rules_game_id(normalize_rules(scenario_a_ir()), "composed-duel")
+    store.verify_and_register_rules(
+        rules, version=1, title="组合对局",
+        approval_rules_hash=rules_fingerprint(rules),
+        strategies=(bot_action,), seeds=(3,),
+    )
     session = store.create("composed-duel", seed=3)
     assert session.revision == 0
     descriptor = descriptor_for(session.plan, "play")

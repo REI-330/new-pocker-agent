@@ -124,7 +124,8 @@ def test_crazy_eights_full_game_and_reveal_at_end():
     assert interpreter.state["finished"] is True
     assert len(interpreter.state["winners"]) == 1
     finished_view = interpreter.view("player-1")
-    assert finished_view["players"][1]["hidden_count"] == 0   # hands revealed at the end
+    assert finished_view["players"][1]["hidden_count"] > 0
+    assert finished_view["players"][1]["hand"] == []
 
 
 def test_opponent_hand_is_never_exposed_before_the_end():

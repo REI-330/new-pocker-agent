@@ -276,7 +276,7 @@ class Interpreter:
         """A viewer-aware projection of ``state['zones']``.
 
         ``public`` zones show their cards to everyone; ``owner_only`` zones only
-        to the owning seat (or once the game is finished/revealed); ``hidden``
+        to the owning seat (or once the rules explicitly reveal them); ``hidden``
         zones never expose identities, only a count. This is a *view* rule: it
         stops the projection from leaking hidden cards without pretending the
         host already enforces per-viewer action permissions.
@@ -285,7 +285,7 @@ class Interpreter:
         if not isinstance(zones, dict):
             return {}
         index = self._viewer_index(viewer)
-        reveal = bool(self.state.get("reveal")) or bool(self.state.get("finished"))
+        reveal = bool(self.state.get("reveal"))
         projected: dict[str, Any] = {}
         for zone_id, entry in sorted(zones.items()):
             cards = entry.get("cards") or []
@@ -347,11 +347,10 @@ class Interpreter:
         viewer_index = self._viewer_index(viewer)
         current_index = int(state.get("current_player", 0))
         is_actor = viewer_index == current_index
-        revealed = bool(state.get("reveal", False)) or bool(state.get("finished"))
+        revealed = bool(state.get("reveal", False))
         scores = list(state.get("scores", []))
         hands = state.get("hands")
-        private = (bool(state.get("private_hands")) and not state.get("reveal")
-                   and not state.get("finished"))
+        private = bool(state.get("private_hands")) and not state.get("reveal")
         known_hands = isinstance(hands, list) and bool(hands)
         count = len(hands) if known_hands else len(scores)
         players = []

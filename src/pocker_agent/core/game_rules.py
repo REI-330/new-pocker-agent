@@ -109,6 +109,20 @@ class GameRules(_Strict):
                 raise ValueError(f"duplicate_{label}_name")
         if self.execution.profile.endswith("-0.4") and not self.compatibility_import:
             raise ValueError("legacy_profile_requires_compatibility_import")
+        source_kind = self.execution.rules.get("kind")
+        source_version = self.execution.rules.get("schema_version")
+        if self.execution.profile == "composed-1.0":
+            if source_kind != "composed" or source_version != "0.5":
+                raise ValueError("execution_profile_rules_mismatch")
+            if self.compatibility_import:
+                raise ValueError("composed_profile_is_not_compatibility_import")
+        else:
+            expected_kind = self.execution.profile.removesuffix("-0.4")
+            if source_kind != expected_kind or source_version != "0.4":
+                raise ValueError("execution_profile_rules_mismatch")
+        source_game_id = self.execution.rules.get("game_id")
+        if source_game_id is not None and source_game_id != self.game_id:
+            raise ValueError("execution_rules_game_id_mismatch")
         return self
 
 
@@ -128,11 +142,30 @@ class CompiledGameRules:
     source_map: dict[str, Any]
     composition: dict[str, Any] | None
 
+    @property
+    def ir_hash(self) -> str:
+        """兼容只读名称；发布凭据实际绑定完整 GameRules 哈希。"""
+        return self.rules_hash
+
+    @property
+    def compiler_version(self) -> str:
+        return "game-rules-1.0"
+
 
 def rules_fingerprint(rules: GameRules) -> str:
     canonical = json.dumps(rules.model_dump(mode="json"), sort_keys=True,
                            ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def bind_rules_game_id(rules: GameRules, game_id: str) -> GameRules:
+    """把外层身份和兼容源规则身份作为一次原子变更绑定。"""
+    payload = rules.model_dump(mode="json")
+    payload["game_id"] = game_id
+    source = payload["execution"]["rules"]
+    if "game_id" in source:
+        source["game_id"] = game_id
+    return GameRules.model_validate(payload)
 
 
 def _title(ir: Any) -> tuple[str, str]:
@@ -177,7 +210,7 @@ def _state(ir: Any) -> list[StateFieldSpec]:
                                      visibility=visibility[zone.visibility]) for zone in ir.zones)
         result.extend(StateFieldSpec(name=item.name,
                                      value_type="array" if item.type == "integer_list" else item.type,
-                                     scope="global", visibility="host", initial=item.initial)
+                                     scope="global", visibility=item.visibility, initial=item.initial)
                       for item in ir.variables)
     elif getattr(ir, "kind", "") != "arithmetic":
         result.append(StateFieldSpec(name="hands", value_type="cards", scope="player",
@@ -284,9 +317,13 @@ def compile_rules(rules: GameRules | dict[str, Any],
     if plan.step_limit > parsed.budget.step_limit:
         raise ToolError("compiled_plan_exceeds_rule_budget")
     fingerprint = rules_fingerprint(parsed)
+    source_map = dict(lowered.source_map) if lowered is not None else {}
+    if "ir_hash" in source_map:
+        source_map["source_ir_hash"] = source_map["ir_hash"]
+    source_map["ir_hash"] = fingerprint
     return CompiledGameRules(
         parsed, plan, fingerprint, plan_fingerprint(plan), registry.contract_hash(),
-        lowered.source_map if lowered is not None else {},
+        source_map,
         lowered.composition.as_dict() if lowered is not None else None,
     )
 

@@ -15,7 +15,12 @@ from test_g2_m3_scenario_b import SCENARIO_B_SEEDS, scenario_b_ir
 
 from pocker_agent.agent.design_service import DesignService
 from pocker_agent.agent.design_store import DesignStore
-from pocker_agent.core import SessionStore
+from pocker_agent.core import (
+    SessionStore,
+    bind_rules_game_id,
+    normalize_rules,
+    rules_fingerprint,
+)
 
 
 def _service(tmp_path, ir: dict, **kwargs) -> tuple[DesignService, DesignStore]:
@@ -96,7 +101,9 @@ def test_the_candidate_can_be_published_only_through_the_host_service(tmp_path):
     candidate = service.dispatch("finalize", {})["artifact"]
     sessions = SessionStore(tmp_path / "design.db")
     assert sessions.list_versions("design-only") == []
-    artifact = sessions.verify_and_register(scenario_b_ir(), game_id="design-only", version=1,
-                                            title=candidate["title"],
-                                            seeds=SCENARIO_B_SEEDS)
+    rules = bind_rules_game_id(normalize_rules(scenario_b_ir()), "design-only")
+    artifact = sessions.verify_and_register_rules(
+        rules, version=1, title=candidate["title"],
+        approval_rules_hash=rules_fingerprint(rules), seeds=SCENARIO_B_SEEDS,
+    )
     assert artifact.plan_hash == candidate["plan_hash"]

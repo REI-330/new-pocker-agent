@@ -5,7 +5,16 @@ import pytest
 from pydantic import ValidationError
 from test_g2_m2 import scenario_a_ir
 
-from pocker_agent.core import Interpreter, SessionStore, ToolError, core_registry, playtest
+from pocker_agent.core import (
+    Interpreter,
+    SessionStore,
+    ToolError,
+    bind_rules_game_id,
+    core_registry,
+    normalize_rules,
+    playtest,
+    rules_fingerprint,
+)
 from pocker_agent.core.actions import descriptor_for, payload_for
 from pocker_agent.core.ir import parse_design_ir
 from pocker_agent.core.policy import bot_action
@@ -15,8 +24,8 @@ from pocker_agent.core.rules import compile_composed
 def wager_ir() -> dict:
     payload = scenario_a_ir()
     payload["variables"] = [
-        {"name": "minimum_wager", "type": "integer", "initial": 2},
-        {"name": "maximum_wager", "type": "integer", "initial": 7},
+        {"name": "minimum_wager", "type": "integer", "visibility": "public", "initial": 2},
+        {"name": "maximum_wager", "type": "integer", "visibility": "public", "initial": 7},
         {"name": "last_wager", "type": "integer", "initial": 0},
     ]
     payload["actions"][0]["inputs"].append({
@@ -80,11 +89,11 @@ def test_generic_policy_can_complete_a_game_with_integer_inputs() -> None:
 
 
 def test_session_rejects_an_out_of_range_integer_without_advancing(tmp_path) -> None:
-    compiled = compile_composed(parse_design_ir(wager_ir()), core_registry())
-    report = playtest(compiled.plan, core_registry(), bot_action, seeds=(0,))
+    rules = bind_rules_game_id(normalize_rules(wager_ir()), "integer-input")
     store = SessionStore(tmp_path / "integer-input.sqlite")
-    store.register_plan(
-        "integer-input", compiled.plan.model_dump(mode="json"), report.as_dict()
+    store.verify_and_register_rules(
+        rules, version=1, approval_rules_hash=rules_fingerprint(rules),
+        strategies=(bot_action,), seeds=(0,),
     )
     session = store.create("integer-input", seed=0)
     action = session.interpreter.view("player-1")["actions"][0]
@@ -113,3 +122,20 @@ def test_integer_bounds_are_typed_and_cannot_depend_on_the_same_action_input() -
     }
     with pytest.raises(ValidationError, match="integer_bound_cannot_read_action_input"):
         parse_design_ir(circular)
+
+
+def test_host_variables_cannot_change_player_visible_action_bounds() -> None:
+    payload = wager_ir()
+    payload["variables"][0]["visibility"] = "host"
+    with pytest.raises(ValidationError, match="integer_bound_reads_host_variable"):
+        parse_design_ir(payload)
+
+
+@pytest.mark.parametrize("declared,initial", [("integer", True), ("integer_list", [1, False])])
+def test_boolean_values_are_not_accepted_as_integers(declared, initial) -> None:
+    payload = wager_ir()
+    payload["variables"][2] = {
+        "name": "last_wager", "type": declared, "initial": initial,
+    }
+    with pytest.raises(ValidationError, match="variable_initial_type_mismatch:last_wager"):
+        parse_design_ir(payload)

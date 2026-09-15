@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from pocker_agent.agent import run_loop
 
 
@@ -195,14 +197,9 @@ def test_loop_rejects_a_model_authored_plan_and_uses_the_rule_compiler():
     assert composed[1]["source"] == "game_rules_1_0"
 
     store = SessionStore()
-    store.register_plan("agent-novel-war", result.plan, result.playtest)
-    session = store.create("agent-novel-war", seed=3)
-    for _ in range(20):
-        if session.interpreter.state["finished"]:
-            break
-        session.interpreter.step("play")
-    assert session.interpreter.state["finished"] is True
-    assert session.interpreter.state["round"] == 7
+    with pytest.raises(ValueError, match="raw_plan_registration_not_supported"):
+        store.register_plan("agent-novel-war", result.plan, result.playtest)
+    assert not store.list_versions("agent-novel-war")
 
 
 def test_the_prompt_advertises_every_family_the_ir_accepts():

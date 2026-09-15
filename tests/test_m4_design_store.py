@@ -206,7 +206,12 @@ def test_a_design_session_is_not_a_playable_game(tmp_path):
         sessions.create("not-registered")
 
     # The only path is the host publish service, which produces the artifact.
-    artifact = sessions.verify_and_register(scenario_b_ir(), game_id="not-registered",
-                                            version=1, title="T", seeds=SCENARIO_B_SEEDS)
-    assert artifact.generation_source == "composed_rules"
+    from pocker_agent.core import bind_rules_game_id, normalize_rules, rules_fingerprint
+
+    rules = bind_rules_game_id(normalize_rules(scenario_b_ir()), "not-registered")
+    artifact = sessions.verify_and_register_rules(
+        rules, version=1, title="T", approval_rules_hash=rules_fingerprint(rules),
+        seeds=SCENARIO_B_SEEDS,
+    )
+    assert artifact.generation_source == "game_rules_1_0"
     assert sessions.list_versions("not-registered")[0]["plan_hash"] == artifact.plan_hash

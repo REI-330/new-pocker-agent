@@ -21,7 +21,13 @@ from ..core.artifacts import VerificationResult, build_artifact
 from ..core.capability import capability_matrix
 from ..core.contracts import ToolError
 from ..core.decision import policy_context
-from ..core.game_rules import compile_rules, normalize_rules, source_ir, verify_rules
+from ..core.game_rules import (
+    bind_rules_game_id,
+    compile_rules,
+    normalize_rules,
+    source_ir,
+    verify_rules,
+)
 from ..core.interpreter import Interpreter
 from ..core.ir import check_ir
 from ..core.policy import bot_action
@@ -187,7 +193,7 @@ class DesignService:
         session = self.session()
         try:
             rules = normalize_rules(payload, self.registry)
-            rules = rules.model_copy(update={"game_id": session.game_id})
+            rules = bind_rules_game_id(rules, session.game_id)
             parsed = source_ir(rules)
         except Exception as error:                          # pydantic ValidationError
             return _fail("propose_ir", f"invalid_ir:{_ir_errors(error)}")

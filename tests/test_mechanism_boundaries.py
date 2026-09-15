@@ -7,8 +7,8 @@ from pocker_agent.core.cards import CardRef
 from pocker_agent.core.contracts import ToolError
 from pocker_agent.core.hidden_tools import HiddenDrawTool
 from pocker_agent.core.point_tools import PointTotalTool
-from pocker_agent.core.poker_tools import HandRankTool
-from pocker_agent.core.tools import DeckTool, TrickTool
+from pocker_agent.core.poker_tools import BettingTool, HandRankTool
+from pocker_agent.core.tools import DeckTool, TrickTool, evaluate_expression
 from pocker_agent.core.trigger_tools import TriggerTool
 
 
@@ -58,3 +58,20 @@ def test_hidden_draw_can_name_an_opponent_in_multiplayer_games():
 def test_trick_teams_must_partition_all_players():
     with pytest.raises(ToolError, match="teams_must_partition_players"):
         TrickTool([[0, 1], [1, 2]]).team_winners([1, 0, 0], 3)
+
+
+def test_expression_modulo_by_zero_is_a_contract_error():
+    with pytest.raises(ToolError, match="expression_modulo_by_zero"):
+        evaluate_expression({"mod": [1, 0]})
+
+
+@pytest.mark.parametrize("field,value", [("folded", ""), ("acted", {})])
+def test_betting_rejects_falsey_non_list_seat_state(field, value):
+    state = {
+        "stacks": [100, 100], "committed": [0, 0], "hand_committed": [0, 0],
+        "folded": [], "acted": [], "current_player": 0, "current_bet": 0,
+        "min_raise": 10,
+    }
+    state[field] = value
+    with pytest.raises(ToolError, match=f"betting_{field}_invalid"):
+        BettingTool(10).legal(state)

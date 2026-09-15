@@ -56,8 +56,14 @@ def evaluate_expression(expression: Any, _depth: int = 0) -> Any:
     if not isinstance(arguments, list):
         raise ToolError("expression_arguments_must_be_list")
     if operation in _BINARY and len(arguments) == 2:
-        return _BINARY[operation](evaluate_expression(arguments[0], _depth + 1),
-                                  evaluate_expression(arguments[1], _depth + 1))
+        left = evaluate_expression(arguments[0], _depth + 1)
+        right = evaluate_expression(arguments[1], _depth + 1)
+        if operation == "mod" and right == 0:
+            raise ToolError("expression_modulo_by_zero")
+        try:
+            return _BINARY[operation](left, right)
+        except (ArithmeticError, TypeError, ValueError) as error:
+            raise ToolError(f"expression_operation_failed:{operation}") from error
     values = [evaluate_expression(argument, _depth + 1) for argument in arguments]
     if operation == "all":
         return all(values)

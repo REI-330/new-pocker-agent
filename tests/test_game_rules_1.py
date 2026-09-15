@@ -36,6 +36,13 @@ def test_mechanism_version_is_part_of_the_executable_contract():
         compile_rules(payload, core_registry())
 
 
+def test_execution_profile_must_match_the_embedded_rule_family():
+    payload = normalize_rules(WAR).model_dump(mode="json")
+    payload["execution"]["profile"] = "poker-0.4"
+    with pytest.raises(ValueError, match="execution_profile_rules_mismatch"):
+        normalize_rules(payload)
+
+
 def test_canonical_state_and_participants_cannot_be_decorative_shells():
     payload = normalize_rules(WAR).model_dump(mode="json")
     payload["participants"]["count"] = 3

@@ -264,19 +264,21 @@ def compile_rules(rules: GameRules | dict[str, Any],
                   registry: ToolRegistry | None = None) -> CompiledGameRules:
     registry = registry or core_registry()
     parsed = parse_rules(rules)
-    projected = normalize_rules(parsed.execution.rules, registry)
-    for field in ("participants", "components", "state"):
-        if getattr(parsed, field) != getattr(projected, field):
-            raise ToolError(f"canonical_declaration_mismatch:{field}")
     for binding in parsed.mechanisms:
         spec = registry.spec(binding.name)
         if binding.version != spec.version:
             raise ToolError(f"mechanism_version_mismatch:{binding.name}:{binding.version}:{spec.version}")
+    projected = normalize_rules(parsed.execution.rules, registry)
+    for field in ("participants", "components", "state", "mechanisms"):
+        if getattr(parsed, field) != getattr(projected, field):
+            raise ToolError(f"canonical_declaration_mismatch:{field}")
     ir = _source_ir(parsed)
     lowered = compile_composed(ir, registry) if isinstance(ir, ComposedRulesIR) else None
     plan = lowered.plan if lowered is not None else host_compile(ir)
-    declared = {(item.name, item.version) for item in parsed.mechanisms}
-    actual = {(item.name, registry.spec(item.name).version) for item in plan.tools}
+    declared = {(item.name, item.version, json.dumps(item.config, sort_keys=True))
+                for item in parsed.mechanisms}
+    actual = {(item.name, registry.spec(item.name).version,
+               json.dumps(item.config, sort_keys=True)) for item in plan.tools}
     if declared != actual:
         raise ToolError("mechanism_bindings_do_not_match_compiled_plan")
     if plan.step_limit > parsed.budget.step_limit:

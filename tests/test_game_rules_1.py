@@ -43,6 +43,14 @@ def test_canonical_state_and_participants_cannot_be_decorative_shells():
         compile_rules(payload)
 
 
+def test_mechanism_configuration_cannot_be_a_decorative_shell():
+    payload = normalize_rules(WAR).model_dump(mode="json")
+    deck = next(item for item in payload["mechanisms"] if item["name"] == "deck")
+    deck["config"]["copies"] = 9
+    with pytest.raises(ToolError, match="canonical_declaration_mismatch:mechanisms"):
+        compile_rules(payload)
+
+
 def test_rules_hash_changes_when_any_executable_rule_changes():
     original = normalize_rules(WAR)
     changed = copy.deepcopy(original.model_dump(mode="json"))

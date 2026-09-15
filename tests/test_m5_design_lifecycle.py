@@ -249,7 +249,7 @@ def test_verify_request_id_conflicts_after_the_rules_change(tmp_path):
     assert first.status_code == 200 and first.json()["ok"] is True
     current = client.get(f"/api/designs/{session_id}").json()
     changed = copy.deepcopy(current["ir"])
-    changed["terminal"]["max_rounds"] = 2
+    changed["execution"]["rules"]["terminal"]["max_rounds"] = 2
     client.post(f"/api/designs/{session_id}/update",
                 json={"expected_revision": current["revision"], "ir": changed})
     conflict = client.post(f"/api/designs/{session_id}/verify",
@@ -294,7 +294,7 @@ def test_a_changed_ir_invalidates_the_confirmation(tmp_path):
 
     current = client.get(f"/api/designs/{session_id}").json()
     changed = copy.deepcopy(current["ir"])
-    changed["terminal"]["max_rounds"] = 2
+    changed["execution"]["rules"]["terminal"]["max_rounds"] = 2
     updated = client.post(f"/api/designs/{session_id}/update",
                           json={"expected_revision": current["revision"], "ir": changed})
     assert updated.status_code == 200, updated.text

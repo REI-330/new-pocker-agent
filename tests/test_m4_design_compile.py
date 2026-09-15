@@ -44,7 +44,7 @@ def test_compose_plan_lowers_the_ir_and_records_a_bound_summary(tmp_path):
     service = _service(tmp_path, scenario_a_ir())
     result = service.dispatch("compose_plan", {})
     assert result["ok"], result
-    assert result["generation_source"] == "composed_rules"
+    assert result["generation_source"] == "game_rules_1_0"
     assert result["ir_hash"] == service.session().ir_hash
     assert result["plan_hash"] and result["compiler_version"]
     assert result["nodes"] > 0 and "zones" in result["tools"]

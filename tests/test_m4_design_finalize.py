@@ -64,7 +64,7 @@ def test_finalize_refuses_evidence_that_does_not_bind_the_current_rules(tmp_path
     service.dispatch("verify_game", {})
     session = service.session()
     changed = copy.deepcopy(session.ir)
-    changed["terminal"]["max_rounds"] = 2
+    changed["execution"]["rules"]["terminal"]["max_rounds"] = 2
     store.commit(session.session_id, session.revision, ir=changed)   # keeps old evidence
     stale = service.dispatch("finalize", {})
     assert stale["ok"] is False

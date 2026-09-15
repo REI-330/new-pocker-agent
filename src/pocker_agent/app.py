@@ -34,7 +34,6 @@ from .agent import (
 from .configuration import ConfigInput, ConfigStore
 from .core import (
     PLAN_MACROS,
-    ComposedRulesIR,
     SessionStore,
     capability_matrix,
     core_registry,
@@ -42,7 +41,6 @@ from .core import (
     default_macros,
     promotion_report,
 )
-from .core.ir import parse_design_ir
 from .llm import OpenAICompatibleClient
 from .storage import data_path
 
@@ -511,9 +509,6 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
         if not (verification.get("ok")
                 and verification.get("ir_hash") == current.ir_hash):
             raise ValueError("verification_required: 需要绑定当前规则的验证证据")
-        parsed = parse_design_ir(current.ir)
-        if not isinstance(parsed, ComposedRulesIR):
-            raise ValueError("publish_requires_composed_ir: 仅组合规则可注册新版本")
         # Idempotency across a crash between the artifact write and this commit:
         # if these exact rules already have a version, reuse it instead of
         # registering a second one.
@@ -524,9 +519,9 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
         else:
             version = payload.version or store.next_version(current.game_id)
             title = payload.title or _design_title(current)
-            artifact = store.verify_and_register(
-                parsed, game_id=current.game_id, version=version, title=title,
-                approval_ir_hash=current.ir_hash)
+            artifact = store.verify_and_register_rules(
+                current.ir, version=version, title=title,
+                approval_rules_hash=current.ir_hash)
             summary = _artifact_summary(artifact.as_dict())
             idempotent = False
         updated = designs.commit(session_id, payload.expected_revision
@@ -599,7 +594,7 @@ def create_app(path: Path | None = None, vault=None, model_factory=None) -> Fast
                 # immutable artifact. The loop's own playtest report is not used
                 # as evidence (ADR-0008).
                 store.verify_and_register_plan(result.ir["game_id"], result.plan,
-                                               result.ir.get("title", ""))
+                                               result.ir.get("meta", {}).get("title", ""))
                 registered = True
             except ValueError as error:
                 # The design itself is still valid and worth showing; only the

@@ -32,6 +32,7 @@ from typing import Any
 from ..storage import connect
 from .actions import normalize_action_payload
 from .artifacts import GameArtifact, VerificationResult, build_artifact
+from .game_rules import publish_rules
 from .interpreter import Interpreter
 from .plan import GamePlan, plan_fingerprint
 from .policy import bot_action, run_bots
@@ -230,6 +231,21 @@ class SessionStore:
             registry=registry or core_registry(), approval_ir_hash=approval_ir_hash,
             strategies=strategies, seeds=seeds, invariants=invariants,
             require_wait_coverage=require_wait_coverage)
+        self.record_verification(result)
+        self.register_artifact(artifact)
+        return artifact
+
+    def verify_and_register_rules(self, rules: Any, *, version: int,
+                                  approval_rules_hash: str, title: str | None = None,
+                                  registry: Any = None,
+                                  strategies: Any = VERIFICATION_STRATEGIES,
+                                  seeds: Any = VERIFICATION_SEEDS, invariants: Any = (),
+                                  require_wait_coverage: bool = True) -> GameArtifact:
+        """验证并注册一份经用户按哈希确认的 GameRules 1.0 文档。"""
+        _, result, artifact = publish_rules(
+            rules, {"rules_hash": approval_rules_hash, "version": version, "title": title},
+            registry=registry or core_registry(), strategies=strategies, seeds=seeds,
+            invariants=invariants, require_wait_coverage=require_wait_coverage)
         self.record_verification(result)
         self.register_artifact(artifact)
         return artifact

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..core.contracts import ToolError, ToolRegistry
+from ..core.game_rules import source_ir
 from ..core.ir import IR_ADAPTER, REQUIRED_AXES
 from ..core.registry import core_registry
 from .meta_tools import TOOL_SCHEMAS, LoopState, _fail, dispatch, observation_text
@@ -87,7 +88,11 @@ def parse_decision(raw: Any) -> dict[str, Any]:
 def _summary(state: LoopState) -> str:
     lines = ["已生成可执行游戏，请核对："]
     if state.ir is not None:
-        lines.append(f"玩法：{state.ir.title}（kind={state.ir.kind}，players={state.ir.players}，max_rounds={state.ir.max_rounds}）")
+        source = source_ir(state.ir)
+        players = source.players.count if hasattr(source.players, "count") else source.players
+        maximum = getattr(source, "max_rounds", getattr(getattr(source, "terminal", None),
+                                                        "max_rounds", None))
+        lines.append(f"玩法：{state.ir.meta.title}（kind={state.ir.kind}，players={players}，max_rounds={maximum}）")
     if state.plan is not None:
         lines.append(f"计划：{len(state.plan.get('nodes', {}))} 个节点，工具 {[tool['name'] for tool in state.plan.get('tools', [])]}")
     if state.report:

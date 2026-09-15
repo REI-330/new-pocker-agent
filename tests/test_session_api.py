@@ -38,7 +38,7 @@ def test_agent_loop_supports_a_multi_turn_conversation_over_http(tmp_path):
     second = c.post("/api/agent/loop",
                     json={"message": "5 轮", "messages": first["messages"]}).json()
     assert second["finalized"] is True, second
-    assert second["ir"]["max_rounds"] == 5
+    assert second["ir"]["execution"]["rules"]["max_rounds"] == 5
     assert second["messages"][:2] == first["messages"]      # thread preserved
     assert second["messages"][-1]["role"] == "assistant"
 
@@ -279,12 +279,9 @@ def test_a_broken_plan_is_reported_over_http_and_never_becomes_a_500(tmp_path):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["finalized"] is False
-    playtest_step = next(o for o in body["observations"] if o["tool"] == "playtest")
-    assert playtest_step["ok"] is False
-    # The rejection reaches the model as data it can act on -- whichever policy
-    # the gate used to discover it -- instead of a traceback.
-    assert playtest_step["failures"], playtest_step
-    assert "tool_crashed" not in str(playtest_step), playtest_step
+    compose_step = next(o for o in body["observations"] if o["tool"] == "compose_plan")
+    assert compose_step["ok"] is False
+    assert compose_step["error"] == "raw_plan_not_accepted"
     assert not any(game["id"] == "broken-poker" for game in c.get("/api/games").json()["games"])
 
 

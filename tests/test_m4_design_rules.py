@@ -33,11 +33,12 @@ def test_propose_ir_normalizes_records_requirements_and_resets_status(tmp_path):
                     context={"compiled": {"plan_hash": "x"}})
     result = service.dispatch("propose_ir", {"ir": _with_requirement(scenario_b_ir())})
     assert result["ok"]
-    assert result["kind"] == "composed" and result["ir_hash"]
+    assert result["kind"] == "game_rules" and result["source_kind"] == "composed"
+    assert result["ir_hash"]
     assert result["requirements"] == ["R1"]
     session = service.session()
     assert session.status == "draft"
-    assert session.ir["kind"] == "composed"
+    assert session.ir["kind"] == "game_rules"
     assert session.context["requirements"] == ["R1"]
     assert session.context["compiled"] is None
     assert session.context["verification"] is None
@@ -61,7 +62,7 @@ def test_patch_ir_merges_top_level_and_invalidates_the_compile(tmp_path):
         "score_reaches": 8, "max_actor_actions": 20}}})
     assert result["ok"]
     session = service.session()
-    assert session.ir["terminal"]["score_reaches"] == 8
+    assert session.ir["execution"]["rules"]["terminal"]["score_reaches"] == 8
     assert session.status == "draft"
     assert session.context["compiled"] is None
     assert session.context["requirements"] == ["R1"]        # not dropped
@@ -73,11 +74,11 @@ def test_patch_ir_can_target_a_dotted_path(tmp_path):
     result = service.dispatch("patch_ir", {"path": "actions.0",
                                            "values": {"trigger": []}})
     assert result["ok"], result
-    assert service.session().ir["actions"][0]["trigger"] == []
+    assert service.session().ir["execution"]["rules"]["actions"][0]["trigger"] == []
     deeper = service.dispatch("patch_ir", {"path": "actions.0.inputs.0",
                                            "values": {"min_count": 1, "max_count": 1}})
     assert deeper["ok"], deeper
-    assert service.session().ir["actions"][0]["inputs"][0]["min_count"] == 1
+    assert service.session().ir["execution"]["rules"]["actions"][0]["inputs"][0]["min_count"] == 1
 
 
 def test_patch_ir_refuses_to_drop_a_requirement_unless_explicit(tmp_path):
@@ -86,12 +87,12 @@ def test_patch_ir_refuses_to_drop_a_requirement_unless_explicit(tmp_path):
     refused = service.dispatch("patch_ir", {"values": {"requirements": []}})
     assert refused["ok"] is False
     assert refused["error"] == "requirement_removed:R1"
-    assert service.session().ir["requirements"][0]["id"] == "R1"
+    assert service.session().ir["execution"]["rules"]["requirements"][0]["id"] == "R1"
 
     allowed = service.dispatch("patch_ir", {"values": {"requirements": []},
                                             "allow_requirement_removal": True})
     assert allowed["ok"]
-    assert service.session().ir["requirements"] == []
+    assert service.session().ir["execution"]["rules"]["requirements"] == []
     assert allowed["removed"] == ["R1"]
 
 

@@ -74,7 +74,7 @@ def test_a_scripted_design_becomes_a_registered_playable_game(tmp_path):
     published = client.post(f"/api/designs/{session_id}/publish",
                             json={"expected_revision": confirmed["session"]["revision"]}).json()
     assert published["published"] is True and published["idempotent"] is False
-    assert published["artifact"]["generation_source"] == "composed_rules"
+    assert published["artifact"]["generation_source"] == "game_rules_1_0"
     version = published["artifact"]["version"]
 
     created_session = client.post("/api/sessions",

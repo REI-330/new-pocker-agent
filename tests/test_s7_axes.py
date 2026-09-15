@@ -15,6 +15,7 @@ from pocker_agent.core import (
 )
 from pocker_agent.core.cards import CardRef as C
 from pocker_agent.core.contracts import ToolError
+from pocker_agent.core.decision import policy_context
 from pocker_agent.core.ir import UnoIR
 from pocker_agent.core.playtest import card_first
 from pocker_agent.core.reference import REFERENCE_GAMES
@@ -123,7 +124,7 @@ def test_uno_full_game_hides_hands_and_terminates():
     for _ in range(1000):
         if interpreter.state["finished"]:
             break
-        action, payload = card_first(interpreter)
+        action, payload = card_first(policy_context(interpreter))
         interpreter.step(action, **payload)
     assert interpreter.state["finished"] is True
     assert interpreter.state["winners"]

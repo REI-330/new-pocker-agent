@@ -1,0 +1,208 @@
+{
+  "schema_version": "1.0",
+  "kind": "game_rules",
+  "game_id": "chip-betting-showdown",
+  "rules_version": "1.0.0",
+  "meta": {
+    "title": "带筹码下注的五张牌比大小",
+    "description": "两人各持五张隐藏牌，进行一轮无上限下注，随后按五张牌型结算筹码。",
+    "tags": []
+  },
+  "participants": {
+    "count": 2,
+    "roles": [],
+    "teams": []
+  },
+  "components": [
+    {
+      "id": "deck",
+      "kind": "card_deck",
+      "config": {
+        "ranks": [
+          "A",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "J",
+          "Q",
+          "K"
+        ],
+        "suits": [
+          "S",
+          "H",
+          "D",
+          "C"
+        ],
+        "copies": 1
+      }
+    },
+    {
+      "id": "chips",
+      "kind": "resource",
+      "config": {
+        "initial_per_player": 100
+      }
+    }
+  ],
+  "state": [
+    {
+      "name": "current_player",
+      "value_type": "integer",
+      "scope": "global",
+      "visibility": "public",
+      "initial": null
+    },
+    {
+      "name": "finished",
+      "value_type": "boolean",
+      "scope": "global",
+      "visibility": "public",
+      "initial": false
+    },
+    {
+      "name": "winners",
+      "value_type": "array",
+      "scope": "global",
+      "visibility": "public",
+      "initial": []
+    },
+    {
+      "name": "hands",
+      "value_type": "cards",
+      "scope": "player",
+      "visibility": "owner",
+      "initial": null
+    },
+    {
+      "name": "stacks",
+      "value_type": "array",
+      "scope": "global",
+      "visibility": "public",
+      "initial": null
+    },
+    {
+      "name": "pot",
+      "value_type": "integer",
+      "scope": "global",
+      "visibility": "public",
+      "initial": null
+    }
+  ],
+  "mechanisms": [
+    {
+      "name": "state",
+      "version": "1.0.0",
+      "config": {}
+    },
+    {
+      "name": "logic",
+      "version": "1.0.0",
+      "config": {}
+    },
+    {
+      "name": "deck",
+      "version": "1.0.0",
+      "config": {
+        "ranks": [
+          "A",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "J",
+          "Q",
+          "K"
+        ],
+        "suits": [
+          "S",
+          "H",
+          "D",
+          "C"
+        ],
+        "values": {
+          "J": 11,
+          "Q": 12,
+          "K": 13,
+          "A": 14,
+          "2": 2,
+          "3": 3,
+          "4": 4,
+          "5": 5,
+          "6": 6,
+          "7": 7,
+          "8": 8,
+          "9": 9,
+          "10": 10
+        }
+      }
+    },
+    {
+      "name": "hand_rank",
+      "version": "1.0.0",
+      "config": {}
+    },
+    {
+      "name": "betting",
+      "version": "1.0.0",
+      "config": {
+        "min_raise": 10
+      }
+    },
+    {
+      "name": "ledger",
+      "version": "1.0.0",
+      "config": {}
+    }
+  ],
+  "execution": {
+    "profile": "poker-0.4",
+    "rules": {
+      "schema_version": "0.4",
+      "kind": "poker",
+      "game_id": "chip-betting-showdown",
+      "title": "带筹码下注的五张牌比大小",
+      "description": "两人各持五张隐藏牌，进行一轮无上限下注，随后按五张牌型结算筹码。",
+      "players": 2,
+      "cards_each": 5,
+      "stacks": 100,
+      "min_raise": 10,
+      "max_rounds": 1,
+      "ranks": [
+        "A",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "J",
+        "Q",
+        "K"
+      ],
+      "suits": [
+        "S",
+        "H",
+        "D",
+        "C"
+      ]
+    }
+  },
+  "budget": {
+    "step_limit": 512
+  },
+  "compatibility_import": true
+}

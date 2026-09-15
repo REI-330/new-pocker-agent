@@ -26,6 +26,7 @@ from pocker_agent.core import (
     random_legal,
 )
 from pocker_agent.core.artifacts import build_artifact, verification_id
+from pocker_agent.core.decision import policy_context
 from pocker_agent.core.invariants import non_negative_scores, zone_conservation
 from pocker_agent.core.ir import parse_design_ir
 from pocker_agent.core.plan import plan_fingerprint
@@ -145,7 +146,7 @@ def test_the_formal_gate_strategies_supply_composed_payloads():
     for strategy in (random_legal, boundary_first, goal_first):
         interpreter = Interpreter(compiled.plan, core_registry(), seed=2)
         interpreter.setup()
-        action, payload = strategy(interpreter)
+        action, payload = strategy(policy_context(interpreter))
         assert action == "play", strategy.__name__
         assert payload["card"], f"{strategy.__name__} produced no payload"
 
@@ -156,8 +157,8 @@ def test_the_goal_policy_explores_a_different_branch_than_the_bot():
     interpreter.setup()
     seat = interpreter.state["current_player"]
     hand = [card.id for card in interpreter.state["zones"][f"hand-{seat}"]["cards"]]
-    _, bot_payload = bot_action(interpreter)
-    _, goal_payload = goal_first(interpreter)
+    _, bot_payload = bot_action(policy_context(interpreter))
+    _, goal_payload = goal_first(policy_context(interpreter))
     assert bot_payload["card"] == [hand[0]]
     assert goal_payload["card"] == [hand[-1]]
 

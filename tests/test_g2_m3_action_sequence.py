@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from test_g2_m2 import scenario_a_ir
 
 from pocker_agent.core import Interpreter, compile_composed, core_registry, run_bots
+from pocker_agent.core.decision import policy_context
 from pocker_agent.core.ir import parse_design_ir
 from pocker_agent.core.policy import bot_action
 
@@ -63,11 +64,11 @@ def test_a_two_action_turn_offers_the_first_passing_guard():
     interpreter = Interpreter(compiled.plan, core_registry(), seed=0)
     interpreter.setup()
     assert interpreter.legal_actions() == ["draw"]      # action_count == 0
-    assert bot_action(interpreter) == ("draw", {})
+    assert bot_action(policy_context(interpreter)) == ("draw", {})
     interpreter.step("draw")
     assert interpreter.state["action_count"] == 1
     assert interpreter.legal_actions() == ["pass"]      # first guard now false
-    assert bot_action(interpreter) == ("pass", {})
+    assert bot_action(policy_context(interpreter)) == ("pass", {})
 
 
 def test_run_bots_completes_a_two_action_turn_game():

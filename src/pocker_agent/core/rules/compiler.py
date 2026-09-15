@@ -967,12 +967,18 @@ def _action_descriptors(ir: ComposedRulesIR) -> list[ActionDescriptor]:
     """
     result: list[ActionDescriptor] = []
     for action in ir.actions:
+        match_zones = {
+            effect.input: effect.match_top
+            for effect in action.effects
+            if isinstance(effect, SelectEffect) and effect.match_top is not None
+        }
         inputs: list[ActionInputDescriptor | IntegerRangeInputDescriptor] = []
         for item in action.inputs:
             if isinstance(item, ActionInputSpec):
                 inputs.append(ActionInputDescriptor(
                     id=item.id, kind=item.kind, zone=item.zone, scope=item.scope,
                     min_count=item.min_count, max_count=item.max_count,
+                    match_top=match_zones.get(item.id),
                 ))
             elif isinstance(item, IntegerRangeInputSpec):
                 inputs.append(IntegerRangeInputDescriptor(

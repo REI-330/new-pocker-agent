@@ -50,6 +50,8 @@ class PointTotalTool:
                     hits_soft: bool = True) -> dict[str, Any]:
         if not isinstance(stock, list) or not isinstance(hand, list):
             raise ToolError("dealer_play_requires_lists")
+        if type(stand_on) is not int or not 1 <= stand_on <= self.target:
+            raise ToolError("invalid_dealer_stand_threshold")
         draws = 0
         while True:
             rank = self.total(hand)
@@ -70,8 +72,10 @@ class PointTotalTool:
 
     def settle(self, player: Any, dealer: Any, *, player_natural: bool = False,
                dealer_natural: bool = False, first_bust_loses: bool = True) -> dict[str, Any]:
-        if not isinstance(player, int) or not isinstance(dealer, int):
+        if type(player) is not int or type(dealer) is not int:
             raise ToolError("settle_requires_totals")
+        if first_bust_loses is not True:
+            raise ToolError("unsupported_first_bust_loses_false")
         if player > self.target:
             return {"winner": 1, "reason": "player_bust"}
         if player_natural and dealer_natural:

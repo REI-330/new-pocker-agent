@@ -15,6 +15,7 @@ from pocker_agent.core import (
 )
 from pocker_agent.core.cards import CardRef as C
 from pocker_agent.core.contracts import ToolError
+from pocker_agent.core.decision import policy_context
 from pocker_agent.core.ir import SheddingIR
 from pocker_agent.core.playtest import card_first
 from pocker_agent.core.tools import PatternTool
@@ -118,7 +119,7 @@ def test_crazy_eights_full_game_and_reveal_at_end():
     for _ in range(600):
         if interpreter.state["finished"]:
             break
-        action, payload = card_first(interpreter)
+        action, payload = card_first(policy_context(interpreter))
         interpreter.step(action, **payload)
     assert interpreter.state["finished"] is True
     assert len(interpreter.state["winners"]) == 1
@@ -138,5 +139,5 @@ def test_opponent_hand_is_never_exposed_before_the_end():
         view = interpreter.view("player-1")
         leaked = {c["id"] for c in view["players"][1]["hand"]}
         assert not (leaked & opponent)
-        action, payload = card_first(interpreter)
+        action, payload = card_first(policy_context(interpreter))
         interpreter.step(action, **payload)

@@ -22,6 +22,7 @@ from .expr import (
     RESERVED_STATE_NAMES,
     Expr,
     check_assignable,
+    identity_zones_in,
     infer_type,
     refs_in,
     validate_expression,
@@ -431,6 +432,13 @@ class ComposedRulesIR(_Strict):
             if action.guard is not None:
                 validate_expression(action.guard, self.variable_names)
                 validate_guard(action.guard, zone_ids)
+                for zone_id in identity_zones_in(action.guard):
+                    zone = self.zone(zone_id)
+                    if zone is not None and (zone.visibility == "hidden"
+                                             or (zone.scope == "shared"
+                                                 and zone.visibility != "public")):
+                        raise ValueError(
+                            f"guard_reads_hidden_card_identity:{action.id}:{zone_id}")
                 guard_type = infer_type(action.guard, self.variable_types())
                 if guard_type not in {BOOLEAN, ANY_TYPE}:
                     raise ValueError(
@@ -441,6 +449,17 @@ class ComposedRulesIR(_Strict):
         inputs = {item.id: item for item in action.inputs}
         if len(inputs) != len(action.inputs):
             raise ValueError(f"action_input_ids_must_be_unique:{action.id}")
+        for item in action.inputs:
+            if isinstance(item, ActionInputSpec):
+                zone = self.zone(item.zone)
+                if zone is None:
+                    raise ValueError(f"action_input_unknown_zone:{action.id}:{item.zone}")
+                if item.scope == "actor" and zone.scope != "player":
+                    raise ValueError(f"actor_input_requires_player_zone:{action.id}:{item.id}")
+                if item.scope == "shared" and zone.scope != "shared":
+                    raise ValueError(f"shared_input_requires_shared_zone:{action.id}:{item.id}")
+                if item.scope == "shared" and zone.visibility != "public":
+                    raise ValueError(f"action_input_reads_hidden_zone:{action.id}:{item.id}")
         seen_selections: set[str] = set()
         for effect in action.effects:
             if isinstance(effect, SelectEffect):
@@ -461,6 +480,9 @@ class ComposedRulesIR(_Strict):
                     if top.scope != "shared":
                         raise ValueError(
                             f"select_match_zone_must_be_shared:{action.id}:{effect.match_top}")
+                    if top.visibility != "public":
+                        raise ValueError(
+                            f"select_match_zone_must_be_public:{action.id}:{effect.match_top}")
             elif isinstance(effect, MoveSelectionEffect):
                 for zone_id in (effect.from_zone, effect.to_zone):
                     if self.zone(zone_id) is None:

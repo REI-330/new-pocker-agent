@@ -24,6 +24,8 @@ class TriggerTool:
 
     def _target(self, state: dict[str, Any], target: str, players: int) -> list[int]:
         current = state.get("current_player", 0)
+        if type(current) is not int or not 0 <= current < players:
+            raise ToolError("invalid_current_player")
         if target == "current":
             return [current]
         if target == "next":
@@ -45,8 +47,8 @@ class TriggerTool:
                 if not stock:
                     table = state.get("table") or []
                     if len(table) > 1:                      # recycle, keep the top
-                        stock.extend(table[1:])
-                        state["table"] = table[:1]
+                        stock.extend(table[:-1])
+                        state["table"] = table[-1:]
                 if not stock:
                     return drawn
                 hands[seat].append(stock.pop())

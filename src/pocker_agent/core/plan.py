@@ -47,6 +47,7 @@ class ActionInputDescriptor(_Strict):
     scope: Literal["actor", "shared"] = "actor"
     min_count: int = Field(default=1, ge=0, le=12)
     max_count: int = Field(default=1, ge=0, le=12)
+    match_top: str | None = Field(default=None, min_length=1, max_length=64)
 
     @model_validator(mode="after")
     def bounds(self) -> ActionInputDescriptor:

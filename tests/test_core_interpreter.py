@@ -14,6 +14,8 @@ from pocker_agent.core import (
     playtest,
 )
 from pocker_agent.core.contracts import OperationSpec, ToolRegistry
+from pocker_agent.core.decision import PolicyContext, policy_context
+from pocker_agent.core.tools import ExactExpressionTool
 
 RANK_VALUES = {"A": 1, **{str(n): n for n in range(2, 11)}, "J": 11, "Q": 12, "K": 13}
 
@@ -42,7 +44,7 @@ def test_a_tool_reading_missing_state_is_a_contract_violation_not_a_crash():
     interpreter.setup()
     before = copy.deepcopy(interpreter.state)
     where = interpreter.pc
-    with pytest.raises(ToolError, match="tool_state_missing:betting\\.legal"):
+    with pytest.raises(ToolError, match="betting_ledger_size_mismatch"):
         interpreter.step("go")
     assert interpreter.state == before, "a rejected call must roll back fully"
     assert interpreter.pc == where, "the flow pointer must roll back too"
@@ -63,7 +65,7 @@ def test_a_crashing_plan_fails_playtest_instead_of_raising():
         "step_limit": 64})
     report = playtest(plan, core_registry(), first_legal, seeds=(0,))
     assert report.ok is False
-    assert any("tool_state_missing" in failure for failure in report.failures), report.failures
+    assert any("betting_ledger_size_mismatch" in failure for failure in report.failures), report.failures
 
 
 def arithmetic(**overrides):
@@ -76,21 +78,22 @@ def arithmetic(**overrides):
     return arithmetic_plan(**base)
 
 
-def solve_strategy(interpreter):
-    actions = interpreter.legal_actions()
+def solve_strategy(context: PolicyContext):
+    actions = context.legal_actions
     if "submit_expression" in actions:
-        answer = interpreter.tools["exact_expression"].solve(interpreter.state["numbers"])
+        answer = ExactExpressionTool(target=context.observation["target"]).solve(
+            context.observation["numbers"])
         if answer is None:
             return ("no_solution", {})
         return ("submit_expression", {"expression": answer})
     return (actions[0], {}) if actions else None
 
 
-def give_up_strategy(interpreter):
+def give_up_strategy(context: PolicyContext):
     return ("give_up", {})
 
 
-def false_no_solution_strategy(interpreter):
+def false_no_solution_strategy(context: PolicyContext):
     return ("no_solution", {})
 
 
@@ -108,7 +111,7 @@ def run(plan, strategy, seed=7, registry=None):
     for _ in range(1000):
         if interpreter.state["finished"]:
             return interpreter
-        action, payload = strategy(interpreter)
+        action, payload = strategy(policy_context(interpreter, _))
         interpreter.step(action, **payload)
     raise AssertionError("game did not finish")
 
@@ -221,7 +224,7 @@ def test_restore_is_exact_and_continues_the_same_game():
 
     for interpreter in (first, restored):
         while not interpreter.state["finished"]:
-            action, payload = solve_strategy(interpreter)
+            action, payload = solve_strategy(policy_context(interpreter))
             interpreter.step(action, **payload)
     assert first.serialize() == restored.serialize()
 
@@ -355,7 +358,7 @@ def test_serialize_restore_is_byte_stable_across_play():
         while not live.state["finished"]:
             restored = Interpreter.restore(live.serialize(), core_registry())
             assert restored.serialize() == live.serialize()
-            action, payload = solve_strategy(live)
+            action, payload = solve_strategy(policy_context(live))
             live.step(action, **payload)
             restored.step(action, **payload)
             assert restored.serialize() == live.serialize()

@@ -60,6 +60,8 @@ class HandRankTool:
             raise ToolError("poker_hand_requires_at_least_five_cards")
         if not all(isinstance(card, CardRef) for card in cards):
             raise ToolError("poker_hand_requires_cards")
+        if len({card.id for card in cards}) != len(cards):
+            raise ToolError("poker_hand_requires_unique_cards")
         winning = max(combinations(cards, 5), key=_score_five)
         score = _score_five(list(winning))
         return {"category": CATEGORY_NAMES[score[0]], "rank": score[0],
@@ -83,11 +85,19 @@ class LedgerTool:
         stacks = state.get("stacks")
         if not isinstance(stacks, list) or not 0 <= seat < len(stacks):
             raise ToolError("invalid_seat")
+        committed = state.get("committed")
+        hand_committed = state.get("hand_committed")
+        if (not isinstance(committed, list) or len(committed) != len(stacks)
+                or not isinstance(hand_committed, list) or len(hand_committed) != len(stacks)):
+            raise ToolError("ledger_size_mismatch")
+        values = [*stacks, *committed, *hand_committed]
+        if any(type(value) is not int or value < 0 for value in values):
+            raise ToolError("ledger_values_must_be_non_negative_integers")
         if type(amount) is not int or amount < 0 or amount > stacks[seat]:
             raise ToolError("invalid_commit")
         stacks[seat] -= amount
-        state.setdefault("committed", [0] * len(stacks))[seat] += amount
-        state.setdefault("hand_committed", [0] * len(stacks))[seat] += amount
+        committed[seat] += amount
+        hand_committed[seat] += amount
         return {"seat": seat, "amount": amount, "stacks": list(stacks)}
 
     def pots(self, state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -95,6 +105,8 @@ class LedgerTool:
         players = len(state.get("stacks") or [])
         if len(committed) != players or players == 0:
             raise ToolError("ledger_size_mismatch")
+        if any(type(value) is not int or value < 0 for value in committed):
+            raise ToolError("ledger_values_must_be_non_negative_integers")
         folded = set(state.get("folded") or [])
         if not folded <= set(range(players)):
             raise ToolError("invalid_folded_seat")
@@ -112,6 +124,8 @@ class LedgerTool:
         return sum(pot["amount"] for pot in self.pots(state))
 
     def settle(self, state: dict[str, Any], winners: dict) -> dict[str, Any]:
+        if not isinstance(winners, dict):
+            raise ToolError("pot_winners_must_be_object")
         pots = self.pots(state)
         awards = [0] * len(state["stacks"])
         contested = [index for index, pot in enumerate(pots) if pot["refund_to"] is None]
@@ -123,6 +137,10 @@ class LedgerTool:
                 awards[pot["refund_to"]] += pot["amount"]
                 continue
             chosen = sorted(winners.get(index) or winners.get(str(index)))
+            if not chosen:
+                raise ToolError("contested_pot_requires_winner")
+            if len(chosen) != len(set(chosen)):
+                raise ToolError("duplicate_pot_winner")
             if not set(chosen) <= set(pot["eligible"]):
                 raise ToolError("ineligible_pot_winner")
             share, odd = divmod(pot["amount"], len(chosen))
@@ -150,20 +168,55 @@ class BettingTool:
     def _folded(state: dict[str, Any]) -> set[int]:
         return set(state.get("folded") or [])
 
+    @staticmethod
+    def _validate_state(state: dict[str, Any]) -> None:
+        stacks = state.get("stacks")
+        committed = state.get("committed")
+        hand_committed = state.get("hand_committed")
+        if (not isinstance(stacks, list) or not stacks
+                or not isinstance(committed, list) or len(committed) != len(stacks)
+                or not isinstance(hand_committed, list) or len(hand_committed) != len(stacks)):
+            raise ToolError("betting_ledger_size_mismatch")
+        if any(type(value) is not int or value < 0
+               for value in [*stacks, *committed, *hand_committed]):
+            raise ToolError("betting_ledger_values_invalid")
+        players = set(range(len(stacks)))
+        for name in ("folded", "acted"):
+            seats = state.get(name) or []
+            if (not isinstance(seats, list) or len(seats) != len(set(seats))
+                    or any(type(seat) is not int for seat in seats)
+                    or not set(seats) <= players):
+                raise ToolError(f"betting_{name}_invalid")
+        seat = state.get("current_player", 0)
+        if type(seat) is not int or seat not in players:
+            raise ToolError("invalid_current_player")
+        for name in ("current_bet", "min_raise"):
+            value = state.get(name, 0)
+            if type(value) is not int or value < 0:
+                raise ToolError(f"betting_{name}_invalid")
+
     def _to_call(self, state: dict[str, Any]) -> int:
         seat = state["current_player"]
         return max(0, int(state.get("current_bet", 0)) - state["committed"][seat])
 
     def legal(self, state: dict[str, Any]) -> list[str]:
+        self._validate_state(state)
         stacks = state.get("stacks") or []
         seat = state.get("current_player", 0)
         if not 0 <= seat < len(stacks) or seat in self._folded(state) or stacks[seat] <= 0:
             return []
         to_call = self._to_call(state)
         actions = ["fold", "check" if to_call == 0 else "call"]
-        if stacks[seat] > to_call:
+        acted = set(state.get("acted") or [])
+        max_target = state["committed"][seat] + stacks[seat]
+        min_target = int(state.get("current_bet", 0)) + int(
+            state.get("min_raise", self.min_raise))
+        if seat not in acted and max_target >= min_target:
             actions.append("raise")
-        actions.append("all_in")
+        # A player whose action was not reopened may still call all-in, but may
+        # not use all-in to make a further raise.
+        if stacks[seat] <= to_call or seat not in acted:
+            actions.append("all_in")
         return actions
 
     def _live(self, state: dict[str, Any]) -> list[int]:
@@ -207,19 +260,23 @@ class BettingTool:
         elif action == "check":
             pass
         elif action == "call":
-            self._commit(state, seat, min(to_call, stacks[seat]))
+            LedgerTool().commit(state, seat, min(to_call, stacks[seat]))
         elif action == "raise":
             target = int(amount)
             if target < bet + int(state.get("min_raise", self.min_raise)) or target > committed[seat] + stacks[seat]:
                 raise ToolError("invalid_raise")
-            self._commit(state, seat, target - committed[seat])
-            state["min_raise"] = max(int(state.get("min_raise", self.min_raise)), target - bet)
+            LedgerTool().commit(state, seat, target - committed[seat])
+            state["min_raise"] = target - bet
             state["current_bet"] = target
+            state["acted"] = []
         else:  # all_in
             amount = stacks[seat]
-            self._commit(state, seat, amount)
+            LedgerTool().commit(state, seat, amount)
             if committed[seat] > bet:
-                state["min_raise"] = max(int(state.get("min_raise", self.min_raise)), committed[seat] - bet)
+                raise_size = committed[seat] - bet
+                if raise_size >= int(state.get("min_raise", self.min_raise)):
+                    state["min_raise"] = raise_size
+                    state["acted"] = []
                 state["current_bet"] = committed[seat]
         acted = state.setdefault("acted", [])
         if seat not in acted:
@@ -227,14 +284,6 @@ class BettingTool:
         state["street_done"] = self._complete(state)
         if not state["street_done"]:
             state["current_player"] = self._next_seat(state)
-        return {"action": action, "seat": seat, "to_call": self._to_call(state),
+        return {"action": action, "seat": seat, "to_call": to_call,
                 "committed": list(committed), "street_done": state["street_done"],
                 "folded": list(self._folded(state))}
-
-    def _commit(self, state: dict[str, Any], seat: int, amount: int) -> None:
-        stacks = state["stacks"]
-        if amount < 0 or amount > stacks[seat]:
-            raise ToolError("invalid_commit")
-        stacks[seat] -= amount
-        state["committed"][seat] += amount
-        state.setdefault("hand_committed", [0] * len(stacks))[seat] += amount

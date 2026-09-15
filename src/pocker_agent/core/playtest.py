@@ -14,10 +14,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .contracts import ToolError, ToolRegistry
+from .decision import Policy, PolicyContext, policy_context, visible_payload
 from .interpreter import Interpreter
 from .plan import GamePlan
 
-Strategy = Callable[[Interpreter], "tuple[str, dict[str, Any]] | None"]
+Strategy = Policy
 Invariant = Callable[[Interpreter], None]
 
 # Actions that exercise boundaries rather than the "happy path".
@@ -49,8 +50,8 @@ class PlaytestReport:
                 "checks": list(self.checks), "covered_wait_nodes": list(self.covered_wait_nodes)}
 
 
-def descriptor_candidates(interpreter: Interpreter, action: str, *, newest: bool = False,
-                          ) -> list[dict[str, Any]] | None:
+def descriptor_candidates(context: PolicyContext, action: str, *, newest: bool = False,
+                           ) -> list[dict[str, Any]] | None:
     """Candidate payloads for a plan-declared action, or ``None`` for a 0.4 plan.
 
     A composed action may be guarded so that only *some* selections are legal
@@ -59,121 +60,100 @@ def descriptor_candidates(interpreter: Interpreter, action: str, *, newest: bool
     is bounded by the largest input zone (never the whole state), so this stays
     deterministic and finite.
     """
-    from .actions import descriptor_for, integer_bounds, payload_for, resolve_zone
-
-    descriptor = descriptor_for(interpreter.plan, action)
+    descriptors = context.observation.get("actions")
+    if not isinstance(descriptors, list):
+        return None
+    descriptor = next((item for item in descriptors
+                       if isinstance(item, dict) and item.get("id") == action), None)
     if descriptor is None:
         return None
-    limit = 1
-    zones = interpreter.state.get("zones")
-    for item in descriptor.inputs:
-        if item.kind == "integer_range":
-            minimum, maximum = integer_bounds(interpreter.state, item)
-            limit = max(limit, min(maximum - minimum + 1, INPUT_CANDIDATE_LIMIT))
-            continue
-        try:
-            zone_id = resolve_zone(interpreter.state, item)
-        except ToolError:
-            continue
-        entry = zones.get(zone_id) if isinstance(zones, dict) else None
-        cards = entry.get("cards") if isinstance(entry, dict) else None
-        if isinstance(cards, list):
-            limit = max(limit, min(len(cards), INPUT_CANDIDATE_LIMIT))
+    widths = [1]
+    for item in descriptor.get("inputs", []):
+        if item.get("kind") == "integer_range":
+            widths.append(int(item.get("maximum", 0)) - int(item.get("minimum", 0)) + 1)
+        elif isinstance(item.get("options"), list):
+            widths.append(len(item["options"]))
+    limit = min(max(widths), INPUT_CANDIDATE_LIMIT)
     candidates: list[dict[str, Any]] = []
     for offset in range(limit):
-        try:
-            candidates.append(payload_for(interpreter.state, descriptor,
-                                          newest=newest, offset=offset))
-        except ToolError:
+        payload = visible_payload(context, action, newest=newest, offset=offset)
+        if payload is None:
             break
+        candidates.append(payload)
     return candidates
 
 
-def _accepted(interpreter: Interpreter, action: str, payload: dict[str, Any]) -> bool:
-    """Whether the host accepts this (action, payload) on a throwaway copy."""
-    probe = Interpreter.restore(interpreter.serialize(), interpreter.registry)
-    try:
-        probe.step(action, **payload)
-    except ToolError:
-        return False
-    return True
-
-
-def first_legal(interpreter: Interpreter):
+def first_legal(context: PolicyContext):
     """First legal action; the minimal deterministic policy."""
-    actions = interpreter.legal_actions()
-    return (actions[0], {}) if actions else None
+    for action in context.legal_actions:
+        payload = visible_payload(context, action)
+        if payload is not None:
+            return action, payload
+    return None
 
 
-def random_legal(interpreter: Interpreter):
+def random_legal(context: PolicyContext):
     """Deterministic legal-random: seeded by the interpreter, not global RNG.
 
     For a composed plan the randomness picks a rotation into each input zone as
     well as an action, so different seeds reach different cards while staying
     reproducible.
     """
-    actions = interpreter.legal_actions()
+    actions = context.legal_actions
     if not actions:
         return None
-    tick = interpreter.seed + len(interpreter.events) * 17
+    tick = context.seed + context.step * 17 + context.player * 31
     for step in range(len(actions)):
         action = actions[(tick + step) % len(actions)]
-        candidates = descriptor_candidates(interpreter, action)
+        candidates = descriptor_candidates(context, action)
         if candidates is None:
-            if _accepted(interpreter, action, {}):
-                return (action, {})
-            continue
+            return action, visible_payload(context, action) or {}
         if not candidates:
             continue
         shift = tick % len(candidates)
         ordered = candidates[shift:] + candidates[:shift]
-        for payload in ordered:
-            if _accepted(interpreter, action, payload):
-                return (action, payload)
+        return action, ordered[0]
     return None
 
 
-def boundary_first(interpreter: Interpreter):
+def boundary_first(context: PolicyContext):
     """Prefer boundary actions (give up / pass / fold) before the happy path.
 
     For a composed plan a boundary action may still need a minimal legal payload,
     so the descriptor is filled with the smallest accepted selection rather than
     skipped.
     """
-    actions = interpreter.legal_actions()
+    actions = context.legal_actions
     if not actions:
         return None
     ordered = [action for action in _BOUNDARY_PRIORITY if action in actions]
     ordered += [action for action in actions if action not in ordered]
     for action in ordered:
-        candidates = descriptor_candidates(interpreter, action)
+        candidates = descriptor_candidates(context, action)
         if candidates is None:
-            if _accepted(interpreter, action, {}):
-                return (action, {})
-            continue
-        for payload in candidates:
-            if _accepted(interpreter, action, payload):
-                return (action, payload)
+            return action, visible_payload(context, action) or {}
+        if candidates:
+            return action, candidates[0]
     return None
 
 
-def card_first(interpreter: Interpreter):
+def card_first(context: PolicyContext):
     """Generic matching-game policy: play a legal card, otherwise draw.
 
     Used as the playtest policy and as the host bot for non-human seats. It is
     seat-agnostic because the plan exposes ``legal_card_indices`` for whichever
     seat is active.
     """
-    actions = interpreter.legal_actions()
+    actions = context.legal_actions
     if not actions:
         return None
     if "play" in actions:
-        indices = interpreter.state.get("legal_card_indices") or [0]
+        indices = context.observation.get("legal_card_indices") or [0]
         return ("play", {"card_index": indices[0], "declared_suit": "S"})
     return (actions[0], {})
 
 
-def resilient_first(interpreter: Interpreter):
+def resilient_first(context: PolicyContext):
     """Generic gate policy: the first legal action the host actually accepts.
 
     Composed games have no game-specific policy, so the gate probes each legal
@@ -181,16 +161,17 @@ def resilient_first(interpreter: Interpreter):
     deterministic given the state, which keeps replay byte-exact. It proves
     termination and wait coverage, not that the happy path is reachable.
     """
-    actions = interpreter.legal_actions()
+    actions = context.legal_actions
     if not actions:
         return None
     for action in actions:
-        if _accepted(interpreter, action, {}):
-            return (action, {})
-    raise ToolError("no_legal_action_succeeded")
+        payload = visible_payload(context, action)
+        if payload is not None:
+            return action, payload
+    raise ToolError("no_visible_legal_action_payload")
 
 
-def goal_first(interpreter: Interpreter):
+def goal_first(context: PolicyContext):
     """Target-branch policy: pick from the other end so outcomes vary.
 
     The default bot takes the first card/action, which can leave symmetric
@@ -199,14 +180,13 @@ def goal_first(interpreter: Interpreter):
     newest card in each input zone; for a plan without them it probes forward.
     Deterministic given the state, so replay stays byte-exact.
     """
-    for action in interpreter.legal_actions():
-        candidates = descriptor_candidates(interpreter, action, newest=True)
+    for action in context.legal_actions:
+        candidates = descriptor_candidates(context, action, newest=True)
         if candidates is None:
             continue
-        for payload in candidates:
-            if _accepted(interpreter, action, payload):
-                return (action, payload)
-    return resilient_first(interpreter)
+        if candidates:
+            return action, candidates[0]
+    return resilient_first(context)
 
 
 def _play_one(plan: GamePlan, registry: ToolRegistry, seed: int, strategy: Strategy,
@@ -218,7 +198,8 @@ def _play_one(plan: GamePlan, registry: ToolRegistry, seed: int, strategy: Strat
             break
         for invariant in invariants:
             invariant(interpreter)
-        choice = strategy(interpreter)
+        context = policy_context(interpreter, _)
+        choice = strategy(context)
         if choice is None:
             raise ToolError("strategy_returned_none")
         action, payload = choice

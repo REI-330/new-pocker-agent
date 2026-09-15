@@ -142,6 +142,8 @@ class SolvableDealTool:
         return cards
 
     def deal(self, seed: Any, cards_each: int = 4) -> dict[str, Any]:
+        if type(cards_each) is not int or cards_each < 1 or cards_each > len(self.catalog()):
+            raise ToolError("invalid_deal_parameters")
         attempts = 1 if self.deal_mode == "random" else self.attempts
         for attempt in range(attempts):
             deck = self.catalog()
@@ -163,6 +165,8 @@ class ScoreSettleTool:
             raise ToolError("points_must_be_integer")
         if not winners or any(type(w) is not int or not 0 <= w < len(scores) for w in winners):
             raise ToolError("invalid_winners")
+        if len(winners) != len(set(winners)):
+            raise ToolError("duplicate_winners")
         settled = list(scores)
         for winner in winners:
             settled[winner] += points
@@ -186,6 +190,8 @@ class DeckTool:
         self.values = {str(key): int(value) for key, value in (values or {}).items()}
         if not self.ranks or not self.suits or self.copies < 1:
             raise ToolError("invalid_deck_configuration")
+        if len(set(self.ranks)) != len(self.ranks) or len(set(self.suits)) != len(self.suits):
+            raise ToolError("deck_ranks_and_suits_must_be_unique")
         unknown = sorted(set(self.values) - set(self.ranks))
         if unknown:
             raise ToolError("invalid_deck_values:" + ",".join(unknown))
@@ -204,7 +210,8 @@ class DeckTool:
         return deck
 
     def deal(self, seed: Any, hands: int, cards_each: int = 1, kitty: int = 0) -> dict[str, Any]:
-        if type(hands) is not int or type(cards_each) is not int or hands < 1 or cards_each < 1:
+        if (type(hands) is not int or type(cards_each) is not int or type(kitty) is not int
+                or hands < 1 or cards_each < 1 or kitty < 0):
             raise ToolError("invalid_deal_parameters")
         deck = self.shuffled(seed)
         if hands * cards_each + kitty > len(deck):
@@ -303,6 +310,8 @@ class PatternTool:
             raise ToolError("classify_requires_cards")
         if not all(isinstance(card, CardRef) for card in cards):
             raise ToolError("classify_requires_cards")
+        if len({card.id for card in cards}) != len(cards):
+            raise ToolError("classify_requires_unique_cards")
         kind = pattern.get("type", "single")
         values = sorted(card.value for card in cards)
         length = len(cards)
@@ -372,7 +381,7 @@ class TrickTool:
         hands = state.get("hands")
         if not isinstance(hands, list) or not 0 <= hand_index < len(hands):
             raise ToolError("invalid_hand_index")
-        if card_index not in self.legal(state, hand_index):
+        if type(card_index) is not int or card_index not in self.legal(state, hand_index):
             raise ToolError("must_follow_suit")
         hand = hands[hand_index]
         card = hand.pop(card_index)
@@ -419,6 +428,10 @@ class TrickTool:
 
     def team_winners(self, won: list[int], players: int) -> list[int]:
         teams = self.teams or [[seat] for seat in range(players)]
+        flat = [seat for team in teams for seat in team]
+        if (not teams or any(not team for team in teams)
+                or sorted(flat) != list(range(players))):
+            raise ToolError("teams_must_partition_players")
         totals = [sum(won[seat] for seat in team) for team in teams]
         best = max(totals)
         winners: list[int] = []

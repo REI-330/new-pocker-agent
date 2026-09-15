@@ -8,32 +8,17 @@ legal actions. Formal publish verification remains a separate host gate.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from statistics import fmean, median
 from typing import Any, Literal
 
 from .contracts import ToolError, ToolRegistry
+from .decision import Policy, PolicyContext, PolicyDecision, visible_payload
 from .interpreter import Interpreter
 from .plan import GamePlan, plan_fingerprint
 from .playtest import Invariant
-
-PolicyDecision = tuple[str, dict[str, Any]]
-
-
-@dataclass(frozen=True)
-class PolicyContext:
-    """The information available to one policy at one decision point."""
-
-    seed: int
-    step: int
-    player: int
-    observation: Mapping[str, Any]
-    legal_actions: tuple[str, ...]
-
-
-Policy = Callable[[PolicyContext], PolicyDecision | None]
 
 
 @dataclass(frozen=True)
@@ -64,54 +49,9 @@ def seat_rotations(name: str, policies: Sequence[Policy]) -> tuple[PolicyProfile
     )
 
 
-def _visible_payload(
-    context: PolicyContext, action: str, *, newest: bool = False
-) -> dict[str, Any] | None:
-    """Fill an action only from values visible in the player's observation."""
-    descriptors = context.observation.get("actions")
-    if isinstance(descriptors, list):
-        descriptor = next(
-            (
-                item
-                for item in descriptors
-                if isinstance(item, Mapping) and item.get("id") == action
-            ),
-            None,
-        )
-        if descriptor is not None:
-            payload: dict[str, Any] = {}
-            for item in descriptor.get("inputs", []):
-                if not isinstance(item, Mapping):
-                    return None
-                if item.get("kind") == "integer_range":
-                    minimum = item.get("minimum")
-                    maximum = item.get("maximum")
-                    if type(minimum) is not int or type(maximum) is not int:
-                        return None
-                    payload[str(item["id"])] = maximum if newest else minimum
-                    continue
-                options = item.get("options")
-                if not isinstance(options, list):
-                    return None
-                minimum = int(item.get("min_count", 0))
-                maximum = int(item.get("max_count", minimum))
-                if len(options) < minimum:
-                    return None
-                take = min(maximum, len(options))
-                selected = list(reversed(options))[:take] if newest else options[:take]
-                payload[str(item["id"])] = selected
-            return payload
-
-    if action == "play":
-        indices = context.observation.get("legal_card_indices")
-        if isinstance(indices, list) and indices:
-            return {"card_index": indices[-1] if newest else indices[0]}
-    return {}
-
-
 def first_observed_legal(context: PolicyContext) -> PolicyDecision | None:
     for action in context.legal_actions:
-        payload = _visible_payload(context, action)
+        payload = visible_payload(context, action)
         if payload is not None:
             return action, payload
     return None
@@ -122,7 +62,7 @@ def boundary_observed_first(context: PolicyContext) -> PolicyDecision | None:
     ordered = [action for action in priorities if action in context.legal_actions]
     ordered += [action for action in context.legal_actions if action not in ordered]
     for action in ordered:
-        payload = _visible_payload(context, action)
+        payload = visible_payload(context, action)
         if payload is not None:
             return action, payload
     return None
@@ -135,7 +75,7 @@ def seeded_observed_legal(context: PolicyContext) -> PolicyDecision | None:
     start = (context.seed + context.step * 17 + context.player * 31) % len(actions)
     for offset in range(len(actions)):
         action = actions[(start + offset) % len(actions)]
-        payload = _visible_payload(context, action, newest=bool((start + offset) % 2))
+        payload = visible_payload(context, action, newest=bool((start + offset) % 2))
         if payload is not None:
             return action, payload
     return None

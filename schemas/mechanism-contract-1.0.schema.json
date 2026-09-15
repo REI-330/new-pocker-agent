@@ -1,0 +1,90 @@
+{
+  "": "https://pocker-agent.local/schemas/mechanism-contract-1.0.schema.json",
+  "title": "MechanismContract 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "api_version",
+    "version",
+    "config_schema",
+    "operations"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
+    "api_version": {
+      "const": "1.0"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "config_schema": {
+      "type": "object"
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "input_schema",
+          "output_schema",
+          "reads",
+          "writes",
+          "failure",
+          "deterministic"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "reads": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "writes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requires": {
+            "type": "array"
+          },
+          "ensures": {
+            "type": "array"
+          },
+          "failure": {
+            "enum": [
+              "rollback",
+              "reject_only"
+            ]
+          },
+          "deterministic": {
+            "type": "boolean"
+          },
+          "seed_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

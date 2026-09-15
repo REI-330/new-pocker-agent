@@ -15,6 +15,7 @@ from pocker_agent.core import (
 )
 from pocker_agent.core.cards import CardRef as C
 from pocker_agent.core.contracts import ToolError
+from pocker_agent.core.decision import policy_context
 from pocker_agent.core.hidden_tools import HiddenDrawTool
 from pocker_agent.core.ir import GoFishIR
 from pocker_agent.core.playtest import resilient_first
@@ -139,7 +140,7 @@ def test_go_fish_full_game_hides_hands_and_scores_pairs():
     for _ in range(2000):
         if interpreter.state["finished"]:
             break
-        action, payload = resilient_first(interpreter)
+        action, payload = resilient_first(policy_context(interpreter))
         interpreter.step(action, **payload)
 
     assert interpreter.state["finished"] is True
